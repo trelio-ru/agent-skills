@@ -371,7 +371,10 @@ test('runtime release binds the common protected-snapshot contract', async () =>
 // in an optional signing reference. Otherwise an agent submitting a new claim
 // can legally enter the browser workflow without ever seeing the file checks.
 test('main instructions gate all filing workflows on document identity and verified page counts', async () => {
-  const instructions = await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8');
+  // Git's native Windows checkout may use CRLF. Compare Markdown semantics,
+  // not the platform's line-ending convention, before extracting a section.
+  const instructions = (await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8'))
+    .replace(/\r\n?/gu, '\n');
   const preparation = instructions.split('## Подготовка файлов для любой судебной подачи\n')[1]
     ?.split('\n## ')[0];
   assert.ok(preparation, 'file preparation must be in the delivered main instructions');
@@ -389,7 +392,8 @@ test('main instructions gate all filing workflows on document identity and verif
 // submit a corrected claim. Retain both the signature fence and the final UI
 // comparison so a valid local name cannot mask a stale portal upload label.
 test('filing preparation protects signed bytes and verifies the actual uploaded document names', async () => {
-  const instructions = await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8');
+  const instructions = (await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8'))
+    .replace(/\r\n?/gu, '\n');
   const preparation = instructions.split('## Подготовка файлов для любой судебной подачи\n')[1]
     ?.split('\n## ')[0];
   assert.match(preparation, /изменение байтов PDF[\s\S]*требует новой подписи/u);
