@@ -22,6 +22,8 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 заменяют CI без доказанного billing/quota blocker и отдельного решения о VM.
 
 Теги skill-<skill-id>-vX.Y.Z и выпущенные package bytes неизменяемы.
+Для каждой новой signed-runtime публикации нужна уникальная runtime version,
+даже при изменении только инструкций; порядок — docs/release-process.md.
 Provider-релиз не повышает версию Trelio, plugin или generic host.
 Signing остаётся на production backend. Публикация – guarded plan/apply с exact
 artifact, digest, CAS и read-back. Сетевые ошибки: минимум три безопасных повтора;

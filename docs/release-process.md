@@ -12,6 +12,14 @@
 из `main`. Штатный `platform-skill-runtimes.yml` сохраняет единственный artifact.
 Production signing key отсутствует в GitHub и остаётся на backend Trelio.
 
+Каждая новая публикация signed runtime получает ещё не выпущенную для этого
+skill runtime version, в том числе когда меняются только инструкции. Backend
+отклоняет повторную версию с `AGENT_SKILL_RUNTIME_VERSION_EXISTS` даже при
+совпадении package bytes. Согласованно меняй release.json и runtime constant;
+minimum host повышается только при новой зависимости. Не переписывай уже
+созданный tag после неуспешной публикации: исправление получает новую skill
+version и новый tag, затем повторный exact CI и отдельный plan/apply.
+
 Из актуального product checkout запускается штатный guarded helper:
 
 ```sh

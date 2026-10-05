@@ -5,7 +5,7 @@ import path from 'node:path';
 
 export const LEASE_MS = 30 * 60 * 1000;
 export const SKILL = 'gas-pravosudie';
-export const RUNTIME_VERSION = '1.0.5';
+export const RUNTIME_VERSION = '1.0.6';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // HTTP failure evidence is deliberately smaller than a browser response: a
