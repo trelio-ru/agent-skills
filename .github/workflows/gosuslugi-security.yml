@@ -1,0 +1,61 @@
+name: Gosuslugi cross-platform security
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gosuslugi-security.yml'
+      - 'platform-skills/gosuslugi/**'
+  push:
+    branches: [main]
+    tags: ['skill-gosuslugi-v*']
+    paths:
+      - '.github/workflows/gosuslugi-security.yml'
+      - 'platform-skills/gosuslugi/**'
+
+permissions:
+  contents: read
+
+jobs:
+  native-security:
+    # Hosted quota may be unavailable, but a Mac cannot prove Windows DPAPI,
+    # DACL or Job semantics. Route each matrix leg only to its corresponding
+    # real OS; an offline Windows runner keeps that leg queued, never skipped.
+    name: Native vault and lifecycle (${{ matrix.os }})
+    runs-on: ${{ vars.TRELIO_ACTIONS_RUNNER_MODE == 'self-hosted' && fromJSON(matrix.selfHostedLabels) || matrix.os }}
+    # Windows native ACL/crash checks and both headed browser suites exceeded
+    # ten minutes together on the persistent ARM64 runner. Keep the per-test
+    # guardian bounded while allowing the complete exact-SHA gate to finish.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            nativePlatform: darwin
+            selfHostedLabels: '["self-hosted","macOS","trelio-agent-skills-release"]'
+          - os: windows-latest
+            nativePlatform: win32
+            selfHostedLabels: '["self-hosted","Windows","trelio-agent-skills-windows"]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Labels select a runner but are not evidence of its native platform.
+      # Refuse a mislabeled host before OS-specific tests could skip themselves.
+      - name: Verify the actual native platform
+        env:
+          EXPECTED_NATIVE_PLATFORM: ${{ matrix.nativePlatform }}
+        run: node -e "if (process.platform !== process.env.EXPECTED_NATIVE_PLATFORM) throw new Error('native_security_wrong_os'); console.log(JSON.stringify({platform:process.platform,architecture:process.arch,osRelease:require('node:os').release()}))"
+      - name: Validate deterministic package
+        run: node platform-skills/tools/build-runtime-package.mjs --skill-dir platform-skills/gosuslugi --check
+      - name: Validate the pinned storage codec
+        run: node platform-skills/gosuslugi/development/build-storage-codec.mjs --check
+      - name: Test real native crypto, ACL and crash cleanup
+        run: node --test platform-skills/gosuslugi/tests/runtime.test.mjs platform-skills/gosuslugi/tests/services.test.mjs platform-skills/gosuslugi/tests/authorization.test.mjs platform-skills/gosuslugi/tests/esia-flow.test.mjs
+      - name: Test one headed browser and synthetic ESIA flow
+        run: node --test platform-skills/gosuslugi/tests/browser-smoke.test.mjs
+      - name: Test full caller Playwright context and ESIA authorization
+        run: node --test platform-skills/gosuslugi/tests/playwright-client.test.mjs

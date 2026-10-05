@@ -1,0 +1,14 @@
+{
+  "name": "trelio-whatsapp-web",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "qrcode": "1.5.4",
+    "pino": "10.3.1",
+    "playwright-core": "1.60.0"
+  }
+}

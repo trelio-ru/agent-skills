@@ -1,0 +1,81 @@
+name: Email cross-platform security
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/email-security.yml'
+      - 'platform-skills/email-imap-smtp/**'
+  push:
+    branches: [main]
+    tags: ['skill-email-imap-smtp-v*']
+    paths:
+      - '.github/workflows/email-security.yml'
+      - 'platform-skills/email-imap-smtp/**'
+
+permissions:
+  contents: read
+
+jobs:
+  native-security:
+    # Credential storage and worker cleanup are OS guarantees. Under the
+    # self-hosted fallback each leg therefore keeps its matching real OS;
+    # an offline runner leaves the release gate queued instead of skipping it.
+    name: Native vault and lifecycle (${{ matrix.os }})
+    runs-on: ${{ vars.TRELIO_ACTIONS_RUNNER_MODE == 'self-hosted' && fromJSON(matrix.selfHostedLabels) || matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            nativePlatform: darwin
+            selfHostedLabels: '["self-hosted","macOS","trelio-agent-skills-release"]'
+          - os: windows-latest
+            nativePlatform: win32
+            selfHostedLabels: '["self-hosted","Windows","trelio-agent-skills-windows"]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        # The prepared Mac runner deliberately uses its system Python: the
+        # setup action otherwise targets GitHub's hosted /Users/runner cache.
+        # Windows needs setup-python to materialize native ARM64 CPython.
+        if: vars.TRELIO_ACTIONS_RUNNER_MODE != 'self-hosted' || matrix.nativePlatform == 'win32'
+        with:
+          python-version: '3.11'
+      # Runner labels alone cannot prove that DPAPI, DACL, Keychain and process
+      # lifecycle tests are executing on the claimed native platform.
+      - name: Verify the actual native platform
+        env:
+          EXPECTED_NATIVE_PLATFORM: ${{ matrix.nativePlatform }}
+          EXPECTED_RUNNER_ARCHITECTURE: ${{ runner.arch }}
+        run: >-
+          node -e "if (process.platform !== process.env.EXPECTED_NATIVE_PLATFORM || process.arch !== process.env.EXPECTED_RUNNER_ARCHITECTURE.toLowerCase()) throw new Error('email_security_wrong_os_or_architecture'); console.log(JSON.stringify({platform:process.platform,architecture:process.arch,osRelease:require('node:os').release()}))"
+      # Python names x64 AMD64 on Windows and x86_64 on Intel macOS/Linux;
+      # normalize these aliases without weakening the native OS/CPU assertion.
+      - name: Verify Python supplied by Actions
+        if: vars.TRELIO_ACTIONS_RUNNER_MODE != 'self-hosted' || matrix.nativePlatform == 'win32'
+        env:
+          EXPECTED_NATIVE_PLATFORM: ${{ matrix.nativePlatform }}
+          EXPECTED_RUNNER_ARCHITECTURE: ${{ runner.arch }}
+        run: >-
+          python -c "import os, platform, sys; machine=platform.machine().lower().replace('aarch64', 'arm64').replace('amd64', 'x64').replace('x86_64', 'x64'); expected=os.environ['EXPECTED_RUNNER_ARCHITECTURE'].lower(); assert sys.platform == os.environ['EXPECTED_NATIVE_PLATFORM'] and machine == expected, (sys.platform, machine, expected); print({'platform': sys.platform, 'architecture': machine, 'version': platform.python_version()})"
+      - name: Verify self-hosted macOS Python
+        if: vars.TRELIO_ACTIONS_RUNNER_MODE == 'self-hosted' && matrix.nativePlatform == 'darwin'
+        env:
+          EXPECTED_NATIVE_PLATFORM: ${{ matrix.nativePlatform }}
+          EXPECTED_RUNNER_ARCHITECTURE: ${{ runner.arch }}
+        run: >-
+          python3 -c "import os, platform, sys; machine=platform.machine().lower().replace('aarch64', 'arm64').replace('amd64', 'x64').replace('x86_64', 'x64'); expected=os.environ['EXPECTED_RUNNER_ARCHITECTURE'].lower(); assert sys.platform == os.environ['EXPECTED_NATIVE_PLATFORM'] and machine == expected, (sys.platform, machine, expected); print({'platform': sys.platform, 'architecture': machine, 'version': platform.python_version()})"
+      - name: Validate deterministic package
+        run: node platform-skills/tools/build-runtime-package.mjs --skill-dir platform-skills/email-imap-smtp --check
+      - name: Test email runtime and real native security
+        if: vars.TRELIO_ACTIONS_RUNNER_MODE != 'self-hosted' || matrix.nativePlatform == 'win32'
+        run: python -m unittest discover -s platform-skills/email-imap-smtp/tests -p "test_*.py"
+      - name: Test email runtime and real native security on self-hosted macOS
+        if: vars.TRELIO_ACTIONS_RUNNER_MODE == 'self-hosted' && matrix.nativePlatform == 'darwin'
+        run: python3 -m unittest discover -s platform-skills/email-imap-smtp/tests -p "test_*.py"

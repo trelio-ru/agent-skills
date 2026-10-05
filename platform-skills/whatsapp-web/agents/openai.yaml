@@ -1,0 +1,4 @@
+interface:
+  display_name: "WhatsApp Web"
+  short_description: "Чаты WhatsApp через отдельную защищённую сессию."
+  default_prompt: "Используй $whatsapp-web для работы с моими чатами WhatsApp через Trelio."

@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "iphone-mirroring",
+    "version": "2.1.1",
+    "summary": "Сокращена инструкция и повторное чтение между ходами одной сессии; полный текст используется до 12 часов. Команды, runtime-пакет и полнота исходных данных сохранены."
+  },
+  "connection": null,
+  "runtime": {
+    "version": "2.1.0",
+    "minimumHostVersion": "1.4.0",
+    "entrypoint": {
+      "path": "trelio-iphone-mirroring.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "local-session"
+    ],
+    "files": [
+      {
+        "source": "scripts/trelio-iphone-mirroring.mjs",
+        "path": "trelio-iphone-mirroring.mjs",
+        "mode": 493
+      },
+      {
+        "source": "scripts/mirrorctl",
+        "path": "scripts/mirrorctl",
+        "mode": 493
+      },
+      {
+        "source": "scripts/mirrorctl.swift",
+        "path": "scripts/mirrorctl.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/mirror-session-supervisor.swift",
+        "path": "scripts/mirror-session-supervisor.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/input-safety.swift",
+        "path": "scripts/input-safety.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/runtime-output.swift",
+        "path": "scripts/runtime-output.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/virtual-display-bridge.h",
+        "path": "scripts/virtual-display-bridge.h",
+        "mode": 420
+      },
+      {
+        "source": "scripts/virtual-display-bridge.m",
+        "path": "scripts/virtual-display-bridge.m",
+        "mode": 420
+      },
+      {
+        "source": "scripts/input-guardian.swift",
+        "path": "scripts/input-guardian.swift",
+        "mode": 420
+      }
+    ]
+  }
+}

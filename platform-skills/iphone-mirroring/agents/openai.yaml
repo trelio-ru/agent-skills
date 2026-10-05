@@ -1,0 +1,4 @@
+interface:
+  display_name: "Видеоповтор iPhone"
+  short_description: "Управление сопряжённым iPhone через Mac"
+  default_prompt: "Используй $iphone-mirroring, чтобы безопасно открыть приложение на моём iPhone через Видеоповтор iPhone и проверить результат по снимку."

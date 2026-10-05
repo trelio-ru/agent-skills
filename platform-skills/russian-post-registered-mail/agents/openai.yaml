@@ -1,0 +1,4 @@
+interface:
+  display_name: "Заказные письма Почты России"
+  short_description: "Подготовка, отправка и tracking заказных писем"
+  default_prompt: "Используй $russian-post-registered-mail, чтобы подготовить или отследить точное заказное письмо через Почту России."

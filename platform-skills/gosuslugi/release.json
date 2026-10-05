@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "gosuslugi",
+    "version": "4.3.12",
+    "summary": "Исправлено распознавание HTTP 503 и других ошибок портала при входе: сохраняются точный HTTP-код и безопасный origin без данных авторизации."
+  },
+  "connection": null,
+  "runtime": {
+    "version": "3.3.12",
+    "minimumHostVersion": "3.0.22",
+    "entrypoint": {
+      "path": "scripts/trelio-gosuslugi.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network"
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "protected-snapshot",
+      "leaseMs": 1800000,
+      "manualAssist": false
+    },
+    "files": [
+      {
+        "source": "scripts/trelio-gosuslugi.mjs",
+        "path": "scripts/trelio-gosuslugi.mjs",
+        "mode": 493
+      },
+      {
+        "source": "scripts/core.mjs",
+        "path": "scripts/core.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/chat-title.mjs",
+        "path": "scripts/chat-title.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/native.mjs",
+        "path": "scripts/native.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/native-macos.swift",
+        "path": "scripts/native-macos.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/native-key-macos.swift",
+        "path": "scripts/native-key-macos.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/native-windows.cs",
+        "path": "scripts/native-windows.cs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/private-directory.ps1",
+        "path": "scripts/private-directory.ps1",
+        "mode": 420
+      },
+      {
+        "source": "scripts/browser.mjs",
+        "path": "scripts/browser.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/prompt.mjs",
+        "path": "scripts/prompt.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/worker.mjs",
+        "path": "scripts/worker.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/windows.mjs",
+        "path": "scripts/windows.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/storage.mjs",
+        "path": "scripts/storage.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/storage-codec.mjs",
+        "path": "scripts/storage-codec.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/playwright-storage-LICENSE.txt",
+        "path": "scripts/playwright-storage-LICENSE.txt",
+        "mode": 420
+      },
+      {
+        "source": "scripts/esia-authorizer.mjs",
+        "path": "scripts/esia-authorizer.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/transport.mjs",
+        "path": "scripts/transport.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/playwright-client.mjs",
+        "path": "scripts/playwright-client.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/playwright-flow.mjs",
+        "path": "scripts/playwright-flow.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/authorization.mjs",
+        "path": "scripts/authorization.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/auth-rpc.mjs",
+        "path": "scripts/auth-rpc.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/esia-flow.mjs",
+        "path": "scripts/esia-flow.mjs",
+        "mode": 420
+      },
+      {
+        "source": "references/playwright-client.md",
+        "path": "references/playwright-client.md",
+        "mode": 420
+      }
+    ]
+  }
+}

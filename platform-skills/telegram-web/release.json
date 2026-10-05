@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "telegram-web",
+    "version": "2.4.2",
+    "summary": "HTTP-код ошибки основной страницы сохраняется в безопасной диагностике и не маскируется под необходимость нового входа."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Общий секрет не нужен. Вход, cookies и отдельный browser profile остаются только на устройстве пользователя и не передаются в Trelio.",
+      "Отдельного consent и account slots нет. Каждый Telegram-аккаунт подключается отдельной Trelio connection и получает собственный локальный browser profile. QR, код и 2FA вводит сам пользователь; после входа он закрывает окно, а runtime проверяет сохранённую сессию свежим probe.",
+      "Runtime не отправляет в Trelio сессию или переписку. Обычное открытие чата через Telegram Web, включая explicit search --context, может помечать сообщения прочитанными и менять presence/read-state. Download записывает только выбранный файл в безопасный output path; общие временные каталоги отклоняются."
+    ],
+    "configFields": [],
+    "secretFields": [],
+    "deprecatedConfigKeys": [
+      "allowAutonomous"
+    ]
+  },
+  "runtime": {
+    "version": "2.4.2",
+    "minimumHostVersion": "3.4.0",
+    "entrypoint": {
+      "path": "trelio-telegram-web.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network"
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "messenger-profile",
+      "manualAssist": true
+    },
+    "files": [
+      {
+        "source": "scripts/trelio-telegram-web.mjs",
+        "path": "trelio-telegram-web.mjs",
+        "mode": 493
+      }
+    ]
+  }
+}

@@ -26,3 +26,8 @@ artifact, digest, CAS и read-back. Сетевые ошибки: минимум 
 Commit на русском, только файлы задачи. Опубликуй ветку, дождись exact зелёного
 CI и интегрируй через PR. Затем обнови чистый canonical main и удали только свой
 clean merged worktree и ветку. Новая лицензия без решения пользователя не вводится.
+
+`Public source boundary` и check-public-source.mjs проверяют tracked snapshot
+перед каждым push. Корпоративные исходники не копируются даже как fixtures.
+Публикация исходников не разрешает перенос application identity; Telegram
+artifact собирается только в отдельном private release-контуре.

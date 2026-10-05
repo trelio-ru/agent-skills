@@ -1,0 +1,4 @@
+interface:
+  display_name: "Т-Банк"
+  short_description: "Защищённый вход в банк и через T‑ID"
+  default_prompt: "Используй $t-bank: выполни защищённый вход в Т-Банк или через T‑ID и продолжи мою задачу через обычные context и page Playwright; по умолчанию только читай."
