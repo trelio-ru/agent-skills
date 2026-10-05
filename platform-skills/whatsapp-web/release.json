@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "whatsapp-web",
+    "version": "2.1.1",
+    "summary": "HTTP-код ошибки основной страницы сохраняется в безопасной диагностике и не маскируется под необходимость нового входа."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Общий секрет не нужен. Каждый пользователь привязывает отдельное устройство через локальный QR-код."
+    ],
+    "configFields": [],
+    "secretFields": [],
+    "deprecatedConfigKeys": [
+      "allowAutonomous"
+    ]
+  },
+  "runtime": {
+    "version": "2.1.1",
+    "minimumHostVersion": "3.4.0",
+    "entrypoint": {
+      "path": "scripts/trelio-whatsapp.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network"
+    ],
+    "files": [
+      {
+        "source": "references/commands.md",
+        "path": "references/commands.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/client.mjs",
+        "path": "scripts/client.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/core.mjs",
+        "path": "scripts/core.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/dependencies.mjs",
+        "path": "scripts/dependencies.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/handoff.mjs",
+        "path": "scripts/handoff.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/native-macos.swift",
+        "path": "scripts/native-macos.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/native.mjs",
+        "path": "scripts/native.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/trelio-whatsapp.mjs",
+        "path": "scripts/trelio-whatsapp.mjs",
+        "mode": 493
+      },
+      {
+        "source": "scripts/worker.mjs",
+        "path": "scripts/worker.mjs",
+        "mode": 420
+      },
+      {
+        "source": "package.json",
+        "path": "package.json",
+        "mode": 420
+      },
+      {
+        "source": "package-lock.json",
+        "path": "package-lock.json",
+        "mode": 420
+      },
+      {
+        "source": "scripts/worker-stdio.mjs",
+        "path": "scripts/worker-stdio.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/browser.mjs",
+        "path": "scripts/browser.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/media.mjs",
+        "path": "scripts/media.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/profile.mjs",
+        "path": "scripts/profile.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/native-windows.cs",
+        "path": "scripts/native-windows.cs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/private-directory.ps1",
+        "path": "scripts/private-directory.ps1",
+        "mode": 420
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "DodoStats / DrinkitStats"
+  short_description: "Read-only аналитика сохранённой выручки Dodo и Drinkit"
+  default_prompt: "Используй $dodostats-drinkitstats для анализа выручки DodoStats или DrinkitStats с обязательной проверкой покрытия, свежести и валюты."

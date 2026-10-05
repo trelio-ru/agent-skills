@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "max-web",
+    "version": "2.8.11",
+    "summary": "Проверенные ID чатов сохраняются между обращениями. Одинаковые названия сразу запускают безопасный осмотр кандидатов вместо повторения неудачного поиска."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Общий секрет не нужен. Каждый пользователь входит в MAX в локальном браузерном профиле."
+    ],
+    "configFields": [],
+    "secretFields": [],
+    "deprecatedConfigKeys": [
+      "allowAutonomous"
+    ]
+  },
+  "runtime": {
+    "version": "2.8.11",
+    "minimumHostVersion": "3.4.0",
+    "entrypoint": {
+      "path": "trelio-max.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network"
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "messenger-profile",
+      "manualAssist": true
+    },
+    "files": [
+      {
+        "source": "scripts/trelio-max.mjs",
+        "path": "trelio-max.mjs",
+        "mode": 493
+      }
+    ]
+  }
+}

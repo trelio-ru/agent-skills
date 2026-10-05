@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "telegram-mtproto",
+    "version": "2.3.6",
+    "summary": "Ошибка разрешения Telegram-чата теперь возвращает стабильный код, безопасные причины неопределённости и точный следующий шаг без угадывания peer-префиксов и утечки traceback."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Каждый пользователь входит в свой Telegram-аккаунт локально. Личная сессия остаётся на его устройстве."
+    ],
+    "configFields": [],
+    "deprecatedConfigKeys": [
+      "apiId",
+      "allowAutonomous"
+    ],
+    "secretFields": []
+  },
+  "runtime": {
+    "version": "2.3.4",
+    "minimumHostVersion": "1.11.0",
+    "entrypoint": {
+      "path": "trelio-telegram.py",
+      "interpreter": "python"
+    },
+    "capabilities": [
+      "local-session",
+      "network"
+    ],
+    "files": [
+      {
+        "source": "scripts/trelio-telegram.py",
+        "path": "trelio-telegram.py",
+        "mode": 493
+      },
+      {
+        "sourceEnvironment": "TRELIO_TELEGRAM_APP_CREDENTIAL_JSON",
+        "releaseInputExposure": "package-recipient",
+        "path": "telegram-app-credentials.json",
+        "mode": 420
+      }
+    ]
+  }
+}

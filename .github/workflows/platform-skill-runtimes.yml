@@ -1,0 +1,345 @@
+name: Platform skill runtimes
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/platform-skill-runtimes.yml"
+      - "platform-skills/**"
+      # T-Bank owns one dedicated macOS/Windows PR gate. A T-Bank-only change
+      # must not also start the unrelated provider matrix. The same isolation
+      # applies to providers with their own native/browser workflows.
+      - "!platform-skills/t-bank/**"
+      - "!platform-skills/gosuslugi/**"
+      - "!platform-skills/email-imap-smtp/**"
+      - "!platform-skills/whatsapp-web/**"
+  push:
+    tags:
+      - "skill-*-v*"
+    paths:
+      - ".github/workflows/platform-skill-runtimes.yml"
+      - "platform-skills/**"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  hosted-plan:
+    name: Select changed provider regressions
+    if: >-
+      !startsWith(github.ref, 'refs/tags/skill-')
+      && vars.TRELIO_ACTIONS_RUNNER_MODE != 'self-hosted'
+    runs-on: ubuntu-latest
+    outputs:
+      provider_matrix: ${{ steps.selection.outputs.provider_matrix }}
+      has_provider_matrix: ${{ steps.selection.outputs.has_provider_matrix }}
+      run_package_tool: ${{ steps.selection.outputs.run_package_tool }}
+      run_source_tests: ${{ steps.selection.outputs.run_source_tests }}
+      run_consultant_plus: ${{ steps.selection.outputs.run_consultant_plus }}
+      run_telegram_contract: ${{ steps.selection.outputs.run_telegram_contract }}
+      run_dodostats: ${{ steps.selection.outputs.run_dodostats }}
+    steps:
+      - name: Check out exact pull-request history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Select regressions from the exact pull-request diff
+        id: selection
+        shell: bash
+        run: >-
+          node platform-skills/tools/select-provider-regressions.mjs
+          --base "${{ github.event.pull_request.base.sha }}"
+          --head "${{ github.event.pull_request.head.sha }}"
+          --github-output "$GITHUB_OUTPUT"
+
+  package-tool:
+    name: Package builder regressions
+    needs: hosted-plan
+    if: needs.hosted-plan.outputs.run_package_tool == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test deterministic package builder
+        run: >-
+          node --test
+          platform-skills/tools/build-runtime-package.test.mjs
+          platform-skills/tools/select-provider-regressions.test.mjs
+
+  source-tests:
+    name: Public provider source regressions
+    needs: hosted-plan
+    if: needs.hosted-plan.outputs.run_source_tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run ConsultantPlus provider regressions
+        if: needs.hosted-plan.outputs.run_consultant_plus == 'true'
+        run: >-
+          node --test
+          platform-skills/consultant-plus/tests/trelio-consultant-plus.test.mjs
+      - name: Run Telegram release contract regression
+        if: needs.hosted-plan.outputs.run_telegram_contract == 'true'
+        run: >-
+          node --test
+          platform-skills/telegram-mtproto/tests/release-input.test.mjs
+          platform-skills/telegram-mtproto/tests/release-contract.test.mjs
+      - name: Run Agent Skill refresh contract regression
+        run: >-
+          node --test
+          platform-skills/tools/agent-skill-refresh-contract.test.mjs
+          platform-skills/tools/agent-skill-setup-contract.test.mjs
+      - name: Run DodoStats / DrinkitStats Remote MCP contract regression
+        if: needs.hosted-plan.outputs.run_dodostats == 'true'
+        run: >-
+          node --test
+          platform-skills/dodostats-drinkitstats/tests/remote-mcp-contract.test.mjs
+      - name: Check DodoStats / DrinkitStats live-probe syntax
+        if: needs.hosted-plan.outputs.run_dodostats == 'true'
+        run: >-
+          node --check
+          platform-skills/dodostats-drinkitstats/development/probe_remote_mcp_live.mjs
+
+  provider-tests:
+    name: ${{ matrix.skill }} (${{ matrix.os }})
+    needs: hosted-plan
+    if: needs.hosted-plan.outputs.has_provider_matrix == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.hosted-plan.outputs.provider_matrix) }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Check out exact shared browser HTTP contract
+        uses: actions/checkout@v4
+        with:
+          repository: trelio-ru/agent-workspaces-runtime
+          ref: v3.4.0
+          path: _contracts/agent-workspaces-runtime
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Set up Python
+        if: matrix.language == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate deterministic runtime package
+        env:
+          # This value only proves package composition in CI. It is not the
+          # application identity retained by a tagged provider release.
+          TRELIO_TELEGRAM_APP_CREDENTIAL_JSON: '{"api_id":"12345","api_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+        run: >-
+          node platform-skills/tools/build-runtime-package.mjs
+          --skill-dir platform-skills/${{ matrix.skill }}
+          --check
+      - name: Install MAX DOM regression dependencies
+        if: matrix.skill == 'max-web'
+        run: npm ci --prefix platform-skills/max-web --ignore-scripts --no-audit --no-fund
+      - name: Install WhatsApp locked runtime dependencies
+        if: matrix.skill == 'whatsapp-web'
+        run: npm ci --prefix platform-skills/whatsapp-web --ignore-scripts --no-audit --no-fund
+      - name: Run Node runtime regressions
+        if: matrix.language == 'node'
+        run: node --test ${{ matrix.test_file }}
+      - name: Install Python runtime test dependencies
+        if: matrix.language == 'python'
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          "tzdata>=2025.2,<2027"
+      - name: Run Python runtime regressions
+        if: matrix.language == 'python'
+        run: >-
+          python -m unittest discover
+          -s platform-skills/${{ matrix.skill }}/tests
+          -p "test_*.py"
+
+  self-hosted-validation:
+    name: Self-hosted provider regressions
+    if: >-
+      !startsWith(github.ref, 'refs/tags/skill-')
+      && vars.TRELIO_ACTIONS_RUNNER_MODE == 'self-hosted'
+    runs-on:
+      - self-hosted
+      - trelio-agent-skills-release
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository without persistent workflow credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out exact shared browser HTTP contract
+        uses: actions/checkout@v4
+        with:
+          repository: trelio-ru/agent-workspaces-runtime
+          ref: v3.4.0
+          path: _contracts/agent-workspaces-runtime
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The dedicated macOS runner owns a current Python 3 installation.
+      # setup-python targets GitHub's hosted toolcache path on this machine,
+      # while these regressions need no third-party Python dependency on macOS.
+      - name: Verify self-hosted Python
+        run: python3 --version
+      - name: Select regressions from the exact pull-request diff
+        id: selection
+        shell: bash
+        run: >-
+          node platform-skills/tools/select-provider-regressions.mjs
+          --base "${{ github.event.pull_request.base.sha }}"
+          --head "${{ github.event.pull_request.head.sha }}"
+          --github-output "$GITHUB_OUTPUT"
+      - name: Run selected provider regressions
+        shell: bash
+        run: >-
+          bash platform-skills/tools/run-provider-regressions.sh
+          --skills "${{ steps.selection.outputs.self_hosted_skills }}"
+
+  tagged-package:
+    name: Retain tagged skill release
+    # Telegram source is public, but its application-identity build stays in
+    # the private release contour; public artifacts must never embed it.
+    if: startsWith(github.ref, 'refs/tags/skill-') && !startsWith(github.ref, 'refs/tags/skill-telegram-mtproto-')
+    # Release artifacts follow the same GitHub-first policy as PR checks.
+    # The explicit fallback is temporary and requires confirmed hosted quota /
+    # billing exhaustion; an unset variable must never queue a local runner.
+    runs-on: ${{ vars.TRELIO_ACTIONS_RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","trelio-agent-skills-release"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository without persistent workflow credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Resolve independent skill tag
+        id: tag
+        shell: bash
+        run: |
+          skill_and_version="${GITHUB_REF_NAME#skill-}"
+          skill_id="${skill_and_version%-v[0-9]*}"
+          skill_version="${skill_and_version##*-v}"
+          test -n "$skill_id"
+          test -n "$skill_version"
+          skill_directory_id="$skill_id"
+          if [[ "$skill_id" =~ ^company-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-([a-z0-9]+(-[a-z0-9]+)*)$ ]]; then
+            skill_directory_id="${BASH_REMATCH[1]}"
+          fi
+          if test -f "platform-skills/$skill_directory_id/release.json"; then
+            release_kind="runtime"
+          elif test -f "platform-skills/$skill_directory_id/remote-mcp.json"; then
+            release_kind="remote_mcp"
+          else
+            echo "Tagged skill has neither release.json nor remote-mcp.json" >&2
+            exit 1
+          fi
+          echo "skill_id=$skill_id" >> "$GITHUB_OUTPUT"
+          echo "skill_directory_id=$skill_directory_id" >> "$GITHUB_OUTPUT"
+          echo "skill_version=$skill_version" >> "$GITHUB_OUTPUT"
+          echo "release_kind=$release_kind" >> "$GITHUB_OUTPUT"
+      - name: Verify exact tagged source already passed pull-request gates
+        if: contains(fromJSON('["t-bank", "whatsapp-web"]'), steps.tag.outputs.skill_directory_id)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // A release tag points to the exact already-tested PR head commit.
+            // The tag job proves that commit is now reachable from main, then
+            // retains its artifact without spending minutes on the same tests.
+            const comparison = await github.rest.repos.compareCommitsWithBasehead({
+              ...context.repo,
+              basehead: `${context.sha}...${context.payload.repository.default_branch}`,
+            });
+            if (!['ahead', 'identical'].includes(comparison.data.status)) {
+              core.setFailed('tagged_source_is_not_reachable_from_default_branch');
+              return;
+            }
+            const required = ['${{ steps.tag.outputs.skill_directory_id }}' === 't-bank'
+              ? 'T-Bank cross-platform security' : 'WhatsApp browser compatibility'];
+            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
+              ...context.repo,
+              event: 'pull_request',
+              head_sha: context.sha,
+              status: 'success',
+              per_page: 100,
+            });
+            const successful = new Set(runs.map(run => run.name));
+            const missing = required.filter(name => !successful.has(name));
+            if (missing.length) {
+              core.setFailed(`tagged_source_missing_green_pr_gate: ${missing.join(', ')}`);
+              return;
+            }
+            core.info(`Reused exact green PR evidence for ${context.sha}.`);
+      - name: Build exact package bytes
+        if: steps.tag.outputs.release_kind == 'runtime'
+        run: >-
+          node platform-skills/tools/build-runtime-package.mjs
+          --skill-dir platform-skills/${{ steps.tag.outputs.skill_directory_id }}
+          --expect-skill-version ${{ steps.tag.outputs.skill_version }}
+          --output ${{ runner.temp }}/${{ steps.tag.outputs.skill_id }}-${{ steps.tag.outputs.skill_version }}.skillpkg
+      # Declarative releases have no executable package by design. Bind the tag
+      # to the same exact skill/version identity before retaining its manifest.
+      - name: Validate tagged Remote MCP identity
+        if: steps.tag.outputs.release_kind == 'remote_mcp'
+        shell: bash
+        run: |
+          node - \
+            "platform-skills/${{ steps.tag.outputs.skill_directory_id }}/remote-mcp.json" \
+            "${{ steps.tag.outputs.skill_id }}" \
+            "${{ steps.tag.outputs.skill_version }}" <<'NODE'
+          const fs = require("node:fs");
+          const [manifestPath, skillId, skillVersion] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          if (
+            manifest?.release?.skillId !== skillId
+            || manifest?.release?.version !== skillVersion
+          ) {
+            throw new Error("Remote MCP manifest identity does not match the tag.");
+          }
+          NODE
+      - name: Upload package for backend signing
+        if: steps.tag.outputs.release_kind == 'runtime'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.tag.outputs.skill_id }}-${{ steps.tag.outputs.skill_version }}
+          path: ${{ runner.temp }}/${{ steps.tag.outputs.skill_id }}-${{ steps.tag.outputs.skill_version }}.skillpkg
+          if-no-files-found: error
+      - name: Retain declarative Remote MCP manifest
+        if: steps.tag.outputs.release_kind == 'remote_mcp'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.tag.outputs.skill_id }}-${{ steps.tag.outputs.skill_version }}
+          path: platform-skills/${{ steps.tag.outputs.skill_directory_id }}/remote-mcp.json
+          if-no-files-found: error

@@ -1,0 +1,65 @@
+name: WhatsApp browser compatibility
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/whatsapp-browser.yml'
+      - 'platform-skills/whatsapp-web/**'
+
+permissions:
+  contents: read
+
+jobs:
+  browser-compatibility:
+    # Each self-hosted leg keeps its real OS while hosted billing is unavailable.
+    # The Mac runner cannot establish Windows ACL or Job Object behavior.
+    name: Persistent profile and lifecycle (${{ matrix.os }})
+    runs-on: ${{ vars.TRELIO_ACTIONS_RUNNER_MODE == 'self-hosted' && fromJSON(matrix.selfHostedLabels) || matrix.os }}
+    # Cold ARM64 Windows setup and native browser tests share this deadlock
+    # guard; registry requests have their own shorter bounded retries below.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            nativePlatform: darwin
+            selfHostedLabels: '["self-hosted","macOS","trelio-agent-skills-release"]'
+          - os: windows-latest
+            nativePlatform: win32
+            selfHostedLabels: '["self-hosted","Windows","trelio-agent-skills-windows"]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Check out exact shared browser HTTP contract
+        uses: actions/checkout@v4
+        with:
+          repository: trelio-ru/agent-workspaces-runtime
+          ref: v3.4.0
+          path: _contracts/agent-workspaces-runtime
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify the actual native platform
+        env:
+          EXPECTED_NATIVE_PLATFORM: ${{ matrix.nativePlatform }}
+          EXPECTED_RUNNER_ARCHITECTURE: ${{ runner.arch }}
+        run: >-
+          node -e "if (process.platform !== process.env.EXPECTED_NATIVE_PLATFORM || process.arch !== process.env.EXPECTED_RUNNER_ARCHITECTURE.toLowerCase()) throw new Error('whatsapp_browser_wrong_os_or_architecture'); console.log(JSON.stringify({platform:process.platform,architecture:process.arch}))"
+      - name: Install exact runtime dependencies
+        # A slow registry must fail within this job rather than consuming the
+        # entire native test deadline. Persistent runners reuse their npm cache.
+        run: >-
+          npm ci --prefix platform-skills/whatsapp-web --ignore-scripts
+          --no-audit --no-fund --prefer-offline --fetch-retries=3
+          --fetch-timeout=30000 --fetch-retry-mintimeout=1000
+          --fetch-retry-maxtimeout=5000
+      - name: Validate deterministic package
+        run: node platform-skills/tools/build-runtime-package.mjs --skill-dir platform-skills/whatsapp-web --check
+      - name: Test storage, browser behavior and native cleanup on the real OS
+        # Browser and native supervisor fixtures must not compete for the one
+        # interactive ARM64 Windows desktop or distort wall-clock deadlines.
+        run: node --test --test-concurrency=1 platform-skills/whatsapp-web/tests/*.test.mjs

@@ -1,0 +1,62 @@
+name: T-Bank cross-platform security
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tbank-security.yml'
+      - 'platform-skills/t-bank/**'
+      - 'platform-skills/gosuslugi/scripts/native*'
+      - 'platform-skills/gosuslugi/scripts/private-directory.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  native-security:
+    # Shared native fixes retain both real OS gates when hosted quota is down.
+    # An offline Windows runner leaves its job queued; macOS never replaces it.
+    name: Native vault and bank authentication (${{ matrix.os }})
+    runs-on: ${{ vars.TRELIO_ACTIONS_RUNNER_MODE == 'self-hosted' && fromJSON(matrix.selfHostedLabels) || matrix.os }}
+    # This is a deadlock guard, not a performance threshold. Keep enough room
+    # for cold ARM64 Windows setup, native lifecycle tests and headed Chromium.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            nativePlatform: darwin
+            selfHostedLabels: '["self-hosted","macOS","trelio-agent-skills-release"]'
+          - os: windows-latest
+            nativePlatform: win32
+            selfHostedLabels: '["self-hosted","Windows","trelio-agent-skills-windows"]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Check out exact shared browser HTTP contract
+        uses: actions/checkout@v4
+        with:
+          repository: trelio-ru/agent-workspaces-runtime
+          ref: v3.4.0
+          path: _contracts/agent-workspaces-runtime
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Verify platform independently of runner labels before native test skips.
+      - name: Verify the actual native platform
+        env:
+          EXPECTED_NATIVE_PLATFORM: ${{ matrix.nativePlatform }}
+        run: node -e "if (process.platform !== process.env.EXPECTED_NATIVE_PLATFORM) throw new Error('native_security_wrong_os'); console.log(JSON.stringify({platform:process.platform,architecture:process.arch,osRelease:require('node:os').release()}))"
+      - name: Validate deterministic package
+        run: node platform-skills/tools/build-runtime-package.mjs --skill-dir platform-skills/t-bank --check
+      - name: Test native crypto, ACL and independent crash cleanup
+        run: node --test platform-skills/t-bank/tests/runtime.test.mjs
+      - name: Test delegated T‑ID authorization boundary
+        run: node --test platform-skills/t-bank/tests/authorization.test.mjs platform-skills/t-bank/tests/t-id-flow.test.mjs platform-skills/t-bank/tests/http-errors.test.mjs
+      - name: Test one headed browser with synthetic TOTP and SMS
+        run: node --test platform-skills/t-bank/tests/browser-smoke.test.mjs
+      - name: Test caller-owned Playwright context with synthetic T‑ID
+        run: node --test platform-skills/t-bank/tests/playwright-client.test.mjs

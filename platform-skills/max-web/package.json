@@ -1,0 +1,7 @@
+{
+  "name": "trelio-max-web-tests",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "devDependencies": { "linkedom": "0.18.12" }
+}

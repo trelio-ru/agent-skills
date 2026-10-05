@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "gas-pravosudie",
+    "version": "4.0.5",
+    "summary": "После 404 или другой HTTP-ошибки доступен явный переход на другую официальную страницу суда в той же сессии. Чтение ошибочного документа, авторизация и действия сохраняют строгие проверки."
+  },
+  "connection": null,
+  "runtime": {
+    "version": "1.0.5",
+    "minimumHostVersion": "2.4.0",
+    "entrypoint": {
+      "path": "scripts/trelio-gas-pravosudie.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network"
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "protected-snapshot",
+      "leaseMs": 1800000,
+      "manualAssist": false
+    },
+    "files": [
+      { "source": "scripts/trelio-gas-pravosudie.mjs", "path": "scripts/trelio-gas-pravosudie.mjs", "mode": 493 },
+      { "source": "scripts/core.mjs", "path": "scripts/core.mjs", "mode": 420 },
+      { "source": "scripts/native.mjs", "path": "scripts/native.mjs", "mode": 420 },
+      { "source": "scripts/native-macos.swift", "path": "scripts/native-macos.swift", "mode": 420 },
+      { "source": "scripts/native-windows.cs", "path": "scripts/native-windows.cs", "mode": 420 },
+      { "source": "scripts/private-directory.ps1", "path": "scripts/private-directory.ps1", "mode": 420 },
+      { "source": "scripts/browser.mjs", "path": "scripts/browser.mjs", "mode": 420 },
+      { "source": "scripts/worker.mjs", "path": "scripts/worker.mjs", "mode": 420 },
+      { "source": "scripts/sign-in.mjs", "path": "scripts/sign-in.mjs", "mode": 420 },
+      { "source": "scripts/windows.mjs", "path": "scripts/windows.mjs", "mode": 420 },
+      { "source": "scripts/storage.mjs", "path": "scripts/storage.mjs", "mode": 420 },
+      { "source": "scripts/storage-codec.mjs", "path": "scripts/storage-codec.mjs", "mode": 420 },
+      { "source": "scripts/playwright-storage-LICENSE.txt", "path": "scripts/playwright-storage-LICENSE.txt", "mode": 420 },
+      { "source": "scripts/page-actions.mjs", "path": "scripts/page-actions.mjs", "mode": 420 },
+      { "source": "scripts/scenario.mjs", "path": "scripts/scenario.mjs", "mode": 420 }
+    ]
+  }
+}

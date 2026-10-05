@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "release": {
+    "skillId": "dodostats-drinkitstats",
+    "catalogSlug": "dodostats-drinkitstats",
+    "catalogVisibility": "platform",
+    "marketplaceCategory": "business",
+    "version": "1.1.0",
+    "title": "DodoStats / DrinkitStats",
+    "description": "Read-only анализ выручки Dodo и Drinkit по сохранённым снимкам: доступность данных, поиск точек, сводки, динамика, рейтинги и сравнение локаций.",
+    "searchTerms": [
+      "DodoStats",
+      "DrinkitStats",
+      "dodostats.ru",
+      "drinkitstats.ru",
+      "Додо Статс",
+      "Дринкит Статс",
+      "выручка Додо",
+      "выручка Drinkit",
+      "рейтинг пиццерий",
+      "рейтинг кофеен"
+    ],
+    "summary": "Разрешить навыку автоматически использовать все актуальные строго read-only методы DodoStats и DrinkitStats."
+  },
+  "remoteMcp": {
+    "schemaVersion": 2,
+    "transport": "streamable_http",
+    "endpoint": "https://dodostats.ru/mcp",
+    "protocolVersion": "2025-03-26",
+    "authentication": {
+      "type": "none"
+    },
+    "toolPolicy": {
+      "mode": "all_read_only"
+    },
+    "headers": {},
+    "credentialHelp": null
+  }
+}

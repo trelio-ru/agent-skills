@@ -1,0 +1,25 @@
+name: Public source boundary
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  public-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Audit the tracked public snapshot
+        run: node platform-skills/tools/check-public-source.mjs
+      - name: Test the public boundary and package contracts
+        run: node --test platform-skills/tools/*.test.mjs

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "email-imap-smtp",
+    "version": "2.0.1",
+    "summary": "Защищённая форма настройки почты запускается без лишнего DNS-запроса к локальному адресу. Это устраняет зависание до открытия браузера при медленном resolver-е на macOS; прежние подключения и защита паролей сохраняются."
+  },
+  "connection": null,
+  "runtime": {
+    "version": "2.0.1",
+    "minimumHostVersion": "1.4.0",
+    "entrypoint": {
+      "path": "trelio-email.py",
+      "interpreter": "python"
+    },
+    "capabilities": [
+      "local-session",
+      "network"
+    ],
+    "files": [
+      {
+        "source": "scripts/trelio-email.py",
+        "path": "trelio-email.py",
+        "mode": 493
+      },
+      {
+        "source": "scripts/email_native.py",
+        "path": "email_native.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/email_worker.py",
+        "path": "email_worker.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/native-macos.swift",
+        "path": "native-macos.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/native-windows.cs",
+        "path": "native-windows.cs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/private-directory.ps1",
+        "path": "private-directory.ps1",
+        "mode": 420
+      }
+    ]
+  }
+}

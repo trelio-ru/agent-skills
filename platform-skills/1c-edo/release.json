@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "1c-edo",
+    "version": "1.1.1",
+    "summary": "Рабочие команды отличают неоткрытый Agent Run от настоящего legacy-layout blocker и исполняют checkout через typed secret_exec."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Здесь хранятся только общие адреса и лимиты. Личный логин и пароль каждый сотрудник вводит на одноразовой локальной странице в браузере – Trelio их не получает."
+    ],
+    "configFields": [
+      {
+        "key": "schemaVersion",
+        "kind": "literal",
+        "value": 1
+      },
+      {
+        "key": "odataBaseUrl",
+        "label": "Базовый URL OData",
+        "required": true,
+        "placeholder": "https://example.com/base/odata/standard.odata/",
+        "kind": "url",
+        "urlPolicy": "public-https-base"
+      },
+      {
+        "key": "filesBaseUrl",
+        "label": "Базовый URL файлового endpoint",
+        "required": true,
+        "placeholder": "https://example.com/base/hs/files/",
+        "help": "Runtime добавляет только разрешённые metadata и UUID выбранного файла.",
+        "kind": "url",
+        "urlPolicy": "public-https-base"
+      },
+      {
+        "key": "maxRows",
+        "label": "Строк на странице",
+        "required": true,
+        "kind": "integer",
+        "default": 50,
+        "minimum": 1,
+        "maximum": 200
+      },
+      {
+        "key": "maxPages",
+        "label": "Страниц за поиск",
+        "required": true,
+        "kind": "integer",
+        "default": 3,
+        "minimum": 1,
+        "maximum": 10
+      },
+      {
+        "key": "maxFileBytes",
+        "label": "Максимальный файл, МБ",
+        "required": true,
+        "kind": "integer",
+        "default": 52428800,
+        "minimum": 1024,
+        "maximum": 524288000,
+        "displayMultiplier": 1048576
+      },
+      {
+        "key": "requestTimeoutMs",
+        "label": "Таймаут запроса, секунд",
+        "required": true,
+        "kind": "integer",
+        "default": 20000,
+        "minimum": 1000,
+        "maximum": 60000,
+        "displayMultiplier": 1000
+      },
+      {
+        "key": "accessHelpUrl",
+        "label": "Ссылка для запроса личного доступа",
+        "placeholder": "https://intranet.example.com/1c-access",
+        "kind": "url",
+        "urlPolicy": "https",
+        "nullable": true
+      },
+      {
+        "key": "accessInstructions",
+        "label": "Инструкция сотруднику",
+        "placeholder": "К кому обратиться и как запросить личную учётную запись 1С.",
+        "kind": "text",
+        "maximumLength": 2000,
+        "multiline": true,
+        "nullable": true
+      }
+    ],
+    "secretFields": [
+      {
+        "requestKey": "xOData",
+        "bindingKey": "x_odata",
+        "label": "X-OData",
+        "requiredOnCreate": true,
+        "validation": "single-line-16-1024",
+        "name": "1С X-OData",
+        "publicDescription": "Секретный заголовок X-OData для независимого read-only подключения 1С.",
+        "placeholderNew": "Секретный заголовок этого навыка",
+        "placeholderExisting": "Оставьте пустым, чтобы не менять",
+        "help": "Значение сохраняется в отдельный Agent Secret именно этого навыка и не возвращается в браузер или MCP."
+      }
+    ]
+  },
+  "runtime": {
+    "version": "1.1.0",
+    "minimumHostVersion": "2.0.10",
+    "entrypoint": {
+      "path": "trelio-1c-edo.py",
+      "interpreter": "python"
+    },
+    "capabilities": [
+      "local-session",
+      "network",
+      "secret-checkout"
+    ],
+    "files": [
+      {
+        "source": "scripts/trelio-1c-edo.py",
+        "path": "trelio-1c-edo.py",
+        "mode": 493
+      },
+      {
+        "source": "trelio-secret-setup.json",
+        "path": "trelio-secret-setup.json",
+        "mode": 420
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ozon для покупателя"
+  short_description: "Поиск товаров, доставка и собственные заказы"
+  default_prompt: "Используй $ozon-buyer-search, чтобы найти и сравнить товары на Ozon с проверкой доставки."

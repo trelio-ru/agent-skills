@@ -5,6 +5,9 @@
 реальные данные компаний, credentials, sessions, application identity и signing
 keys сюда не добавляются. Перед правкой прочитай README.md и полный контракт
 из references/ затронутого навыка; для релиза – docs/release-process.md.
+Для Windows/native bootstrap прочитай полный
+[windows-native-runtime.md](docs/windows-native-runtime.md). Общий статический
+gate обходит все provider-ы; native gate выполняется на реальной Windows.
 
 Канонический main остаётся чистым. Новая работа выполняется в отдельном
 физическом worktree и ветке codex/* от свежего origin/main. Перед правкой:
@@ -26,3 +29,8 @@ artifact, digest, CAS и read-back. Сетевые ошибки: минимум 
 Commit на русском, только файлы задачи. Опубликуй ветку, дождись exact зелёного
 CI и интегрируй через PR. Затем обнови чистый canonical main и удали только свой
 clean merged worktree и ветку. Новая лицензия без решения пользователя не вводится.
+
+`Public source boundary` и check-public-source.mjs проверяют tracked snapshot
+перед каждым push. Корпоративные исходники не копируются даже как fixtures.
+Публикация исходников не разрешает перенос application identity; Telegram
+artifact собирается только в отдельном private release-контуре.

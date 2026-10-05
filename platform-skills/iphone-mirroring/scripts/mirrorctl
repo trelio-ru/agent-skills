@@ -1,0 +1,101 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+# Swift даёт прямой доступ к CoreGraphics и Accessibility, но запуск исходника
+# через `swift` заново компилировал бы его при каждой команде. Обёртка хранит
+# бинарник только во временном пользовательском кэше и пересобирает его, когда
+# меняется sha256 исходника. В репозиторий собранные артефакты не попадают.
+script_dir="${0:A:h}"
+source_path="${script_dir}/mirrorctl.swift"
+supervisor_source="${script_dir}/mirror-session-supervisor.swift"
+input_safety_source="${script_dir}/input-safety.swift"
+runtime_output_source="${script_dir}/runtime-output.swift"
+guardian_source="${script_dir}/input-guardian.swift"
+bridge_source="${script_dir}/virtual-display-bridge.m"
+bridge_header="${script_dir}/virtual-display-bridge.h"
+task_temp_root="${TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR)}"
+cache_dir="${task_temp_root%/}/codex-iphone-mirroring"
+source_hash="$(
+  shasum -a 256 \
+    "${source_path}" \
+    "${supervisor_source}" \
+    "${input_safety_source}" \
+    "${runtime_output_source}" \
+    "${guardian_source}" \
+    "${bridge_source}" \
+    "${bridge_header}" \
+    "$0" \
+    | shasum -a 256 \
+    | awk '{print $1}'
+)"
+binary_path="${cache_dir}/mirrorctl-${source_hash}"
+supervisor_path="${cache_dir}/mirror-session-supervisor-${source_hash}"
+guardian_path="${cache_dir}/input-guardian-${source_hash}"
+
+if [[ ! -x "${binary_path}" || ! -x "${supervisor_path}" || ! -x "${guardian_path}" ]]; then
+  mkdir -p "${cache_dir}"
+  temporary_binary="${binary_path}.tmp.$$"
+  temporary_supervisor="${supervisor_path}.tmp.$$"
+  temporary_guardian="${guardian_path}.tmp.$$"
+  temporary_bridge_object="${cache_dir}/virtual-display-bridge-${source_hash}.tmp.$$.o"
+  trap 'rm -f "${temporary_binary:-}" "${temporary_supervisor:-}" "${temporary_bridge_object:-}" "${temporary_guardian:-}"' EXIT INT TERM
+
+  # Не включаем оптимизацию: Accessibility возвращает CoreFoundation-объекты с
+  # необычным временем жизни, а производительность CLI определяется OCR, не CPU.
+  xcrun swiftc \
+    -parse-as-library \
+    -warnings-as-errors \
+    -framework AppKit \
+    -framework ApplicationServices \
+    -framework CoreGraphics \
+    -framework Vision \
+    "${source_path}" \
+    "${input_safety_source}" \
+    "${runtime_output_source}" \
+    -o "${temporary_binary}"
+
+  # Supervisor должен жить между отдельными CLI-вызовами, потому что время
+  # жизни CGVirtualDisplay связано с владеющим процессом. Приватный API спрятан
+  # за узким Objective-C bridge и проверяется через runtime lookup.
+  xcrun clang \
+    -fobjc-arc \
+    -fmodules \
+    -Wall \
+    -Wextra \
+    -c "${bridge_source}" \
+    -o "${temporary_bridge_object}"
+
+  xcrun swiftc \
+    -parse-as-library \
+    -warnings-as-errors \
+    -framework AppKit \
+    -framework ApplicationServices \
+    -framework CoreGraphics \
+    -import-objc-header "${bridge_header}" \
+    "${supervisor_source}" \
+    "${input_safety_source}" \
+    "${temporary_bridge_object}" \
+    -o "${temporary_supervisor}"
+
+  # Отдельный короткоживущий процесс обслуживает event tap и выполняет один
+  # handoff. Его deadline не разделяет замки/потоки supervisor-а.
+  xcrun swiftc \
+    -parse-as-library -warnings-as-errors \
+    -framework AppKit -framework ApplicationServices -framework CoreGraphics \
+    "${guardian_source}" "${input_safety_source}" -o "${temporary_guardian}"
+
+  chmod 700 "${temporary_guardian}"
+  mv -f "${temporary_guardian}" "${guardian_path}"
+  chmod 700 "${temporary_binary}"
+  chmod 700 "${temporary_supervisor}"
+  mv -f "${temporary_binary}" "${binary_path}"
+  mv -f "${temporary_supervisor}" "${supervisor_path}"
+  rm -f "${temporary_bridge_object}"
+  trap - EXIT INT TERM
+fi
+
+export IPHONE_MIRRORING_INPUT_GUARDIAN_PATH="${guardian_path}"
+export IPHONE_MIRRORING_SUPERVISOR_PATH="${supervisor_path}"
+export IPHONE_MIRRORING_SESSION_DIR="${cache_dir}/session-v1"
+exec "${binary_path}" "$@"
