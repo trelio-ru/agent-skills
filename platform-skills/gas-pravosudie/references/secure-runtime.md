@@ -2,7 +2,7 @@
 
 ## Граница и lifecycle
 
-Release 4.0.5 объявляет host `browserSession` v1 класса `protected-snapshot`,
+Release 4.1.0 объявляет host `browserSession` v1 класса `protected-snapshot`,
 30-минутный absolute lease и `manualAssist=false`. Runtime рассчитан только на
 macOS/Windows и всегда запускает headed Chrome/Edge. Chromium, worker и control
 plane принадлежат native guardian; он использует continuous clock и закрывает
@@ -116,6 +116,10 @@ JSON передаются owner-only файлами вне Git/Workspace. Auth a
 - local HTTP/CLI error сохраняет только безопасный код и проверенные recovery
   metadata; ошибка snapshot после callback оставляет worker в `ready`;
 - status/stop завершённого guardian не обращается к stale control port.
+- основной `SKILL.md` сохраняет проверку любого судебного комплекта до подписи
+  и подачи: отдельные документы, русские названия транслитом, проверенное
+  количество листов, соответствие PDF/подписей и видимых названий в форме;
+  сценарии — `../tests/document-preparation-scenarios.md`.
 
 ## Безопасная диагностика HTTP-ошибок
 

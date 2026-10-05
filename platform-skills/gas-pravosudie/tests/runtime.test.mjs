@@ -356,7 +356,7 @@ test('a replaced court tab is rebound without creating or focusing another page'
 
 test('runtime release binds the common protected-snapshot contract', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
-  assert.equal(release.release.version, '4.0.5');
+  assert.equal(release.release.version, '4.1.0');
   assert.equal(release.runtime.version, RUNTIME_VERSION);
   assert.equal(release.runtime.minimumHostVersion, '2.4.0');
   assert.deepEqual(release.runtime.browserSession, {
@@ -365,6 +365,43 @@ test('runtime release binds the common protected-snapshot contract', async () =>
     leaseMs: 1_800_000,
     manualAssist: false,
   });
+});
+
+// Filing rules must be delivered in the main instruction projection, not only
+// in an optional signing reference. Otherwise an agent submitting a new claim
+// can legally enter the browser workflow without ever seeing the file checks.
+test('main instructions gate all filing workflows on document identity and verified page counts', async () => {
+  // Git's native Windows checkout may use CRLF. Compare Markdown semantics,
+  // not the platform's line-ending convention, before extracting a section.
+  const instructions = (await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8'))
+    .replace(/\r\n?/gu, '\n');
+  const preparation = instructions.split('## Подготовка файлов для любой судебной подачи\n')[1]
+    ?.split('\n## ')[0];
+  assert.ok(preparation, 'file preparation must be in the delivered main instructions');
+  assert.match(preparation, /новому обращению[\s\S]*существующее дело[\s\S]*участников дела/u);
+  assert.match(preparation, /до подписания, загрузки и финальной/u);
+  assert.match(preparation, /самостоятельный документ[\s\S]*отдельным файлом/u);
+  assert.match(preparation, /Страницы одного[\s\S]*сохраняй вместе/u);
+  assert.match(preparation, /транслитерацию[\s\S]*русских названий, а не английские/u);
+  assert.match(preparation, /фактическое количество страниц[\s\S]*PDF-парсером/u);
+  assert.match(preparation, /количество листов в имени/u);
+  assert.match(preparation, /не проверено[\s\S]*останови загрузку и подачу/u);
+});
+
+// Naming is preparation, never permission to rewrite already signed bytes or
+// submit a corrected claim. Retain both the signature fence and the final UI
+// comparison so a valid local name cannot mask a stale portal upload label.
+test('filing preparation protects signed bytes and verifies the actual uploaded document names', async () => {
+  const instructions = (await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8'))
+    .replace(/\r\n?/gu, '\n');
+  const preparation = instructions.split('## Подготовка файлов для любой судебной подачи\n')[1]
+    ?.split('\n## ')[0];
+  assert.match(preparation, /изменение байтов PDF[\s\S]*требует новой подписи/u);
+  assert.match(preparation, /прежнюю подпись[\s\S]*точном совпадении SHA-256/u);
+  assert.match(preparation, /Исходные файлы пользователя не изменяй/u);
+  assert.match(preparation, /После загрузки и на итоговом экране/u);
+  assert.match(preparation, /видимое[\s\S]*русское название с количеством листов/u);
+  assert.match(instructions, /Финальное `Отправить`[\s\S]*прямого поручения/u);
 });
 
 test('private guardian config allows one UTF-8 preamble but no second one', () => {
