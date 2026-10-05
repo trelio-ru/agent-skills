@@ -2,7 +2,7 @@
 
 ## Граница и lifecycle
 
-Release 4.0.4 объявляет host `browserSession` v1 класса `protected-snapshot`,
+Release 4.0.5 объявляет host `browserSession` v1 класса `protected-snapshot`,
 30-минутный absolute lease и `manualAssist=false`. Runtime рассчитан только на
 macOS/Windows и всегда запускает headed Chrome/Edge. Chromium, worker и control
 plane принадлежат native guardian; он использует continuous clock и закрывает
@@ -145,3 +145,12 @@ HTTP 401. Только initial/recovery navigation и подготовка вх�
 авторизации во время проверки исключение не применяется. Изменённая форма,
 другой origin/status, обычный рабочий документ и callback сохраняют HTTP-ошибку.
 Исключение позволяет начать вход, но не доказывает готовность кабинета.
+
+HTTP-ошибка рабочего документа блокирует его snapshot, полный script и действия
+с controls, но не explicit `page --navigate` на проверенный read-only `sudrf.ru`
+URL. Такой переход не требует DOM snapshot неработающей страницы. Он сохраняет
+exact page/context, lease, auth-origin/password/OTP/active-helper guards и после
+goto заново проверяет HTTP/status и auth boundary назначения. Writable navigation
+сохраняет обычные snapshot/confirm gates. Ошибка не вызывает автоматический
+переход, новый вход, повтор подачи или focus. После успешного перехода ordinary
+script/snapshot снова доступен. 404 не доказывает удаления дела или отсутствия акта.

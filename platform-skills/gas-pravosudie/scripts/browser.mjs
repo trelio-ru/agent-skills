@@ -17,6 +17,7 @@ import {
   describeControl,
   needsAuthorization,
   protectedControl,
+  readOnlyNavigation,
   validatedPagePacket,
   workingPageUrl,
 } from './page-actions.mjs';
@@ -342,7 +343,7 @@ export class CourtPortal {
     return { context: this.context, page: this.page };
   }
 
-  async actionSafe() {
+  async actionSafe({ readOnlyRecoveryNavigation = false } = {}) {
     await this.permit();
     requireThat(!this.authorization, 'authorization_in_progress');
     // Popup-based provider flows may legitimately replace the original page.
@@ -352,7 +353,11 @@ export class CourtPortal {
       this.page = this.context.pages().find(page => !page.isClosed() && officialCourtUrl(page.url()));
     }
     requireThat(this.page && !this.page.isClosed() && workingPageUrl(this.page.url()), 'unexpected_provider_origin');
-    this.assertDocumentAvailable();
+    // HTTP failure closes reads/actions on this document, not the browser's
+    // ability to leave it. Only an explicit validated read-only navigation
+    // may skip this preflight. Auth origin, active ESIA, native lease and
+    // password/OTP guards remain mandatory; the destination is checked anew.
+    if (!readOnlyRecoveryNavigation) this.assertDocumentAvailable();
     requireThat(await this.page.locator('input[type="password"]:visible,input[autocomplete="one-time-code"]:visible').count() === 0,
       'authentication_is_private');
   }
@@ -399,15 +404,20 @@ export class CourtPortal {
 
   async action(packet) {
     validatedPagePacket(packet);
-    await this.actionSafe();
+    const readOnlyRecoveryNavigation = packet.action === 'navigate' && readOnlyNavigation(packet.url);
+    await this.actionSafe({ readOnlyRecoveryNavigation });
     if (packet.action === 'navigate') {
-      requireThat(this.observedUrl === this.page.url(), 'fresh_snapshot_required');
+      // A fixed read-only URL needs no DOM control snapshot. Requiring one
+      // after a 404 would deadlock recovery because snapshot is correctly
+      // forbidden on the failed document. Writable routes keep both gates.
+      requireThat(readOnlyRecoveryNavigation || this.observedUrl === this.page.url(), 'fresh_snapshot_required');
       const authorizationRequired = needsAuthorization(packet);
       if (packet.dryRun) return { dryRun: true, action: packet.action, authorizationRequired };
       requireThat(!authorizationRequired || packet.confirm === true, 'explicit_user_instruction_required');
       await this.clearControls();
       await this.permit();
       await this.page.goto(packet.url, { waitUntil: 'domcontentloaded' });
+      await this.actionSafe();
       return { ok: true };
     }
     const target = this.controls.get(packet.ref);

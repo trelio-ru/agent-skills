@@ -8,13 +8,11 @@ import { buildRuntimePackage } from "../../tools/build-runtime-package.mjs";
 const repositoryRoot = new URL("../../../", import.meta.url);
 const [
   connectionDocs,
-  runtimeDocs,
   skillInstructions,
   releaseSource,
   runtimeSource,
 ] = await Promise.all([
-  readFile(new URL("docs/agent-skill-connections.md", repositoryRoot), "utf8"),
-  readFile(new URL("docs/agent-skill-runtime-releases.md", repositoryRoot), "utf8"),
+  readFile(new URL("docs/telegram-mtproto-message-workflows.md", repositoryRoot), "utf8"),
   readFile(new URL("platform-skills/telegram-mtproto/SKILL.md", repositoryRoot), "utf8"),
   readFile(new URL("platform-skills/telegram-mtproto/release.json", repositoryRoot), "utf8"),
   readFile(new URL("platform-skills/telegram-mtproto/scripts/trelio-telegram.py", repositoryRoot), "utf8"),
@@ -22,9 +20,11 @@ const [
 const releaseManifest = JSON.parse(releaseSource);
 
 test("Telegram MTProto release preserves privacy, search, scheduled-message, edit and Markdown contracts", () => {
-  assert.match(connectionDocs, /members --chat ID_OR_USERNAME/u);
   assert.match(skillInstructions, /members --chat ID_OR_USERNAME/u);
-  for (const source of [connectionDocs, runtimeDocs, skillInstructions]) {
+  // Generic product policy belongs to Trelio. Public provider tests bind the
+  // delivered instruction and provider workflow, without importing a private
+  // product document or weakening the runtime/manifest assertions below.
+  for (const source of [skillInstructions]) {
     assert.match(source, /audience=members/u);
     assert.match(source, /audience=subscribers/u);
     assert.match(source, /providerMayLimitResults/u);
@@ -34,7 +34,7 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
 
   assert.match(skillInstructions, /`--limit 1\.\.200`/u);
   assert.match(skillInstructions, /не обходи отказ через Telegram Web\/UI/u);
-  for (const source of [connectionDocs, runtimeDocs, skillInstructions]) {
+  for (const source of [skillInstructions]) {
     assert.match(source, /search --global|`--global`/u);
     assert.match(source, /nextCursor|`--cursor`/u);
     assert.match(source, /--context|contextCoverage/u);
@@ -42,7 +42,7 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /coverage/u);
     assert.match(source, /complete/u);
   }
-  for (const source of [connectionDocs, runtimeDocs, skillInstructions]) {
+  for (const source of [skillInstructions]) {
     assert.match(source, /edit --chat|`edit`/u);
     assert.match(source, /собствен|own outgoing/iu);
     assert.match(source, /--dry-run/u);
@@ -51,7 +51,7 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /HTML/iu);
     assert.match(source, /\[.*\]\(https:\/\//u);
   }
-  for (const source of [connectionDocs, runtimeDocs, skillInstructions]) {
+  for (const source of [skillInstructions]) {
     assert.match(source, /scheduled --chat|`scheduled`/u);
     assert.match(source, /--schedule-at/u);
     assert.match(source, /RFC ?3339/u);
@@ -60,6 +60,10 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /Telegram Web fallback|Telegram Web/u);
   }
   assert.match(runtimeSource, /scheduled=True/u);
+  assert.match(connectionDocs, /--context/u);
+  assert.match(connectionDocs, /--approval-hash/u);
+  assert.match(connectionDocs, /schedule-at/u);
+  assert.match(connectionDocs, /providerMayLimitResults/u);
   assert.match(runtimeSource, /MIN_SCHEDULE_LEAD_SECONDS = 60/u);
   assert.match(runtimeSource, /"scheduled"/u);
   assert.match(runtimeSource, /"--schedule-at"/u);

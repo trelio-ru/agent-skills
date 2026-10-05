@@ -28,6 +28,7 @@ import { newBackgroundContext } from '../scripts/windows.mjs';
 // The shared provider selector runs this entrypoint on each CI OS. Keep the
 // auth lifecycle regressions in that gate without changing the global matrix.
 import './sign-in-regressions.mjs';
+import './http-navigation-regressions.mjs';
 
 const identity = identityFromEnv({
   TRELIO_SKILL_ID: 'gas-pravosudie',
@@ -355,7 +356,7 @@ test('a replaced court tab is rebound without creating or focusing another page'
 
 test('runtime release binds the common protected-snapshot contract', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
-  assert.equal(release.release.version, '4.0.4');
+  assert.equal(release.release.version, '4.0.5');
   assert.equal(release.runtime.version, RUNTIME_VERSION);
   assert.equal(release.runtime.minimumHostVersion, '2.4.0');
   assert.deepEqual(release.runtime.browserSession, {
