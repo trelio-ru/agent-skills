@@ -5,6 +5,9 @@
 реальные данные компаний, credentials, sessions, application identity и signing
 keys сюда не добавляются. Перед правкой прочитай README.md и полный контракт
 из references/ затронутого навыка; для релиза – docs/release-process.md.
+Для Windows/native bootstrap прочитай полный
+[windows-native-runtime.md](docs/windows-native-runtime.md). Общий статический
+gate обходит все provider-ы; native gate выполняется на реальной Windows.
 
 Канонический main остаётся чистым. Новая работа выполняется в отдельном
 физическом worktree и ветке codex/* от свежего origin/main. Перед правкой:

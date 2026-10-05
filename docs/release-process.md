@@ -46,3 +46,5 @@ Application identity намеренно извлекаема получател�
 provider-ы по exact diff и проверяет Linux/macOS/Windows. Для email, Госуслуг,
 Т-Банка и WhatsApp сохраняются их отдельные native/browser workflows.
 Подробности исполнения – [github-actions-execution.md](github-actions-execution.md).
+Windows bootstrap следует [общему контракту](windows-native-runtime.md),
+который распространяется и на приватные навыки.
