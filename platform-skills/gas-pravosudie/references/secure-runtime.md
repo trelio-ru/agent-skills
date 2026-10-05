@@ -2,7 +2,7 @@
 
 ## Граница и lifecycle
 
-Release 4.1.0 объявляет host `browserSession` v1 класса `protected-snapshot`,
+Release 4.1.1 объявляет host `browserSession` v1 класса `protected-snapshot`,
 30-минутный absolute lease и `manualAssist=false`. Runtime рассчитан только на
 macOS/Windows и всегда запускает headed Chrome/Edge. Chromium, worker и control
 plane принадлежат native guardian; он использует continuous clock и закрывает
