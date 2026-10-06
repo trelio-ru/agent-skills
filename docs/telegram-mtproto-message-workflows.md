@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.3.8`
-публикует runtime `2.3.6`, требует Telethon `>=1.44,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.4.0`
+публикует runtime `2.4.0`, требует Telethon `>=1.44,<2` и сохраняет
 minimum host `1.11.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -141,6 +141,51 @@ outgoing, точный текст, reply target, известный topic и req
 ожидание FloodWait отключены для send/edit/reply, queue mutations и
 transcription; чтение сохраняет обычную retry policy библиотеки.
 
+## Область поиска сообщений
+
+`search` требует ровно одну область: повторяемый `--chat EXACT` (до 20
+references), `--folder NAME_OR_ID` либо `--global`. Exact references разрешаются
+через личную сессию; aliases одного peer читаются один раз. Совпадающие message
+IDs разных peers остаются разными сообщениями. `--limit 1..200` (default 20)
+ограничивает весь результат, а не каждый чат. Перед заполнением общего лимита
+runtime даёт каждому выбранному чату долю; при лимите меньше числа чатов часть
+области может остаться непрочитанной. Итог отсортирован по дате найденных
+сообщений, но bounded sample не обещает глобально самые новые совпадения.
+`coverage.chats[]` отдельно описывает каждый проверенный, отложенный либо
+недоступный чат. Ошибка одного чата сохраняет результаты остальных и не
+превращается в доказательство отсутствия.
+
+Global scope использует native `messages.searchGlobal`, без перебора диалогов.
+`--chat-type user|group|channel` передаёт соответственно `users_only`,
+`groups_only`, `broadcasts_only`; `user` включает личные диалоги с ботами.
+`--folder-id` принимает только `0` (основной список) либо `1` (архив).
+Telegram custom folders имеют другое пространство IDs и не передаются в это
+поле. Global filters входят в binding cursor; query-only tokens совместимы.
+
+`folders` читает live `messages.getDialogFilters` и возвращает только безопасные
+ID/title пользовательских папок. `--folder` принимает exact ID либо однозначное
+имя; одинаковые названия требуют ID. Поддерживаются `DialogFilter` и
+`DialogFilterChatlist`. Explicit include/pinned peers входят в область,
+exclude peers исключаются, а explicit include переопределяет динамические
+ограничения прочитанности, архива и mute. Статическая папка без `--chat-type`
+не требует просмотра recent dialogs. Динамическая папка проверяется по
+metadata максимум 1000 диалогов, с look-ahead для обнаружения ограничения;
+history на этом шаге не сериализуется. Неизвестные category/read/mute metadata
+не расширяют область и отмечаются `folder_membership_unavailable`.
+Inherited mute settings не приравниваются к unmuted.
+
+Folder scope выбирает до 20 чатов и использует тот же поиск, что repeated
+`--chat`. `--chat-type` дополнительно сужает папку. Exact include peers вне
+bounded dialog response сохраняются; chat/dialog ceilings отмечаются отдельно
+в `folder.coverage` и общем `coverage`. При продолжении live folder definition
+и разрешённый набор peers должны совпасть с cursor. Изменение папки требует
+нового поиска. Raw include lists, access hashes и session credentials не
+попадают в ответ или token.
+Для exact include peers используются InputPeers текущей folder definition,
+даже если numeric peer ещё не известен session cache; приватные access данные
+остаются только внутри локального вызова. Разрешённая сущность обязана
+подтвердить тот же marked peer ID.
+
 ## Фильтры поиска сообщений
 
 `search --chat EXACT --from ID_OR_USERNAME` использует server-side from_id
@@ -149,8 +194,9 @@ transcription; чтение сохраняет обычную retry policy би�
 В этих случаях runtime оставляет native text/media/date search, а exact author
 проверяет по его bounded result stream. coverage.authorFilter=bounded_local
 отличает это от server / none. Условие автора никогда не отбрасывается.
-Фильтры `--since`, `--until`, `--timezone` и `--media-type` доступны также
-в global scope. Типы: any, photo, video, document, voice, round-video, audio,
+Фильтры `--since`, `--until`, `--timezone` и `--media-type` доступны во всех
+областях; `--from` также доступен для selected chats и custom folder.
+Типы: any, photo, video, document, voice, round-video, audio,
 url. Без query нужен хотя бы один явный sender/date/media filter; global scope
 требует текст либо media filter и не принимает только даты.
 
@@ -166,19 +212,61 @@ Global messages.searchGlobal не поддерживает from_id. `--global --
 supergroups/channels и нарушила scope. Global cursor связывает исходный query
 со всем набором normalized filters. Query-only cursor остаётся совместимым.
 
-Filtered exact-chat search читает до 1000 native hits / 10 provider pages
-по максимум 100 и возвращает до 200 совпадений. Даты проверяются также локально:
+Filtered exact-chat search за одну логическую страницу читает до 1000 native
+hits / 10 provider batches по максимум 100. Даты проверяются также локально:
 Telegram может игнорировать max_date у media-only request. Look-ahead и
 provider exhaustion определяют hasMore; scanLimitReached не считается концом
 поиска. Даже пустая partial page содержит nextBeforeId и позволяет продолжить.
 Если есть выбранные совпадения, cursor остаётся на последнем возвращённом,
 чтобы остаток provider page не был потерян.
 
-Продолжение – `--before-id` из nextBeforeId; повторяющийся либо неубывающий
-provider offset отклоняется. Scanned/scanLimit, authorFilter и incompleteReasons
-явно описывают локальную проверку. Provider inexact flag, недоступный author/date
-и продолжение не позволяют утверждать complete. Context по-прежнему
-ограничивает выдачу десятью hits.
+## Продолжение и полнота поиска
+
+`--pages 1..10` (default 3) автоматически продолжает логические страницы каждого
+выбранного чата либо global scope. `--page-size 1..200` (default 100)
+ограничивает совпадения одной страницы; общий `--limit` действует раньше.
+Selected/folder search имеет общий потолок 10 000 native hits на вызов,
+включая bounded local verification, look-ahead и строки, полученные до сбоя
+или отказа при проверке страницы. Ошибка не обнуляет общий scan budget.
+Пустая промежуточная страница
+с безопасным offset продолжается автоматически. В global scope одна
+логическая страница может читать несколько native batches максимум по 100.
+Повторяющийся offset не разрешает бесконечный цикл или фиктивную полноту.
+Дубликаты и изменившийся provider count требуют явного provider exhaustion.
+
+Продолжение всех областей – `--cursor` из `coverage.nextCursor` с теми же query,
+references и normalized filters. Для одного exact чата сохраняется
+`--before-id` из `coverage.nextBeforeId`; его нельзя смешивать с cursor,
+multiple chats, folder или global scope. Selected token содержит только
+query/scope digest, numeric peer/message offsets и состояние страниц. На
+каждом продолжении peers разрешаются заново; cursor не расширяет доступ.
+Совокупность cursor ограничена 10 000 результатов; по достижении потолка
+`cursorLimitReached=true`, `nextCursor=null`, требуется сузить запрос.
+Страницы не являются стабильным snapshot: при накоплении результатов нужно
+дедуплицировать временную выборку по peer identity + message ID.
+
+`coverage.status` равен `complete`, `partial` либо `unavailable`; `summary`
+кратко описывает результат. Только `absenceProven=true` доказывает отсутствие
+совпадений в проверенной области. Пустая partial/unavailable выдача не означает
+«сообщений нет». Scanned/scanLimit, pagesRead, authorFilter и incompleteReasons
+явно описывают границы проверки. `hasMore=null` означает неизвестное
+продолжение недоступной области, а не конец. Provider inexact flag,
+недоступный author/date, обрезанная область папки и отдельно полученное
+продолжение не позволяют утверждать complete для всего запроса.
+
+## Объединённый контекст поиска
+
+`--context 0..10` сохраняет максимум 10 hits и последовательные bounded history
+reads. Пересекающиеся окна одного peer объединяются транзитивно в
+`contextGroups[].messages[]`: каждое сообщение возвращается один раз в группе,
+порядок хронологический, все найденные сообщения имеют `isMatch=true`,
+`matchIds` перечисляет их IDs. Одинаковые IDs разных peers не объединяются.
+Каждый hit содержит компактный `context.groupIndex`, `matchIndex` и собственный
+per-side `coverage`, без копии окна. Group coverage и `contextCoverage` сохраняют
+любую недоступную сторону; объединение не превращает неполный read в полный.
+Foreign peer, неверная сторона окна или превышенный bound делают сторону
+недоступной; такие строки не цитируются и не попадают в объединённую группу.
+Точный `read --context` сохраняет прежнее отдельное `context.messages[]`.
 
 ## Расшифровка
 
@@ -231,6 +319,12 @@ message ID, exact history read и совпадение доставленног�
 Одно исчезновение записи из очереди не доказывает успешную отмену/отправку.
 
 ## Проверка
+
+`tests/test_search_workflows.py` проверяет multi-chat scope, aliases и независимые
+peer ID spaces, общий result/scan budget, автоматическое продолжение, cursor
+binding, native global flags, live custom folders, partial failures и
+транзитивное объединение контекста через синтетический provider без аккаунта
+или сети. Те же regressions исполняются на Linux, macOS и Windows.
 
 `tests/test_message_workflows.py` проверяет observable scope, старые группы,
 public/own разделение, provider page ceilings, link/topic/comment resolution,

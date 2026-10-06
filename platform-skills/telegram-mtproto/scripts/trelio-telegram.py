@@ -85,6 +85,14 @@ MAX_SEARCH_QUERY_CHARS = 256
 # keeping provider calls and JSON output predictably bounded.
 MAX_SEARCH_CONTEXT_RADIUS = 10
 MAX_SEARCH_CONTEXT_RESULTS = 10
+MAX_SEARCH_CHATS = 20
+MAX_SEARCH_PAGES = 10
+DEFAULT_SEARCH_PAGES = 3
+DEFAULT_SEARCH_PAGE_SIZE = 100
+MAX_SELECTED_SEARCH_CURSOR_CHARS = 8_192
+MAX_SELECTED_SEARCH_SCAN = 10_000
+MAX_FOLDER_DIALOGS = 1_000
+MAX_DIALOG_FILTERS = 100
 # Telegram turns a schedule date less than ten seconds in the future into an
 # immediate send. Requiring a full minute at the last pre-mutation check leaves
 # room for peer resolution and ordinary network latency without silently
@@ -93,7 +101,7 @@ MIN_SCHEDULE_LEAD_SECONDS = 60
 MAX_SCHEDULE_AT_CHARS = 64
 DEFAULT_SCHEDULED_LIMIT = 20
 MAX_SCHEDULED_LIMIT = 100
-MESSAGE_WORKFLOW_VERSION = "2.3.1"
+MESSAGE_WORKFLOW_VERSION = "2.4.0"
 MAX_FILTERED_SEARCH_SCAN = 1_000
 MAX_FILTERED_SEARCH_PAGES = 10
 MAX_TRANSCRIPT_CHARS = 65_536
@@ -2380,6 +2388,18 @@ async def public_search_context(
     after: list[Any] = []
     before_complete = True
     after_complete = True
+    def validate_window(rows: list[Any], *, older: bool) -> None:
+        # Grouping uses numeric IDs only after proving their peer namespace.
+        # A foreign or out-of-window row must never become quoted context for
+        # this hit, even when the provider returned an otherwise usable page.
+        peer_key = search_message_key(match, chat)[:-1]
+        if len(rows) > requested or any(
+            type(item.id) is not int or item.id <= 0
+            or search_message_key(item, chat)[:-1] != peer_key
+            or (item.id >= match.id if older else item.id <= match.id)
+            for item in rows
+        ):
+            raise TelegramRuntimeError("Telegram context does not belong to the selected message window.")
     try:
         # Default history order is newest-to-oldest. Reverse the bounded page
         # locally so the final context reads naturally from oldest to newest.
@@ -2391,8 +2411,10 @@ async def public_search_context(
                 offset_id=match.id,
             )
         ]
+        validate_window(before, older=True)
         before.reverse()
     except Exception:
+        before = []
         before_complete = False
 
     try:
@@ -2407,7 +2429,9 @@ async def public_search_context(
                 reverse=True,
             )
         ]
+        validate_window(after, older=False)
     except Exception:
+        after = []
         after_complete = False
 
     chronological = [*before, match, *after]
@@ -2443,29 +2467,87 @@ async def attach_search_contexts(
     raw_messages: list[Any],
     messages: list[dict[str, Any]],
     radius: int,
+    *,
+    chats: list[Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Attach a context window to every returned hit without parallel floods."""
+    """Merge overlapping windows without merging independent peer ID spaces.
+
+    Search hits keep small references and their own per-side coverage. History
+    bytes occur once in the grouped result, including transitive overlaps (A
+    touches B, B touches C). Exact ``read`` keeps its original single window.
+    No permanent message index is created and history requests remain sequential.
+    """
 
     if radius == 0:
         return None
     complete = True
     available = 0
+    groups = []
+    contexts = []
     # Sequential history calls are deliberate. One global search may span many
     # peers, and a burst of concurrent GetHistory requests is more likely to hit
     # Telegram flood controls while providing no useful latency guarantee.
-    for raw_message, message in zip(raw_messages, messages, strict=True):
-        context = await public_search_context(client, raw_message, radius)
-        message["context"] = context
+    for index, (raw_message, message) in enumerate(zip(raw_messages, messages, strict=True)):
+        chat = chats[index] if chats is not None else await optional_message_entity(raw_message, "chat", "get_chat")
+        context = await public_search_context(client, raw_message, radius, chat=chat)
+        contexts.append(context)
+        message["context"] = {"available": context["available"], "groupIndex": None,
+                              "matchIndex": None, "coverage": context["coverage"]}
         if context["available"]:
             available += 1
         if not context["coverage"]["complete"]:
             complete = False
+        if not context["available"]:
+            continue
+        peer_key = search_message_key(raw_message, chat)[:-1]
+        rows = {row["id"]: row for row in context["messages"]}
+        overlaps = [group for group in groups
+                    if group["peerKey"] == peer_key and rows.keys() & group["rows"].keys()]
+        group = {"peerKey": peer_key, "chat": public_entity(chat), "rows": rows, "hits": [index]}
+        for previous in overlaps:
+            # The newest serialization wins if history changed between bounded
+            # reads; snapshotStable=false still applies to the entire search.
+            group["rows"] = {**previous["rows"], **group["rows"]}
+            group["hits"].extend(previous["hits"])
+            groups.remove(previous)
+        groups.append(group)
+    public_groups = []
+    for group_index, group in enumerate(groups):
+        match_ids = {messages[index]["id"] for index in group["hits"]}
+        rows = [dict(row, isMatch=row["id"] in match_ids)
+                for _, row in sorted(group["rows"].items())]
+        positions = {row["id"]: index for index, row in enumerate(rows)}
+        reasons = sorted({reason for index in group["hits"]
+                          for reason in contexts[index]["coverage"]["incompleteReasons"]})
+        public_groups.append({"chat": group["chat"], "messages": rows,
+                              "matchIds": sorted(match_ids),
+                              "coverage": {"complete": not reasons, "incompleteReasons": reasons}})
+        for index in group["hits"]:
+            messages[index]["context"].update(groupIndex=group_index,
+                                               matchIndex=positions[messages[index]["id"]])
     return {
         "radius": radius,
         "attempted": len(messages),
         "available": available,
         "complete": complete,
+        "groups": public_groups,
     }
+
+
+def search_message_key(message: Any, chat: Any | None = None) -> tuple:
+    """Keep Telegram's independent peer namespaces when deduplicating results."""
+
+    peer = getattr(message, "peer_id", None)
+    if isinstance(peer, int) and not isinstance(peer, bool):
+        return ("marked_peer", peer, message.id)
+    for kind, field in (("channel", "channel_id"), ("group", "chat_id"), ("user", "user_id")):
+        value = getattr(peer, field, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return (kind, value, message.id)
+    chat = chat or getattr(message, "chat", None)
+    if chat is None or not isinstance(getattr(chat, "id", None), int):
+        raise TelegramRuntimeError("Search result chat identity is unavailable.")
+    return (type(chat).__name__, chat.id, message.id)
 
 
 async def fetch_global_search_page(
@@ -2474,6 +2556,8 @@ async def fetch_global_search_page(
     limit: int,
     cursor_token: str | None,
     filters: dict[str, Any] | None = None,
+    *,
+    require_exhaustion: bool = False,
 ) -> dict[str, Any]:
     """Fetch one resumable provider page without replaying earlier results.
 
@@ -2516,6 +2600,9 @@ async def fetch_global_search_page(
     messages: list[Any] = []
     identities: set[tuple[int, int]] = set()
     reported_total: int | None = None
+    provider_inexact = False
+    duplicates_seen = False
+    count_changed = False
     provider_exhausted = False
     cursor_available = True
     last_cursor: GlobalSearchCursor | None = None
@@ -2532,7 +2619,9 @@ async def fetch_global_search_page(
     for _request_index in range(request_budget):
         if len(messages) >= effective_limit:
             break
-        request_limit = min(GLOBAL_SEARCH_BATCH_LIMIT, effective_limit - len(messages))
+        request_limit = min(GLOBAL_SEARCH_BATCH_LIMIT, effective_limit - len(messages), cursor_budget - consumed)
+        if request_limit <= 0:
+            break
         request = SearchGlobalRequest(
             q=query,
             filter=filters["mediaFilter"] if filters else InputMessagesFilterEmpty(),
@@ -2542,10 +2631,15 @@ async def fetch_global_search_page(
             offset_peer=offset_peer,
             offset_id=offset_id,
             limit=request_limit,
+            **(filters.get("globalArguments", {}) if filters else {}),
         )
         response = await client(request)
+        provider_inexact = provider_inexact or bool(getattr(response, "inexact", False))
+        current_total = nonnegative_integer(getattr(response, "count", None))
         if reported_total is None:
-            reported_total = nonnegative_integer(getattr(response, "count", None))
+            reported_total = current_total
+        elif current_total is not None and current_total != reported_total:
+            count_changed = True
 
         entities = {
             telethon_utils.get_peer_id(entity): entity
@@ -2555,7 +2649,10 @@ async def fetch_global_search_page(
             ]
         }
         batch = []
-        for message in list(getattr(response, "messages", None) or []):
+        provider_rows = list(getattr(response, "messages", None) or [])
+        if len(provider_rows) > request_limit:
+            raise TelegramRuntimeError("Telegram global search exceeded its bounded provider page.")
+        for message in provider_rows:
             if isinstance(message, MessageEmpty):
                 continue
             finish = getattr(message, "_finish_init", None)
@@ -2563,7 +2660,11 @@ async def fetch_global_search_page(
                 finish(client, entities, None)
             batch.append(message)
         if not batch:
-            provider_exhausted = True
+            # Placeholder rows are not evidence that the requested scope is
+            # empty. Without a real peer/message we cannot advance safely.
+            provider_exhausted = not provider_rows
+            if provider_rows:
+                cursor_available = False
             break
 
         consumed += len(batch)
@@ -2615,6 +2716,7 @@ async def fetch_global_search_page(
             except Exception:
                 continue
             if identity in identities:
+                duplicates_seen = True
                 continue
             identities.add(identity)
             messages.append(message)
@@ -2630,6 +2732,10 @@ async def fetch_global_search_page(
         and bool(messages)
         and (
             reported_total is None
+            or provider_inexact
+            or require_exhaustion
+            or duplicates_seen
+            or count_changed
             or seen_through < reported_total
         )
     )
@@ -2647,6 +2753,14 @@ async def fetch_global_search_page(
         "cursorAvailable": cursor_available,
         "cursorLimitReached": cursor_limit_reached,
         "providerExhausted": provider_exhausted,
+        "providerInexact": provider_inexact,
+        "duplicatesSeen": duplicates_seen,
+        "providerCountChanged": count_changed,
+        # Internal continuation can still prove exhaustion when duplicates
+        # across successive pages made Telegram's count unreliable. It is not
+        # exposed as a public 'has more' assertion on a complete response.
+        "resumeCursor": encode_global_search_cursor(cursor_key, last_cursor)
+            if last_cursor is not None and seen_through < MAX_GLOBAL_SEARCH_CURSOR_RESULTS else None,
     }
 
 
@@ -2710,12 +2824,16 @@ def unresolved_chat_error(reference: str) -> TelegramRuntimeError:
     )
 
 
-async def resolve_entity(client: Any, reference: str):
+async def resolve_entity(client: Any, reference: str, *, input_peer: Any | None = None):
     value = reference.strip()
     if not value:
         raise TelegramRuntimeError("Chat reference is required.")
     try:
-        return await client.get_entity(int(value) if re.fullmatch(r"-?\d+", value) else value)
+        # A live folder definition already supplies InputPeer access data. Keep
+        # it inside the local process instead of requiring an old numeric peer
+        # to exist in the session cache or exposing its hash to the caller.
+        return await client.get_entity(input_peer if input_peer is not None else
+                                       int(value) if re.fullmatch(r"-?\d+", value) else value)
     except Exception as error:
         if not is_telegram_entity_resolution_error(error):
             raise
@@ -3781,8 +3899,24 @@ async def command_scheduled_async(
 def search_filter_spec(args: argparse.Namespace) -> dict[str, Any] | None:
     media = getattr(args, "media_type", "any")
     sender = getattr(args, "from_user", None)
+    chat_type = getattr(args, "chat_type", None)
+    folder_id = getattr(args, "folder_id", None)
+    folder = getattr(args, "folder", None)
+    if folder is not None and (not isinstance(folder, str) or not folder.strip() or len(folder) > MAX_ENTITY_TITLE_CHARS):
+        raise TelegramRuntimeError("Folder reference is empty or too long.")
+    if chat_type is not None and not (getattr(args, "global_search", False) or folder is not None):
+        raise TelegramRuntimeError("--chat-type requires search --global or --folder.")
+    if folder_id is not None and not getattr(args, "global_search", False):
+        raise TelegramRuntimeError("--chat-type and --folder-id require search --global.")
+    if chat_type not in (None, "user", "group", "channel"):
+        raise TelegramRuntimeError("Unknown global search chat type.")
+    if folder_id is not None and (type(folder_id) is not int or folder_id not in (0, 1)):
+        raise TelegramRuntimeError("Global --folder-id accepts only 0 (main) or 1 (archive); custom folders use --folder.")
+    if getattr(args, "before_id", None) and getattr(args, "global_search", False):
+        raise TelegramRuntimeError("Global search continues only with --cursor, not --before-id.")
     since_value, until_value = getattr(args, "since", None), getattr(args, "until", None)
-    if media == "any" and not sender and not since_value and not until_value and not getattr(args, "before_id", None):
+    if (media == "any" and not sender and not since_value and not until_value
+            and chat_type is None and folder_id is None and folder is None):
         return None
     if sender and getattr(args, "global_search", False):
         # searchGlobal has no from_id parameter. Searching InputPeerEmpty would
@@ -3791,8 +3925,6 @@ def search_filter_spec(args: argparse.Namespace) -> dict[str, Any] | None:
     if (getattr(args, "global_search", False) and media == "any"
             and not getattr(args, "query", None)):
         raise TelegramRuntimeError("Global search needs text or a media filter; dates alone require --chat.")
-    if getattr(args, "before_id", None) and getattr(args, "global_search", False):
-        raise TelegramRuntimeError("Global search continues only with --cursor, not --before-id.")
     try:
         zone = ZoneInfo(getattr(args, "timezone", DEFAULT_EXPORT_TIMEZONE))
     except (ZoneInfoNotFoundError, ValueError) as error:
@@ -3817,20 +3949,36 @@ def search_filter_spec(args: argparse.Namespace) -> dict[str, Any] | None:
         return datetime.fromtimestamp(seconds, tz=timezone.utc)
 
     _functions, types, _utils, _events, _markdown = import_telethon_workflows()
+    global_arguments = {}
+    public_scope = {}
+    if chat_type is not None:
+        if folder is None:
+            global_arguments[{"user": "users_only", "group": "groups_only", "channel": "broadcasts_only"}[chat_type]] = True
+        public_scope["chatType"] = chat_type
+    if folder is not None:
+        public_scope["folder"] = folder.strip()
+    if folder_id is not None:
+        global_arguments["folder_id"] = folder_id
+        public_scope["folderId"] = folder_id
     return {"since": since, "until": until,
             "minDate": provider_boundary(since, minimum=True),
             "maxDate": provider_boundary(until, minimum=False),
             "mediaFilter": getattr(types, SEARCH_MEDIA_FILTERS[media])(),
+            "globalArguments": global_arguments,
             "public": {"from": sender, "mediaType": media,
                        "since": format_utc_datetime(since) if since else None,
                        "until": format_utc_datetime(until) if until else None,
-                       "timezone": str(zone)}}
+                       "timezone": str(zone), **public_scope}}
 
 
 async def filtered_chat_search(client: Any, args: argparse.Namespace, query: str,
-                               filters: dict[str, Any], radius: int) -> dict[str, Any]:
+                               filters: dict[str, Any], radius: int, *,
+                               entity: Any | None = None, raw_output: bool = False,
+                               scan_budget: int = MAX_FILTERED_SEARCH_SCAN,
+                               scan_progress: dict | None = None) -> dict[str, Any]:
     functions, _types, utils, _events, _markdown = import_telethon_workflows()
-    entity = await resolve_entity(client, args.chat)
+    if entity is None:
+        entity = await resolve_entity(client, args.chat)
     sender = None
     sender_id = None
     if getattr(args, "from_user", None):
@@ -3863,7 +4011,7 @@ async def filtered_chat_search(client: Any, args: argparse.Namespace, query: str
         # Limit bounds matching results, not the number of native hits examined
         # by the local author/date check. A separate explicit ceiling bounds
         # work, and even an empty partial page has a resumable native offset.
-        request_limit = min(100, MAX_FILTERED_SEARCH_SCAN - scanned,
+        request_limit = min(100, scan_budget - scanned,
                             100 if verify_locally else args.limit + 1 - len(raw))
         if request_limit <= 0:
             break
@@ -3873,6 +4021,10 @@ async def filtered_chat_search(client: Any, args: argparse.Namespace, query: str
             add_offset=0, limit=request_limit, max_id=0, min_id=0, hash=0,
         ))
         batch = hydrate_messages(client, response, utils)
+        if scan_progress is not None:
+            # Count received work before validation: a failed peer/page must
+            # not reset the shared budget and allow other chats to exceed it.
+            scan_progress["scanned"] += min(len(batch), request_limit)
         provider_inexact = provider_inexact or bool(getattr(response, "inexact", False))
         if len(batch) > request_limit:
             raise TelegramRuntimeError("Telegram filtered search exceeded its bounded provider page.")
@@ -3911,7 +4063,7 @@ async def filtered_chat_search(client: Any, args: argparse.Namespace, query: str
         offset_id = last_scanned_id
     has_more = len(raw) > args.limit or not provider_exhausted
     selected = raw[:args.limit]
-    messages = await public_messages(selected, entity)
+    messages = selected if raw_output else await public_messages(selected, entity)
     scan_limited = not provider_exhausted and len(raw) <= args.limit
     reasons = []
     if len(raw) > args.limit:
@@ -3930,19 +4082,485 @@ async def filtered_chat_search(client: Any, args: argparse.Namespace, query: str
                            "limit": args.limit, "hasMore": has_more, "limitReached": len(raw) > args.limit,
                            "nextBeforeId": (selected[-1].id if selected else last_scanned_id) if has_more else None,
                            "complete": not has_more and not reasons,
-                           "scanned": scanned, "scanLimit": MAX_FILTERED_SEARCH_SCAN,
+                           "scanned": scanned, "scanLimit": scan_budget,
                            "scanLimitReached": scan_limited,
                            "authorFilter": "bounded_local" if local_author else "server" if sender is not None else "none",
                            "incompleteReasons": reasons,
                            "providerMayLimitResults": provider_inexact,
                            "snapshotStable": False}}
-    context = await attach_search_contexts(client, selected, messages, radius)
+    context = None if raw_output else await attach_search_contexts(client, selected, messages, radius)
     if context is not None:
         result["contextCoverage"] = context
     return result
 
 
+def search_budgets(args: argparse.Namespace) -> tuple[int, int]:
+    """Validate bounds before authorization, including in-process callers."""
+
+    values = (("--limit", args.limit, 200),
+              ("--pages", getattr(args, "pages", DEFAULT_SEARCH_PAGES), MAX_SEARCH_PAGES),
+              ("--page-size", getattr(args, "page_size", DEFAULT_SEARCH_PAGE_SIZE), 200))
+    for label, value, maximum in values:
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+            raise TelegramRuntimeError(f"Search {label} must be an integer from 1 to {maximum}.")
+    return values[1][1], values[2][1]
+
+
+def selected_search_references(args: argparse.Namespace) -> list[str]:
+    value = getattr(args, "chat", None)
+    values = [value] if isinstance(value, str) else value
+    if not isinstance(values, list) or not 1 <= len(values) <= MAX_SEARCH_CHATS:
+        raise TelegramRuntimeError(f"Search requires 1..{MAX_SEARCH_CHATS} exact chat references.")
+    if any(not isinstance(item, str) or not item.strip() or len(item) > MAX_CHAT_REFERENCE_CHARS
+           for item in values):
+        raise TelegramRuntimeError("Search chat reference is empty or too long.")
+    references = list(dict.fromkeys(item.strip() for item in values))
+    if getattr(args, "before_id", None) and len(references) != 1:
+        raise TelegramRuntimeError("--before-id requires one chat; multiple chats continue with --cursor.")
+    if getattr(args, "before_id", None) and getattr(args, "cursor", None):
+        raise TelegramRuntimeError("Use only one search continuation: --before-id or --cursor.")
+    return references
+
+
+def selected_cursor_key(query: str, references: list[str], filters: dict | None) -> str:
+    return json.dumps({"query": query, "chats": sorted(references),
+                       "filters": filters["public"] if filters else {}},
+                      sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def selected_search_cursor(key: str, value: str | None = None, *, states: list | None = None,
+                           seen: int = 0) -> dict | str | None:
+    """Carry numeric progress only, bound to the complete selected scope.
+
+    No query, message text, access hash or session credential is in the token.
+    On resume every peer is resolved again and compared with the declared set;
+    a cursor cannot add a chat or silently continue a different filter.
+    """
+
+    if states is not None:
+        entries = [{"id": state["id"], "before": state["before"], "done": not state["hasMore"]}
+                   for state in states if state["id"] is not None]
+        payload = {"v": 2, "queryDigest": global_search_query_digest(key), "seen": seen, "chats": entries}
+        token = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("ascii")).decode("ascii").rstrip("=")
+        if len(token) > MAX_SELECTED_SEARCH_CURSOR_CHARS:
+            raise TelegramRuntimeError("Selected-chat search cursor is too large.")
+        return token
+    if value is None:
+        return None
+    try:
+        if not isinstance(value, str) or len(value) > MAX_SELECTED_SEARCH_CURSOR_CHARS or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+            raise ValueError()
+        payload = json.loads(base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True).decode("ascii"))
+        if not isinstance(payload, dict) or set(payload) != {"v", "queryDigest", "seen", "chats"} or type(payload["v"]) is not int or payload["v"] != 2:
+            raise ValueError()
+        if not secrets.compare_digest(str(payload["queryDigest"]), global_search_query_digest(key)):
+            raise TelegramRuntimeError("Selected-chat search cursor does not belong to this query or chat set.")
+        if type(payload["seen"]) is not int or not 0 <= payload["seen"] <= MAX_GLOBAL_SEARCH_CURSOR_RESULTS:
+            raise ValueError()
+        entries = payload["chats"]
+        if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_SEARCH_CHATS:
+            raise ValueError()
+        ids = set()
+        for entry in entries:
+            if (not isinstance(entry, dict) or set(entry) != {"id", "before", "done"}
+                    or type(entry["id"]) is not int or not 0 < abs(entry["id"]) < 2**63
+                    or entry["id"] in ids or type(entry["before"]) is not int
+                    or not 0 <= entry["before"] < 2**31 or type(entry["done"]) is not bool):
+                raise ValueError()
+            ids.add(entry["id"])
+        return payload
+    except TelegramRuntimeError:
+        raise
+    except (ValueError, TypeError, UnicodeError, KeyError) as error:
+        raise TelegramRuntimeError("Selected-chat search cursor is invalid.") from error
+
+
+def describe_search_coverage(coverage: dict, *, unavailable: bool = False) -> None:
+    """A zero-row partial response is never translated to 'nothing found'."""
+
+    complete = coverage["complete"]
+    count = coverage["returned"]
+    coverage["status"] = "complete" if complete else "unavailable" if unavailable else "partial"
+    coverage["absenceProven"] = complete and count == 0
+    if complete:
+        summary = "Поиск завершён. Совпадений нет." if count == 0 else f"Поиск завершён. Найдено сообщений: {count}."
+    elif unavailable:
+        summary = "Не удалось проверить выбранную область. Отсутствие сообщений не доказано."
+    else:
+        summary = f"Поиск выполнен частично. Найдено сообщений: {count}."
+        summary += " Есть продолжение." if coverage.get("nextCursor") or coverage.get("nextBeforeId") else " Полнота выдачи не подтверждена."
+    coverage["summary"] = summary
+
+
+async def plain_chat_search_page(client: Any, entity: Any, query: str, limit: int,
+                                 before: int, scan_budget: int, *, scan_progress: dict | None = None) -> dict:
+    # One extra row proves truncation; consuming only the returned rows keeps
+    # the continuation before the look-ahead hit, which must not be lost.
+    request_limit = min(limit + 1, scan_budget)
+    kwargs = {"search": query, "limit": request_limit}
+    if before:
+        kwargs["offset_id"] = before
+    rows = []
+    async for row in client.iter_messages(entity, **kwargs):
+        rows.append(row)
+        if scan_progress is not None and len(rows) <= request_limit:
+            scan_progress["scanned"] += 1
+        if len(rows) > request_limit:
+            raise TelegramRuntimeError("Telegram chat search exceeded its bounded provider page.")
+    for index, row in enumerate(rows):
+        if (type(row.id) is not int or row.id <= 0 or before and row.id >= before
+                or index and row.id >= rows[index - 1].id):
+            raise TelegramRuntimeError("Telegram chat search did not advance its result cursor.")
+    selected = rows[:limit]
+    scan_limited = request_limit <= limit and len(rows) == request_limit
+    has_more = len(rows) > limit or scan_limited
+    return {"messages": selected, "coverage": {"hasMore": has_more,
+            "nextBeforeId": selected[-1].id if has_more else None, "scanned": len(rows),
+            "scanLimitReached": scan_limited, "authorFilter": "none", "incompleteReasons": []}}
+
+
+async def selected_chat_search(client: Any, args: argparse.Namespace, query: str,
+                               filters: dict | None, references: list[str], pages: int,
+                               page_size: int, radius: int, *, peer_hints: dict | None = None) -> dict:
+    _functions, _types, utils, _events, _markdown = import_telethon_workflows()
+    key = selected_cursor_key(query, references, filters)
+    prior = selected_search_cursor(key, getattr(args, "cursor", None))
+    seen_before = prior["seen"] if prior else 0
+    if seen_before >= MAX_GLOBAL_SEARCH_CURSOR_RESULTS:
+        raise TelegramRuntimeError("Search cursor reached its result ceiling. Narrow the query.")
+    states = []
+    for reference in references:
+        state = {"reference": reference, "id": None, "entity": None, "before": 0,
+                 "hasMore": True, "pagesRead": 0, "scanned": 0, "returned": 0,
+                 "reasons": set(), "error": None, "last": {}}
+        try:
+            hint = (peer_hints or {}).get(int(reference)) if re.fullmatch(r"-?\d+", reference) else None
+            entity = await resolve_entity(client, reference, input_peer=hint)
+            chat_id = utils.get_peer_id(entity)
+            if type(chat_id) is not int or not 0 < abs(chat_id) < 2**63:
+                raise TelegramRuntimeError("Selected chat identity is unavailable.")
+            if hint is not None and chat_id != int(reference):
+                raise TelegramRuntimeError("Folder peer resolved outside its selected chat scope.")
+            # Username and numeric references may resolve to the same exact
+            # peer. Read it once without merging different peer namespaces.
+            if any(previous["id"] == chat_id for previous in states):
+                continue
+            state.update(id=chat_id, entity=entity, before=getattr(args, "before_id", None) or 0)
+        except Exception as error:
+            if len(references) == 1:
+                raise
+            state["error"] = "chat_resolution_failed" if isinstance(error, TelegramRuntimeError) and error.code == "TELEGRAM_CHAT_RESOLUTION_FAILED" else "chat_unavailable"
+            state["reasons"].add(state["error"])
+        states.append(state)
+    if prior:
+        offsets = {entry["id"]: entry for entry in prior["chats"]}
+        if set(offsets) != {state["id"] for state in states if state["id"] is not None}:
+            raise TelegramRuntimeError("Selected-chat search cursor no longer resolves to the same chat set.")
+        for state in states:
+            if state["id"] is not None:
+                state.update(before=offsets[state["id"]]["before"], hasMore=not offsets[state["id"]]["done"])
+    total_limit = min(args.limit, MAX_GLOBAL_SEARCH_CURSOR_RESULTS - seen_before)
+    selected = []
+    identities = set()
+    scanned_total = 0
+    scan_progress = {"scanned": 0}
+    for _round in range(pages):
+        active = [state for state in states if state["hasMore"] and state["error"] is None]
+        if not active or len(selected) >= total_limit or scanned_total >= MAX_SELECTED_SEARCH_SCAN:
+            break
+        # Give each selected chat a share before a busy first chat can consume
+        # the entire result budget. This is a bounded sample, not an assertion
+        # that it contains the globally newest matches from every chat.
+        quota = max(1, math.ceil((total_limit - len(selected)) / len(active)))
+        for state in active:
+            remaining = total_limit - len(selected)
+            scan_remaining = MAX_SELECTED_SEARCH_SCAN - scanned_total
+            if not remaining or scan_remaining <= 0:
+                break
+            limit = min(page_size, quota, remaining)
+            page_args = argparse.Namespace(**{**vars(args), "chat": state["reference"],
+                                             "limit": limit, "before_id": state["before"] or None})
+            scanned_before_page = scan_progress["scanned"]
+            try:
+                if filters is None:
+                    page = await plain_chat_search_page(client, state["entity"], query, limit, state["before"], scan_remaining,
+                                                        scan_progress=scan_progress)
+                else:
+                    page = await filtered_chat_search(client, page_args, query, filters, 0,
+                                                      entity=state["entity"], raw_output=True,
+                                                      scan_budget=min(MAX_FILTERED_SEARCH_SCAN, scan_remaining),
+                                                      scan_progress=scan_progress)
+                coverage = page["coverage"]
+                for raw in page["messages"]:
+                    exact_provider_message(raw, state["entity"], raw.id, utils)
+                next_before = coverage["nextBeforeId"]
+                if coverage["hasMore"] and (type(next_before) is not int or next_before <= 0
+                                             or state["before"] and next_before >= state["before"]):
+                    raise TelegramRuntimeError("Telegram chat search did not advance its result cursor.")
+                state["pagesRead"] += 1
+                state["last"] = coverage
+                # Page/scan limits are temporary: successful automatic
+                # continuation may exhaust the scope within this invocation.
+                state["reasons"].update(set(coverage["incompleteReasons"]) - {
+                    "result_limit_reached", "provider_scan_limit_reached", "paginated_window"})
+                for raw in page["messages"]:
+                    identity_key = (state["id"], raw.id)
+                    if identity_key not in identities:
+                        identities.add(identity_key)
+                        selected.append((raw, state["entity"]))
+                        state["returned"] += 1
+                state.update(hasMore=coverage["hasMore"], before=next_before or state["before"])
+            except Exception:
+                if len(references) == 1:
+                    raise
+                state["error"] = "search_failed"
+                state["reasons"].add("search_failed")
+            finally:
+                state["scanned"] += scan_progress["scanned"] - scanned_before_page
+                scanned_total = scan_progress["scanned"]
+    resumed = prior is not None or bool(getattr(args, "before_id", None))
+    per_chat = []
+    for state in states:
+        reasons = set(state["reasons"])
+        if state["hasMore"] and state["error"] is None:
+            reasons.add("result_limit_reached" if len(selected) >= total_limit else
+                        "scan_budget_reached" if scanned_total >= MAX_SELECTED_SEARCH_SCAN else "page_budget_reached")
+            if state["last"].get("scanLimitReached"):
+                reasons.add("provider_scan_limit_reached")
+        if resumed:
+            reasons.add("paginated_window")
+        coverage = {"chat": public_entity(state["entity"]) if state["entity"] is not None else None,
+                    "reference": state["reference"], "returned": state["returned"],
+                    "pagesRead": state["pagesRead"], "scanned": state["scanned"],
+                    "authorFilter": state["last"].get("authorFilter"),
+                    "hasMore": state["hasMore"] if state["error"] is None else None,
+                    "nextBeforeId": (state["before"] or None) if state["hasMore"] else None,
+                    "complete": not state["hasMore"] and not reasons,
+                    "incompleteReasons": sorted(reasons)}
+        describe_search_coverage(coverage, unavailable=state["error"] is not None)
+        per_chat.append(coverage)
+    selected.sort(key=lambda pair: (getattr(pair[0], "date", None) or datetime.min.replace(tzinfo=timezone.utc), pair[0].id), reverse=True)
+    raw_messages = [raw for raw, _entity in selected]
+    chats = [entity for _raw, entity in selected]
+    messages = []
+    for raw, entity in selected:
+        row = (await public_messages([raw], entity))[0]
+        row["chat"] = public_entity(entity)
+        messages.append(row)
+    # An unresolved reference is an unknown scope, not a known next page. Only
+    # resolved unfinished peers can carry a useful numeric continuation. Never
+    # return an all-done cursor merely because another reference failed lookup.
+    resolved_pending = any(state["id"] is not None and state["hasMore"] for state in states)
+    has_more = True if resolved_pending else None if any(state["error"] is not None for state in states) else False
+    cursor_limited = resolved_pending and seen_before + len(messages) >= MAX_GLOBAL_SEARCH_CURSOR_RESULTS
+    cursor = selected_search_cursor(key, states=states, seen=seen_before + len(messages)) if resolved_pending and not cursor_limited else None
+    reasons = sorted({reason for coverage in per_chat for reason in coverage["incompleteReasons"]})
+    if cursor_limited:
+        reasons.append("cursor_limit_reached")
+    coverage = {**(states[0]["last"] if len(states) == 1 else {}), "returned": len(messages),
+                "limit": total_limit, "pages": pages, "pagesRead": sum(state["pagesRead"] for state in states),
+                "scanned": sum(state["scanned"] for state in states), "chats": per_chat,
+                "scanLimit": MAX_SELECTED_SEARCH_SCAN, "seenBefore": seen_before,
+                "seenThrough": seen_before + len(messages),
+                "hasMore": has_more, "nextCursor": cursor, "complete": all(item["complete"] for item in per_chat),
+                "cursorLimitReached": cursor_limited,
+                "limitReached": bool(has_more and len(messages) >= total_limit),
+                "incompleteReasons": reasons, "snapshotStable": False}
+    describe_search_coverage(coverage, unavailable=all(state["error"] is not None for state in states))
+    result = {"scope": "selected_chats" if len(references) > 1 else "chat", "query": query,
+              "messages": messages, "coverage": coverage, "securityBoundary": "chat-only"}
+    if len(states) == 1 and states[0]["entity"] is not None:
+        result["chat"] = public_entity(states[0]["entity"])
+        coverage["nextBeforeId"] = per_chat[0]["nextBeforeId"]
+    if filters is not None:
+        result["filters"] = filters["public"]
+    context = await attach_search_contexts(client, raw_messages, messages, radius, chats=chats)
+    if context is not None:
+        result["contextGroups"] = context.pop("groups")
+        result["contextCoverage"] = context
+    return result
+
+
+def public_dialog_filter(folder: Any) -> dict:
+    title = getattr(folder, "title", None)
+    title = getattr(title, "text", title)
+    return {"id": getattr(folder, "id", None),
+            "title": optional_bounded_string(title, MAX_ENTITY_TITLE_CHARS)}
+
+
+async def read_dialog_filters(client: Any) -> list:
+    functions, _types, _utils, _events, _markdown = import_telethon_workflows()
+    response = await client(functions.GetDialogFiltersRequest())
+    folders = response if isinstance(response, list) else getattr(response, "filters", None)
+    if not isinstance(folders, list) or len(folders) > MAX_DIALOG_FILTERS:
+        raise TelegramRuntimeError("Telegram folder list is unavailable or exceeds its bound.")
+    return folders
+
+
+async def command_folders_async(args: argparse.Namespace, identity: Identity) -> dict:
+    """Expose folder identities, never raw peer lists or access hashes."""
+
+    client = build_client(args, identity)
+    try:
+        await ensure_authorized(client)
+        folders = await read_dialog_filters(client)
+        rows = [public_dialog_filter(folder) for folder in folders
+                if type(getattr(folder, "id", None)) is int and folder.id >= 2]
+        return {"folders": rows, "coverage": {"complete": True, "returned": len(rows)},
+                "securityBoundary": "chat-only"}
+    except TelegramRuntimeError:
+        raise
+    except Exception as error:
+        raise TelegramRuntimeError("Telegram folder list failed; this is not an empty folder list.") from error
+    finally:
+        await client.disconnect()
+
+
+async def resolve_search_folder(client: Any, reference: str, chat_type: str | None, *,
+                                peer_hints: dict | None = None) -> tuple[list[str], dict]:
+    """Materialize a bounded custom folder scope from its live definition.
+
+    searchGlobal.folder_id refers only to main/archive peer folders (0/1), not
+    custom dialog filters. Include/pinned/exclude lists and dynamic category
+    rules must be evaluated locally over bounded dialog metadata; no history
+    is returned by this step. Missing metadata never broadens membership.
+    """
+
+    _functions, _types, utils, _events, _markdown = import_telethon_workflows()
+    folders = await read_dialog_filters(client)
+    normalized = unicodedata.normalize("NFKC", reference).strip().casefold()
+    candidates = [folder for folder in folders
+                  if type(getattr(folder, "id", None)) is int and folder.id >= 2
+                  and (str(folder.id) == normalized or
+                       unicodedata.normalize("NFKC", public_dialog_filter(folder)["title"] or "").casefold() == normalized)]
+    if len(candidates) != 1:
+        raise TelegramRuntimeError("Folder is missing or its name is ambiguous; use an exact ID from folders.")
+    folder = candidates[0]
+    if type(folder).__name__ not in ("DialogFilter", "DialogFilterChatlist"):
+        raise TelegramRuntimeError("This Telegram folder definition is unsupported.")
+    include_inputs = {utils.get_peer_id(peer): peer for field in ("include_peers", "pinned_peers")
+                      for peer in (getattr(folder, field, None) or [])}
+    include = set(include_inputs)
+    exclude = {utils.get_peer_id(peer) for peer in (getattr(folder, "exclude_peers", None) or [])}
+    fields = ("contacts", "non_contacts", "groups", "broadcasts", "bots",
+              "exclude_muted", "exclude_read", "exclude_archived")
+    definition = {field: bool(getattr(folder, field, False)) for field in fields}
+    definition.update(include=sorted(include), exclude=sorted(exclude), id=folder.id)
+    metadata = {**public_dialog_filter(folder), "definitionDigest": global_search_query_digest(
+        json.dumps(definition, sort_keys=True, separators=(",", ":")))}
+    references = []
+    reasons = set()
+    scanned = 0
+    for_dialog_ids = set()
+    if chat_type is None and not any(definition[field] for field in fields[:5]):
+        # An explicit/shared folder does not need account-wide dialog metadata.
+        # Its exact include list is already the complete membership definition.
+        peers = sorted(include - exclude)
+        if len(peers) > MAX_SEARCH_CHATS:
+            reasons.add("folder_chat_limit_reached")
+        references = [str(peer) for peer in peers[:MAX_SEARCH_CHATS]]
+        if peer_hints is not None:
+            peer_hints.update({int(ref): include_inputs[int(ref)] for ref in references})
+        metadata["coverage"] = {"complete": not reasons, "selectedChats": len(references),
+                                "scannedDialogs": 0, "dialogLimit": MAX_FOLDER_DIALOGS,
+                                "chatLimit": MAX_SEARCH_CHATS, "incompleteReasons": sorted(reasons)}
+        return references, metadata
+    async for dialog in client.iter_dialogs(limit=MAX_FOLDER_DIALOGS + 1):
+        scanned += 1
+        if scanned > MAX_FOLDER_DIALOGS:
+            reasons.add("folder_dialog_limit_reached")
+            break
+        entity = getattr(dialog, "entity", None)
+        if entity is None:
+            reasons.add("folder_membership_unavailable")
+            continue
+        peer_id = utils.get_peer_id(entity)
+        if type(peer_id) is not int or peer_id == 0:
+            reasons.add("folder_membership_unavailable")
+            continue
+        if peer_id in for_dialog_ids:
+            continue
+        for_dialog_ids.add(peer_id)
+        if peer_id in exclude:
+            continue
+        kind = "group" if getattr(dialog, "is_group", False) else "channel" if getattr(dialog, "is_channel", False) else "user" if getattr(dialog, "is_user", False) else None
+        if kind is None:
+            reasons.add("folder_membership_unavailable")
+            continue
+        if chat_type is not None and kind != chat_type:
+            continue
+        explicit = peer_id in include
+        if not explicit:
+            category = "groups" if kind == "group" else "broadcasts" if kind == "channel" else "bots" if getattr(entity, "bot", False) else "contacts" if getattr(entity, "contact", False) else "non_contacts"
+            if not definition[category]:
+                continue
+            info = getattr(dialog, "dialog", None)
+            if definition["exclude_archived"]:
+                if info is None:
+                    reasons.add("folder_membership_unavailable")
+                    continue
+                if getattr(info, "folder_id", None) == 1:
+                    continue
+            if definition["exclude_read"] and not getattr(info, "unread_mark", False):
+                unread = getattr(dialog, "unread_count", None)
+                if type(unread) is not int:
+                    reasons.add("folder_membership_unavailable")
+                    continue
+                if unread == 0:
+                    continue
+            if definition["exclude_muted"]:
+                mute_until = getattr(getattr(info, "notify_settings", None), "mute_until", None)
+                if mute_until is None:
+                    # Absent settings may inherit account-wide notification
+                    # preferences. Do not guess that such a chat is unmuted.
+                    reasons.add("folder_membership_unavailable")
+                    continue
+                muted = mute_until > utc_now() if isinstance(mute_until, datetime) else mute_until > utc_now().timestamp() if type(mute_until) is int else None
+                if muted is None:
+                    reasons.add("folder_membership_unavailable")
+                    continue
+                if muted:
+                    continue
+        if len(references) >= MAX_SEARCH_CHATS:
+            reasons.add("folder_chat_limit_reached")
+            continue
+        references.append(str(peer_id))
+    # Explicit peers may have no entry in the bounded recent-dialog response.
+    # They still belong to the selected folder; never silently drop them.
+    for peer_id in sorted(include - exclude - for_dialog_ids):
+        if len(references) >= MAX_SEARCH_CHATS:
+            reasons.add("folder_chat_limit_reached")
+            break
+        if chat_type is not None:
+            try:
+                entity = await resolve_entity(client, str(peer_id), input_peer=include_inputs[peer_id])
+            except Exception:
+                reasons.add("folder_membership_unavailable")
+                continue
+            name = type(entity).__name__
+            kind = "user" if name == "User" else "channel" if name == "Channel" and getattr(entity, "broadcast", False) else "group" if name in ("Chat", "Channel") else None
+            if kind is None:
+                reasons.add("folder_membership_unavailable")
+                continue
+            if kind != chat_type:
+                continue
+        references.append(str(peer_id))
+    if peer_hints is not None:
+        peer_hints.update({int(ref): include_inputs[int(ref)] for ref in references if int(ref) in include_inputs})
+    metadata["coverage"] = {"complete": not reasons, "selectedChats": len(references),
+                            "scannedDialogs": min(scanned, MAX_FOLDER_DIALOGS),
+                            "dialogLimit": MAX_FOLDER_DIALOGS, "chatLimit": MAX_SEARCH_CHATS,
+                            "incompleteReasons": sorted(reasons)}
+    return references, metadata
+
+
 async def command_search_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
+    pages, page_size = search_budgets(args)
+    context_radius = search_context_radius(args)
+    folder = getattr(args, "folder", None)
+    if folder is not None and getattr(args, "before_id", None):
+        raise TelegramRuntimeError("Folder search continues with --cursor, not --before-id.")
+    references = None if getattr(args, "global_search", False) or folder is not None else selected_search_references(args)
     filters = search_filter_spec(args)
     if (args.query in (None, "") and filters is not None
             and not any((getattr(args, "from_user", None), getattr(args, "since", None),
@@ -3950,18 +4568,72 @@ async def command_search_async(args: argparse.Namespace, identity: Identity) -> 
         raise TelegramRuntimeError("Search requires text or an explicit sender/date/media filter.")
     query = "" if filters is not None and args.query in (None, "") else normalize_message_search_query(args.query)
     client = build_client(args, identity)
-    await ensure_authorized(client)
     try:
-        context_radius = search_context_radius(args)
+        await ensure_authorized(client)
+        if folder is not None:
+            # Private InputPeers stay in this invocation only. The returned
+            # folder metadata and continuation carry safe IDs/digests only.
+            peer_hints = {}
+            references, metadata = await resolve_search_folder(client, folder, getattr(args, "chat_type", None), peer_hints=peer_hints)
+            filters["public"]["folder"] = {key: value for key, value in metadata.items() if key != "coverage"}
+            if references:
+                result = await selected_chat_search(client, args, query, filters, references, pages, page_size, context_radius,
+                                                    peer_hints=peer_hints)
+            else:
+                if getattr(args, "cursor", None):
+                    raise TelegramRuntimeError("Folder search cursor no longer resolves to the same chat set.")
+                result = {"query": query, "messages": [], "filters": filters["public"],
+                          "coverage": {"returned": 0, "complete": True, "hasMore": False,
+                                       "nextCursor": None, "incompleteReasons": []}, "securityBoundary": "chat-only"}
+            result.update(scope="folder", folder=metadata)
+            if not metadata["coverage"]["complete"]:
+                result["coverage"]["complete"] = False
+                result["coverage"]["incompleteReasons"] = sorted(set(result["coverage"]["incompleteReasons"]) | set(metadata["coverage"]["incompleteReasons"]))
+            describe_search_coverage(result["coverage"])
+            return result
         if getattr(args, "global_search", False):
-            page = await fetch_global_search_page(
-                client,
-                query,
-                args.limit,
-                getattr(args, "cursor", None),
-                **({"filters": filters} if filters is not None else {}),
-            )
-            selected_messages = page["messages"]
+            selected_messages = []
+            identities = set()
+            token = getattr(args, "cursor", None)
+            seen_before = None
+            provider_inexact = False
+            duplicates_seen = False
+            count_changed = False
+            reported_total = None
+            for page_index in range(pages):
+                page = await fetch_global_search_page(client, query,
+                    min(page_size, args.limit - len(selected_messages)), token,
+                    **({"filters": filters} if filters is not None else {}),
+                    **({"require_exhaustion": True} if duplicates_seen or count_changed else {}))
+                if seen_before is None:
+                    seen_before = page["seenBefore"]
+                provider_inexact = provider_inexact or page.get("providerInexact", False)
+                duplicates_seen = duplicates_seen or page.get("duplicatesSeen", False)
+                count_changed = count_changed or page.get("providerCountChanged", False)
+                if reported_total is not None and page["reportedTotal"] is not None and reported_total != page["reportedTotal"]:
+                    count_changed = True
+                reported_total = page["reportedTotal"]
+                for raw in page["messages"]:
+                    item_key = search_message_key(raw)
+                    if item_key not in identities:
+                        identities.add(item_key)
+                        selected_messages.append(raw)
+                    else:
+                        duplicates_seen = True
+                if (duplicates_seen or count_changed) and not page["providerExhausted"]:
+                    # Counting repeated rows toward a stale provider total
+                    # cannot prove completeness. Keep scanning from the exact
+                    # offset, bounded by --pages and the global cursor cap.
+                    page["hasMore"] = True
+                    page["cursorLimitReached"] = page["seenThrough"] >= MAX_GLOBAL_SEARCH_CURSOR_RESULTS
+                    page["nextCursor"] = (page["resumeCursor"]
+                                          if page["cursorAvailable"] and not page["cursorLimitReached"] else None)
+                next_token = page["nextCursor"]
+                if next_token is not None and next_token == token:
+                    raise TelegramRuntimeError("Telegram global search did not advance its result cursor.")
+                token = next_token
+                if len(selected_messages) >= args.limit or not page["hasMore"] or token is None:
+                    break
             messages = await public_messages(
                 selected_messages,
                 None,
@@ -3974,9 +4646,10 @@ async def command_search_async(args: argparse.Namespace, identity: Identity) -> 
                 context_radius,
             )
             complete = (
-                page["seenBefore"] == 0
+                seen_before == 0
                 and not page["hasMore"]
                 and page["cursorAvailable"]
+                and not provider_inexact
             )
             incomplete_reason = None
             if not complete:
@@ -3985,7 +4658,9 @@ async def command_search_async(args: argparse.Namespace, identity: Identity) -> 
                 elif not page["cursorAvailable"]:
                     incomplete_reason = "provider_cursor_unavailable"
                 elif page["hasMore"]:
-                    incomplete_reason = "result_limit_reached"
+                    incomplete_reason = "result_limit_reached" if len(messages) >= args.limit else "page_budget_reached"
+                elif provider_inexact:
+                    incomplete_reason = "provider_result_inexact"
                 else:
                     incomplete_reason = "paginated_window"
             result = {
@@ -3997,45 +4672,35 @@ async def command_search_async(args: argparse.Namespace, identity: Identity) -> 
                     "returned": len(messages),
                     "reportedTotal": page["reportedTotal"],
                     "limit": args.limit,
-                    "seenBefore": page["seenBefore"],
+                    "seenBefore": seen_before,
                     "seenThrough": page["seenThrough"],
                     "hasMore": page["hasMore"],
                     "nextCursor": page["nextCursor"],
-                    "limitReached": page["hasMore"],
+                    "limitReached": page["hasMore"] and len(messages) >= args.limit,
                     "cursorLimitReached": page["cursorLimitReached"],
                     "pageComplete": page["cursorAvailable"],
                     "complete": complete,
                     "incompleteReason": incomplete_reason,
+                    "incompleteReasons": [incomplete_reason] if incomplete_reason else [],
+                    "pages": pages,
+                    "pagesRead": page_index + 1,
+                    "providerMayLimitResults": provider_inexact,
+                    "duplicatesSeen": duplicates_seen,
+                    "providerCountChanged": count_changed,
                     "snapshotStable": False,
                     "excludedChatTypes": ["secret"],
                 },
                 "securityBoundary": "chat-only",
             }
             if context_coverage is not None:
+                result["contextGroups"] = context_coverage.pop("groups")
                 result["contextCoverage"] = context_coverage
             if filters is not None:
                 result["filters"] = filters["public"]
+            describe_search_coverage(result["coverage"])
             return result
 
-        if getattr(args, "cursor", None):
-            raise TelegramRuntimeError("--cursor is supported only with search --global.")
-        if filters is not None:
-            return await filtered_chat_search(client, args, query, filters, context_radius)
-        entity = await resolve_entity(client, args.chat)
-        raw_messages = [
-            item async for item in client.iter_messages(entity, search=query, limit=args.limit)
-        ]
-        messages = await public_messages(raw_messages, entity)
-        context_coverage = await attach_search_contexts(
-            client,
-            raw_messages,
-            messages,
-            context_radius,
-        )
-        result = {"chat": public_entity(entity), "query": query, "messages": messages}
-        if context_coverage is not None:
-            result["contextCoverage"] = context_coverage
-        return result
+        return await selected_chat_search(client, args, query, filters, references, pages, page_size, context_radius)
     except TelegramRuntimeError:
         raise
     except Exception as error:
@@ -4669,6 +5334,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
             return asyncio.run(command_login_async(args, identity))
         if args.command == "dialogs":
             return asyncio.run(command_dialogs_async(args, identity))
+        if args.command == "folders":
+            return asyncio.run(command_folders_async(args, identity))
         if args.command == "resolve-phone":
             return asyncio.run(command_resolve_phone_async(args, identity))
         if args.command == "members":
@@ -4901,10 +5568,11 @@ def build_parser() -> argparse.ArgumentParser:
             mutation.add_argument("--schedule-at")
     search = commands.add_parser(
         "search",
-        help="Search messages in one exact chat or across accessible cloud chats",
+        help="Search messages in selected chats or across accessible cloud chats",
     )
     search_scope = search.add_mutually_exclusive_group(required=True)
-    search_scope.add_argument("--chat")
+    search_scope.add_argument("--chat", action="append", help=f"Repeat for up to {MAX_SEARCH_CHATS} exact chats")
+    search_scope.add_argument("--folder", help="Exact custom folder name or ID returned by folders")
     search_scope.add_argument(
         "--global",
         dest="global_search",
@@ -4917,11 +5585,18 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--until", help="Exclusive ISO date/time in --timezone")
     search.add_argument("--timezone", default=DEFAULT_EXPORT_TIMEZONE)
     search.add_argument("--media-type", choices=tuple(SEARCH_MEDIA_FILTERS), default="any")
+    search.add_argument("--chat-type", choices=("user", "group", "channel"), help="Global/folder search: private chats, groups or channels")
+    search.add_argument("--folder-id", type=int, help="Global search only: 0 for main, 1 for archive; custom folders use --folder")
+    search.add_argument("--pages", type=int, choices=range(1, MAX_SEARCH_PAGES + 1),
+                        default=DEFAULT_SEARCH_PAGES, metavar=f"1..{MAX_SEARCH_PAGES}",
+                        help="Automatic search pages per selected chat or global scope")
+    search.add_argument("--page-size", type=int, choices=range(1, 201),
+                        default=DEFAULT_SEARCH_PAGE_SIZE, metavar="1..200", help="Matching results per search page; --limit caps the combined output")
     search.add_argument("--before-id", type=positive_message_id, help="Continue an exact-chat filtered search from nextBeforeId")
     search.add_argument("--limit", type=int, choices=range(1, 201), default=20, metavar="1..200")
     search.add_argument(
         "--cursor",
-        help="Opaque nextCursor from the previous global-search page",
+        help="Opaque nextCursor from the previous global or selected-chat search",
     )
     search.add_argument(
         "--context",
@@ -4930,10 +5605,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         metavar=f"0..{MAX_SEARCH_CONTEXT_RADIUS}",
         help=(
-            "Attach this many chronological messages before and after every hit; "
+            "Merge overlapping chronological windows of this radius around hits; "
             f"a non-zero value requires --limit 1..{MAX_SEARCH_CONTEXT_RESULTS}"
         ),
     )
+    commands.add_parser("folders", help="List custom folder IDs and names without exposing peer lists")
     export = commands.add_parser(
         "export",
         aliases=["daily-export"],

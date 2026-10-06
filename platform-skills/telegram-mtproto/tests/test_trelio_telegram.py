@@ -1629,7 +1629,7 @@ class TrelioTelegramTests(unittest.TestCase):
             base + ["--global", "--limit", "10", "--context", "10"]
         )
 
-        self.assertEqual(exact_chat.chat, "work_group")
+        self.assertEqual(exact_chat.chat, ["work_group"])
         self.assertFalse(exact_chat.global_search)
         self.assertIsNone(global_search.chat)
         self.assertTrue(global_search.global_search)

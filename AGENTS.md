@@ -8,6 +8,8 @@ keys сюда не добавляются. Перед правкой прочи�
 Для Windows/native bootstrap прочитай полный
 [windows-native-runtime.md](docs/windows-native-runtime.md). Общий статический
 gate обходит все provider-ы; native gate выполняется на реальной Windows.
+Для Telegram search, folder scope, cursor и context grouping читай полный
+[контракт сообщений](docs/telegram-mtproto-message-workflows.md).
 
 Канонический main остаётся чистым. Новая работа выполняется в отдельном
 физическом worktree и ветке codex/* от свежего origin/main. Перед правкой:

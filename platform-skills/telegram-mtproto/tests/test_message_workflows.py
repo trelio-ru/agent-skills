@@ -38,7 +38,7 @@ UpdateTranscribedAudio = tl_type("UpdateTranscribedAudio")
 UpdateDeleteScheduledMessages = tl_type("UpdateDeleteScheduledMessages")
 FUNCTIONS = NS(**{name: tl_type(name) for name in (
     "GetDiscussionMessageRequest", "GetRepliesRequest", "SearchRequest", "SearchGlobalRequest",
-    "GetScheduledMessagesRequest", "EditMessageRequest", "DeleteScheduledMessagesRequest",
+    "GetScheduledMessagesRequest", "GetDialogFiltersRequest", "EditMessageRequest", "DeleteScheduledMessagesRequest",
     "SendScheduledMessagesRequest", "TranscribeAudioRequest", "GetPeerDialogsRequest",
 )})
 TYPES = NS(**{name: tl_type(name) for name in M.SEARCH_MEDIA_FILTERS.values()},
@@ -317,7 +317,7 @@ class MessageWorkflowsTests(unittest.TestCase):
             return NS(messages=candidates[:request.limit], users=[], chats=[self.group])
         self.client.dispatch = provider
         args = ("search", "--chat", "old_group", "--from", "@alice", "--media-type", "document", "--limit", "1")
-        first = self.call(M.command_search_async, *args)
+        first = self.call(M.command_search_async, *args, "--pages", "1")
         self.assertEqual(first["messages"], [])
         self.assertEqual(first["coverage"]["scanned"], 1000)
         self.assertTrue(first["coverage"]["scanLimitReached"])
@@ -370,7 +370,7 @@ class MessageWorkflowsTests(unittest.TestCase):
         self.client.dispatch = provider
         result = self.call(M.command_search_async, "search", "--chat", "old_group", "--media-type", "document", "--limit", "200")
         self.assertEqual(len(result["messages"]), 200)
-        self.assertEqual(len(self.client.calls), 3)
+        self.assertEqual(len(self.client.calls), 4)
         self.assertEqual(result["coverage"]["nextBeforeId"], 101)
         self.assertTrue(result["coverage"]["hasMore"])
         self.assertFalse(result["coverage"]["complete"])
@@ -547,8 +547,11 @@ class MessageWorkflowsTests(unittest.TestCase):
                 preview = self.preview("scheduled-cancel")
                 if change == "target": target.message = "Изменено другим клиентом"
                 if change == "account": self.client.account.id = 2
-                patch = mock.patch.object(M, "MESSAGE_WORKFLOW_VERSION", "2.4.0") if change == "runtime" else (
-                    mock.patch.object(M.time, "time", return_value=M.time.time() + 301) if change == "expiry" else mock.patch.object(M, "MESSAGE_WORKFLOW_VERSION", "2.3.0"))
+                # Runtime changes must differ from the current release. Keep
+                # unrelated cases on that release so they prove their own
+                # target/account boundary rather than an incidental mismatch.
+                patch = mock.patch.object(M, "MESSAGE_WORKFLOW_VERSION", M.MESSAGE_WORKFLOW_VERSION + "-changed") if change == "runtime" else (
+                    mock.patch.object(M.time, "time", return_value=M.time.time() + 301) if change == "expiry" else mock.patch.object(M, "MESSAGE_WORKFLOW_VERSION", M.MESSAGE_WORKFLOW_VERSION))
                 count = len(self.client.calls)
                 with patch, self.assertRaisesRegex(M.TelegramRuntimeError, "approval"):
                     self.execute("scheduled-cancel", preview)

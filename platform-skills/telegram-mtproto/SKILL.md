@@ -1,6 +1,6 @@
 ---
 name: telegram-mtproto
-description: Find personal Telegram chats and messages, read message links and threads, reply, transcribe selected voice messages, manage scheduled delivery, and safely communicate through a personal MTProto session and Trelio's signed runtime. Use for Telegram correspondence, files, audiences, bounded exports, login, and local send-policy setup when this catalog transport is selected.
+description: Find Telegram messages across selected chats or folders with date and chat-type filters, bounded automatic pagination and merged context; read message links and threads, reply, transcribe voice messages, manage scheduled delivery, and safely communicate through a personal MTProto session and Trelio's signed runtime. Use for Telegram correspondence, files, audiences, bounded exports, login, and local send-policy setup when this catalog transport is selected.
 ---
 
 # Telegram
@@ -143,11 +143,26 @@ sandbox и approval mode клиента не заменяют, не выдают
 
 - Начинай с `doctor`, затем используй узкий `dialogs`, `read`, `scheduled`,
   `search` или `members`. `search` всегда получает явный scope:
-  `--chat ID_OR_USERNAME` ищет внутри exact чата, а `--global` – по всем
-  доступным текущей личной сессии облачным чатам. Для global search передавай
-  `--query` длиной не более 256 символов и bounded `--limit 1..200`.
+  повторяемый `--chat ID_OR_USERNAME` ищет в 1..20 exact чатах,
+  `--folder NAME_OR_ID` – в выбранной пользовательской папке, а `--global` –
+  по всем доступным текущей личной сессии облачным чатам. Передавай `--query`
+  длиной не более 256 символов и bounded `--limit 1..200` (по умолчанию 20).
+  Лимит общий для всех чатов; runtime распределяет его между ними и показывает
+  отдельный `coverage.chats[]`. Это ограниченная выборка, которая не обещает
+  самые новые совпадения из всей области. Ошибка одного чата сохраняет остальные
+  результаты, но не доказывает отсутствие сообщений в недоступном чате.
   Без текстового запроса нужен явный фильтр автора, дат или типа содержимого.
   В global scope одних дат недостаточно: нужен текст либо тип содержимого.
+- Для ограничения типа чатов добавляй `--chat-type user|group|channel` к
+  `--global` или `--folder`; `user` включает личные диалоги с ботами.
+  `--global --folder-id 0` выбирает основной список, `--folder-id 1` – архив.
+  Пользовательские папки имеют отдельные IDs: сначала прочитай `folders`,
+  затем используй exact ID либо однозначное имя в `--folder`, например
+  `search --folder "Работа" --query "договор" --chat-type group`.
+  Папка выбирает до 20 чатов, динамический состав проверяется по metadata до
+  1000 диалогов. Учитывай `folder.coverage`: ограничения и неизвестное
+  членство оставляют поиск неполным. При неоднозначном имени используй ID;
+  изменение папки или состава при продолжении требует нового поиска.
 - `dialogs --query TEXT --limit 1..100` выполняет server-side `contacts.search`
   и выбирает только `my_results`. Лимит ограничивает выдачу, а не первые
   100/500 диалогов; старые группы ищутся без перебора recent dialogs.
@@ -166,21 +181,36 @@ sandbox и approval mode клиента не заменяют, не выдают
 - Для поиска по автору внутри exact чата добавляй `--from ID_OR_USERNAME`
   (включая `me`). `--since`, `--until`, `--timezone` и
   `--media-type any|photo|video|document|voice|round-video|audio|url` работают
-  в exact-chat и global scope. Даты задают полуоткрытый период
+  во всех областях. Даты задают полуоткрытый период
   `since <= date < until`; дата без offset использует выбранную IANA timezone
   (`Europe/Moscow` по умолчанию), UTC-границы возвращаются в `filters`.
   Например: `search --chat EXACT --from @USERNAME --media-type document
   --since 2026-08-01 --until 2026-09-01 --timezone Europe/Moscow`.
   Global API не поддерживает автора: `--global --from` отклоняется, а не
-  подменяется неполным поиском только по личным чатам. Отфильтрованный
-  exact-chat поиск продолжается через `--before-id` из `nextBeforeId`.
+  подменяется неполным поиском только по личным чатам. `--from` поддерживается
+  для выбранных чатов и пользовательской папки. Для нескольких чатов повторяй
+  `--chat`, например `search --chat @TEAM --chat @LEGAL --query "договор"
+  --since 2026-08-01 --until 2026-09-01`.
   В личных чатах и при сочетании автора с типом файла Telegram не умеет
   надёжно применить оба условия на сервере. Runtime проверяет автора по
   результатам узкого серверного поиска; `coverage.authorFilter=bounded_local`
-  явно обозначает это. За вызов проверяется до 1000 native hits. При
-  `scanLimitReached=true` продолжай с `nextBeforeId`, даже если текущая
-  `messages` пуста; это не доказательство отсутствия совпадений. Границы дат
+  (для нескольких чатов – `coverage.chats[].authorFilter`)
+  явно обозначает это. Одна логическая страница проверяет до 1000 native hits,
+  общий потолок выбранных чатов – 10 000 на вызов. Пустая промежуточная
+  страница с offset продолжается автоматически. Границы дат
   в exact-chat выдаче дополнительно проверяются локально.
+- `--pages 1..10` (по умолчанию 3) ограничивает автоматическое продолжение для
+  каждого чата либо global scope; `--page-size 1..200` (по умолчанию 100) –
+  совпадения страницы, а `--limit` – весь ответ. Если есть `nextCursor`,
+  продолжай с ним тот же query, references и normalized filters. Для одного
+  exact чата также допустим `--before-id` из `nextBeforeId`; не смешивай его
+  с cursor и не используй для folder/multiple/global scope. При
+  `cursorLimitReached=true` сузь запрос. Не редактируй tokens и не подменяй
+  недоступный чат другим. Проверяй `coverage.status`, `summary`, `complete`
+  и `incompleteReasons`: только `absenceProven=true` позволяет сказать,
+  что совпадений нет. Пустая partial/unavailable выдача этого не доказывает;
+  `hasMore=null` означает неизвестное продолжение. Отдельная страница
+  продолжения не доказывает полноту всего запроса.
 - Global search выполняется Telegram server-side, не требует заранее знать
   чат и не подменяется перебором `dialogs`. Secret chats в него не входят.
   Каждый элемент `messages[]` содержит безопасный `chat`. Если
@@ -192,13 +222,16 @@ sandbox и approval mode клиента не заменяют, не выдают
   что `snapshotStable=false`; не создавай постоянный индекс переписки.
 - Если цель – понять ход обсуждения по теме, а не только найти упоминания,
   используй `search ... --limit 1..10 --context 10`. Runtime для каждого
-  результата возвращает хронологические `context.messages[]` с единственным
-  `isMatch=true`, `matchIndex` и отдельным `context.coverage`. Контекст
-  разворачивается только для текущей страницы; при
+  результата возвращает `context.groupIndex`, `matchIndex` и отдельный
+  `context.coverage`. Хронологические сообщения находятся в
+  `contextGroups[groupIndex].messages[]`: пересекающиеся окна одного чата
+  объединены, все найденные реплики отмечены `isMatch=true` и перечислены в
+  `matchIds`. Одинаковые IDs разных чатов не объединяются. Контекст
+  разворачивается только для текущего ответа; при
   `contextCoverage.complete=false` либо per-hit `coverage.complete=false`
   прямо назови недоступную сторону окна.
-  `--context 0..10` работает и с exact-chat search, но `--cursor` – только с
-  `search --global`.
+  `--context 0..10` работает во всех областях поиска. Exact
+  `read --context` сохраняет отдельное `context.messages[]`.
 - Для просмотра состава exact группы, супергруппы или канала используй
   `members --chat ID_OR_USERNAME`; при необходимости добавь поиск по видимому
   имени либо username через `--query` и bounded `--limit 1..200`.
@@ -226,7 +259,7 @@ sandbox и approval mode клиента не заменяют, не выдают
   `exact=true`; `recently`, `last_week`, `last_month` – coarse-категории и не
   разрешают вычислять дату. Не выводи и не сохраняй искомый номер,
   `access_hash`, raw peer/status или provider diagnostics.
-- В `read` и обоих scope `search` используй `linkEntities` только типов
+- В `read` и всех областях `search` используй `linkEntities` только типов
   `url` / `text_url`
   и одноуровневый `replyContext`: message id, безопасные author/chat, текст,
   `quoteText`, `quoteLinkEntities` и `unavailable`. При `unavailable=true`
