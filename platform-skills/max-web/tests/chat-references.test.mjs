@@ -8,7 +8,7 @@ import { parseHTML } from "linkedom";
 import {
   MaxRuntimeError, canRecoverAssistPreparation, chatReferencesPath,
   contextChatReference, inspectOpenedChatReference, knownChatReferences,
-  loadChatReferences, normalizeChatContextRef, normalizeChatUrl, openChat,
+  loadChatReferences, lookupContactByPhone, normalizeChatContextRef, normalizeChatUrl, openChat,
   parseArguments, prepareAssistAuthorization, rememberChatReference,
   rememberOpenedChat, selectExactDialogResult, validateCommandOptions,
 } from "../scripts/trelio-max.mjs";
@@ -44,6 +44,8 @@ const chatPage = (html, initialUrl = "https://web.max.ru/123") => {
   const context = vm.createContext({ document, window: browserWindow, HTMLElement: window.HTMLElement });
   return {
     url: () => currentUrl,
+    setUrl: (url) => { currentUrl = url; },
+    setHtml: (html) => { document.body.innerHTML = html; },
     goto: async (url) => { currentUrl = url; },
     waitForFunction: async () => {},
     getByText: () => ({ count: async () => 0 }),
@@ -52,6 +54,66 @@ const chatPage = (html, initialUrl = "https://web.max.ru/123") => {
   };
 };
 const surface = '<main><button aria-label="Открыть профиль Виктория"></button><div class="messageWrapper">Private message body</div><div contenteditable="true"></div></main>';
+
+// A cold contact deep link is discarded, whereas the provider-owned phone
+// action opens the contact without creating a conversation or sending text.
+// Use real DOM inspectors so a route-only success cannot satisfy the test.
+const phoneLookupPage = (target = "https://web.max.ru/123") => {
+  const home = '<input placeholder="Поиск">';
+  const page = chatPage(home, "https://web.max.ru/");
+  const searched = [];
+  const search = { first() { return this; }, count: async () => 1,
+    isVisible: async () => true, click: async () => {}, fill: async (value) => { searched.push(value); } };
+  page.goto = async () => { page.setUrl("https://web.max.ru/"); page.setHtml(home); };
+  page.getByPlaceholder = () => search;
+  page.getByRole = (_role, { name }) => String(name).includes("найти по номеру")
+    ? { count: async () => 1, isVisible: async () => true, click: async () => {
+      page.setUrl(target); page.setHtml(surface);
+    } } : { first() { return this; }, count: async () => 0 };
+  page.locator = () => ({ first() { return this; }, count: async () => 0 });
+  page.waitForTimeout = async () => {};
+  return { page, searched };
+};
+
+test("MAX restores a cold contact URL through its verified private phone locator", async () => withJournal(async () => {
+  const { page, searched } = phoneLookupPage();
+  const phone = "+12025550123";
+  await lookupContactByPhone(page, options, phone);
+  assert.equal(loadChatReferences(options).chats[0].lookupPhone, phone);
+  assert.equal(loadChatReferences(options).chats[0].contextRefs.length, 0);
+  assert.doesNotMatch(JSON.stringify(knownChatReferences({ ...options, contextRef: "", query: "" })), /12025550123|lookupPhone/u);
+  const opened = await openChat(page, { ...options, chat: "123", timeoutMs: 50 });
+  assert.equal(opened.method, "url-with-phone-lookup");
+  assert.equal(opened.url, "https://web.max.ru/123");
+  assert.deepEqual(searched, [phone, phone]);
+}));
+
+test("MAX rejects a reassigned phone and an unknown deep link before message actions", async () => withJournal(async () => {
+  rememberChatReference(options, { url: "https://web.max.ru/123", lookupPhone: "+12025550123" });
+  const { page } = phoneLookupPage("https://web.max.ru/456");
+  await assert.rejects(() => openChat(page, { ...options, chat: "123", timeoutMs: 50 }),
+    (error) => error.code === "MAX_CHAT_IDENTITY_UNVERIFIED" && error.details.finalMutationActionStarted === false);
+  await assert.rejects(() => openChat(page, { ...options, chat: "789", timeoutMs: 50 }),
+    (error) => error.code === "MAX_UI_UNSUPPORTED" && error.details.reason === "deep-link-returned-home"
+      && !error.message.includes("12025550123"));
+}));
+
+test("MAX rechecks exact chat identity after the hydration wait", async () => withJournal(async () => {
+  const page = chatPage(surface);
+  let waits = 0;
+  page.waitForFunction = async () => { if (++waits === 2) page.setUrl("https://web.max.ru/456"); };
+  await assert.rejects(() => openChat(page, { ...options, chat: "123", timeoutMs: 50 }),
+    (error) => error.code === "MAX_CHAT_IDENTITY_UNVERIFIED");
+}));
+
+test("MAX recognizes an empty contact composer without accepting a disabled editor", async () => {
+  for (const value of ["", "true", "plaintext-only"]) {
+    const page = chatPage(`<main><button aria-label="Открыть профиль Виктория"></button><div role="textbox" contenteditable="${value}"></div></main>`);
+    assert.equal((await inspectOpenedChatReference(page)).url, "https://web.max.ru/123");
+    assert.equal((await openChat(page, { chat: "123", timeoutMs: 50 })).url, "https://web.max.ru/123");
+  }
+  assert.equal(await inspectOpenedChatReference(chatPage('<main><div contenteditable="false"></div></main>')), null);
+});
 
 test("MAX ambiguity returns candidates and immediate read-only recovery without invented IDs", () => {
   const rows = [0, 1].map((index) => ({ index, title: "Виктория", identity: "виктория", url: null, stableId: null }));
