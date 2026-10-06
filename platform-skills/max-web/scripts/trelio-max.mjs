@@ -46,7 +46,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "39";
+const ADAPTER_VERSION = "40";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 const MAX_ASSIST_START_TIMEOUT_MS = 15_000;
@@ -570,8 +570,10 @@ const loadChatReferences = (options) => {
       || value.schemaVersion !== 1 || !Array.isArray(value.chats) || value.chats.length > 1000) throw new Error();
     const seen = new Set();
     for (const chat of value.chats) {
-      if (Object.keys(chat).sort().join(",") !== "contextRefs,titles,url,verifiedAt"
+      const keys = Object.keys(chat).sort().join(",");
+      if (!["contextRefs,titles,url,verifiedAt", "contextRefs,lookupPhone,titles,url,verifiedAt"].includes(keys)
         || typeof chat.url !== "string" || normalizeChatUrl(chat.url) !== chat.url || seen.has(chat.url)
+        || (chat.lookupPhone !== undefined && (!chat.lookupPhone || normalizePhoneLookupQuery(chat.lookupPhone) !== chat.lookupPhone))
         || !Array.isArray(chat.titles) || chat.titles.length > 8
         || chat.titles.some((title) => typeof title !== "string" || !title.trim() || title.length > 160)
         || !Array.isArray(chat.contextRefs) || chat.contextRefs.length > 32
@@ -612,6 +614,16 @@ const rememberChatReference = (options, reference, bindContext = false) => {
     chat = { url, titles: [], contextRefs: [], verifiedAt: "" };
   }
   if (title) chat.titles = [...chat.titles.filter((value) => value !== title), title].slice(-8);
+  // Only the official phone-lookup result supplies this private locator. It
+  // does not enter knownChats or task bindings and never authorizes sending.
+  // A later lookup must resolve to this exact provider URL before use: phone
+  // reassignment or a stale match cannot silently change the recipient.
+  if (reference.lookupPhone !== undefined) {
+    if (!reference.lookupPhone || normalizePhoneLookupQuery(reference.lookupPhone) !== reference.lookupPhone) {
+      throw new MaxRuntimeError("MAX_CHAT_REFERENCE_STORE_INVALID", "The MAX phone lookup locator is invalid.");
+    }
+    chat.lookupPhone = reference.lookupPhone;
+  }
   // Only a successful exact read/profile may bind a task. Exploring several
   // candidates through assist must never silently decide which one is relevant.
   if (bindContext && options.contextRef && !chat.contextRefs.includes(options.contextRef)) {
@@ -646,7 +658,9 @@ const inspectOpenedChatReference = async (page, fallbackTitle = "") => {
     const main = document.querySelector("main") || document.body;
     const visible = (node) => node && node.getBoundingClientRect().width > 0
       && node.getBoundingClientRect().height > 0;
-    const ready = Array.from(main.querySelectorAll('[class~="messageWrapper"], [data-message-id], [contenteditable="true"], textarea')).some(visible);
+    // An empty contenteditable attribute is HTML's enabled state. MAX uses
+    // it for a new contact's composer before any message wrapper exists.
+    const ready = Array.from(main.querySelectorAll('[class~="messageWrapper"], [data-message-id], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], textarea')).some(visible);
     const profile = Array.from(main.querySelectorAll('button, [role="button"]'))
       .find((node) => visible(node) && /^Открыть профиль\s+/iu.test(node.getAttribute("aria-label") || ""));
     const heading = Array.from(main.querySelectorAll("header h1, header h2, header h3")).find(visible);
@@ -1871,6 +1885,7 @@ const lookupContactByPhone = async (page, options, phone) => {
     throw new Error("MAX Find by number did not expose a verifiable contact or an explicit unavailable result. The runtime failed closed.");
   }
   const url = normalizeChatUrl(page.url());
+  rememberChatReference(options, { url, title: outcome.title, lookupPhone: phone });
   return {
     query: phone,
     contacts: [{ title: outcome.title, url, matchMethod: "provider-phone-lookup" }],
@@ -2081,10 +2096,38 @@ const openChat = async (page, options) => {
     }
     if (!uiReady) throw new Error("MAX chat rendered no visible interactive UI after one controlled reload.");
     await assertLoggedIn(page);
-    if (normalizeChatUrl(page.url()) !== expectedUrl) throw new Error("MAX did not open the exact requested chat URL.");
-    await page.waitForFunction(() => document.querySelector('[class~="messageWrapper"], [data-message-id], [contenteditable="true"], textarea'),
+    let observedUrl = null;
+    try { observedUrl = normalizeChatUrl(page.url()); } catch { /* Home is not a chat URL. */ }
+    let method = "url";
+    if (observedUrl !== expectedUrl) {
+      // MAX can discard a cold deep link for a new contact that has no saved
+      // conversation yet. A forged history URL or a title search would not
+      // prove that the requested person is open. Recover only from our own
+      // official lookup locator, in the same guarded browser and namespace.
+      const home = page.url() === MAX_WEB_URL;
+      const phone = home && loadChatReferences(options).chats
+        .find((chat) => chat.url === expectedUrl)?.lookupPhone;
+      if (!phone) throw new MaxRuntimeError("MAX_UI_UNSUPPORTED",
+        "MAX did not open the exact requested chat URL. If MAX returned home after a phone lookup, repeat contacts with the original phone, then use its exact URL.",
+        { reason: home ? "deep-link-returned-home" : "unexpected-chat-route", finalMutationActionStarted: false });
+      const recovered = await lookupContactByPhone(page, options, phone);
+      if (recovered.lookupState !== "matched" || recovered.contacts.length !== 1
+        || recovered.contacts[0].url !== expectedUrl || page.url() !== expectedUrl) {
+        throw new MaxRuntimeError("MAX_CHAT_IDENTITY_UNVERIFIED",
+          "MAX phone lookup no longer opens the exact requested chat. No message action was started.",
+          { reason: "phone-lookup-target-changed", finalMutationActionStarted: false });
+      }
+      method = "url-with-phone-lookup";
+    }
+    await page.waitForFunction(() => document.querySelector('[class~="messageWrapper"], [data-message-id], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], textarea'),
       null, { timeout: Math.min(options.timeoutMs, MAX_UI_READY_TIMEOUT_MS) });
-    return { method: "url", url: page.url() };
+    // Recheck after hydration: a matching route before the wait must not
+    // authorize a message operation if the SPA changed chats in the meantime.
+    const reference = await inspectOpenedChatReference(page);
+    if (reference?.url !== expectedUrl) throw new MaxRuntimeError("MAX_CHAT_IDENTITY_UNVERIFIED",
+      "MAX did not expose a ready surface for the exact requested chat.",
+      { reason: "chat-surface-unverified", finalMutationActionStarted: false });
+    return { method, url: expectedUrl };
   }
   await openHome(page, options);
   const search = await findSearchInput(page, options.timeoutMs);
@@ -2714,7 +2757,7 @@ const chooseExactForwardDestination = async (page, reference, timeoutMs) => {
 const findComposer = async (page) => {
   const locators = [
     page.locator('textarea').last(),
-    page.locator('[contenteditable="true"]').last(),
+    page.locator('[contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]').last(),
     page.getByRole("textbox").last(),
   ];
   for (const locator of locators) {
@@ -2730,7 +2773,7 @@ const findComposer = async (page) => {
   // lower-right chat pane, unlike the dialog search in the upper-left pane.
   const viewport = page.viewportSize() || { width: 1280, height: 900 };
   const editable = page.locator(
-    'textarea, [contenteditable="true"], [role="textbox"], input:not([type="hidden"])',
+    'textarea, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], input:not([type="hidden"])',
   );
   const geometricCandidates = [];
   for (let index = 0; index < await editable.count(); index += 1) {

@@ -106,8 +106,8 @@ const runtimeEntrypoint = fileURLToPath(
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.8.13");
-  assert.equal(release.runtime.version, "2.8.13");
+  assert.equal(release.release.version, "2.8.14");
+  assert.equal(release.runtime.version, "2.8.14");
   assert.equal(release.runtime.minimumHostVersion, "3.4.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -231,7 +231,7 @@ test("MAX local policy defaults to confirm and keeps state outside workspace", (
 test("MAX exposes a versioned, content-free live probe command", () => {
   const options = parseRuntimeArguments(["probe"]);
   assert.equal(options.command, "probe");
-  assert.equal(ADAPTER_VERSION, "39");
+  assert.equal(ADAPTER_VERSION, "40");
 });
 
 test("MAX exposes bounded assisted recovery for reads and exact manual operations", () => {
@@ -1881,7 +1881,7 @@ test("Goskey opening requires the exact route and a loaded chat without starting
   const page = {
     goto: async (url) => assert.equal(url, "https://web.max.ru/goskey_bot"),
     waitForFunction: async () => {},
-    evaluate: async () => ({ loginReady: false, authenticatedReady: true }),
+    evaluate: async () => ({ loginReady: false, authenticatedReady: true, ready: true }),
     url: () => actual,
   };
   const options = { chat: "https://max.ru/goskey_bot", timeoutMs: 5000 };
@@ -2153,7 +2153,7 @@ test("MAX deep links reload one blank shell and reject an unverified target", as
   const page = {
     goto: async () => {}, reload: async () => { reloads += 1; },
     waitForFunction: async () => { if (++checks === 1) throw new Error('blank'); },
-    evaluate: async () => ({ loginReady: false, authenticatedReady: true }), url: () => options.chat,
+    evaluate: async () => ({ loginReady: false, authenticatedReady: true, ready: true }), url: () => options.chat,
   };
   assert.equal((await openChat(page, options)).url, options.chat);
   assert.equal(reloads, 1);
