@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { accountBlock, activeCredentialGate, AuthorizationAttempt, authorizationFailure, closedDiagnostics,
+import { accountBlock, accountRecoveryHelp, ACCOUNT_RECOVERY_URL, activeCredentialGate, AuthorizationAttempt, authorizationFailure, closedDiagnostics,
   credentialGate, recoveredCredentialGate } from '../scripts/auth-safety.mjs';
 import { decryptRecord, encryptRecord, RuntimeError } from '../scripts/core.mjs';
 import { EsiaAuthorizer } from '../scripts/esia-authorizer.mjs';
@@ -14,6 +14,37 @@ const blockedText = 'Доступ временно заблокирован\nВ�
 const credentials = { login: '+70000000000', password: 'synthetic-password', totp: 'JBSWY3DPEHPK3PXP' };
 const request = { origin: 'https://service.example.org', sessionId: crypto.randomUUID(), requestId: crypto.randomUUID(),
   token: 'synthetic-private-bearer', callback: 'https://service.example.org/callback?code=synthetic-private-code' };
+
+test('account recovery is a fixed human flow and never applies to other login failures', () => {
+  const help = accountRecoveryHelp('account_temporarily_blocked');
+  assert.equal(help.url, 'https://www.gosuslugi.ru/679557/1/form');
+  assert.equal(help.requiresUserAction, true);
+  assert.ok(help.instruction.includes(help.url));
+  assert.match(help.instruction, /самостоятельно.*проверку/);
+  assert.match(help.instruction, /сообщите.*снятии/);
+  assert.match(help.instruction, /Автоматический повтор.*остановлен/);
+  assert.doesNotMatch(help.instruction, /72|биометрия обязательна/);
+  help.url = 'https://untrusted.example.org/';
+  assert.equal(accountRecoveryHelp('account_temporarily_blocked').url, ACCOUNT_RECOVERY_URL);
+  for (const reason of [null, undefined, 'credentials_rejected', 'auth_timeout', 'challenge_required',
+    'https://untrusted.example.org/?code=synthetic-private-code']) assert.equal(accountRecoveryHelp(reason), null);
+});
+
+test('closed blocked receipts rebuild trusted recovery guidance without copying private or injected links', () => {
+  const gate = { reason: 'account_temporarily_blocked', retryAt: null };
+  const receipt = closedDiagnostics({ credentialGate: gate,
+    accountRecovery: { url: request.callback, instruction: 'synthetic-private-value' } });
+  assert.deepEqual(receipt.credentialGate, gate);
+  assert.deepEqual(receipt.accountRecovery, accountRecoveryHelp(gate.reason));
+  assert.doesNotMatch(JSON.stringify(receipt), /synthetic-private|service\.example|code=/);
+  assert.deepEqual(closedDiagnostics({ credentialGate: { reason: 'credentials_rejected', retryAt: null },
+    accountRecovery: { url: ACCOUNT_RECOVERY_URL } }), { credentialGate: { reason: 'credentials_rejected', retryAt: null } });
+  assert.deepEqual(closedDiagnostics({ credentialGate: { reason: 'account_temporarily_blocked', retryAt: 'invalid' },
+    accountRecovery: { url: ACCOUNT_RECOVERY_URL } }), {});
+  const manual = closedDiagnostics({ authorization: { origin: request.origin, browserSessionId: request.sessionId,
+    requestId: request.requestId, status: 'user_required', manualReason: 'account_temporarily_blocked' } });
+  assert.equal(manual.accountRecovery.url, ACCOUNT_RECOVERY_URL);
+});
 
 test('account block takes a bounded duration only from the observed unblock promise', () => {
   assert.deepEqual(accountBlock(blockedText), { reason: 'account_temporarily_blocked', retryAfterHours: 72 });

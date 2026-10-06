@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.3.14 объявляет signed host browser-session class
+Runtime 3.3.15 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -24,6 +24,16 @@ Deadline выводится только из наблюдённого обещ�
 До него либо ручного восстановления новый процесс/request не вводит credentials,
 не выбирает QR/password и не запускает login entry автоматически.
 Неверная структура gate завершается `auth_gate_invalid`, а не сбрасывает защиту.
+Для распознанного ограничения живой и закрытый status возвращают `accountRecovery`
+с фиксированной `url=https://www.gosuslugi.ru/679557/1/form`,
+`requiresUserAction=true` и инструкцией самостоятельной проверки. Это публичная
+подсказка из trusted source, а не новая capability и не сохранённые данные формы.
+Closed projection заново строит её по валидной причине; URL/text из старого
+status либо ESIA page не копируются. Агент явно показывает пользователю ссылку
+и просит сообщить о снятии ограничения; сам не проходит проверку/биометрию и
+не создаёт auth transaction ради проверки формы. Доступ к самому порталу не
+исключает ограничения ЕСИА-входа во внешние сервисы. Подсказка не обещает
+разблокировку и не меняет deadline/gate или sent-флаги.
 Credentials/cookies, `storageRole` и неизвестные legacy поля сохраняются;
 авторизатор внешнего сайта не меняет роль сохранённого портала.
 
