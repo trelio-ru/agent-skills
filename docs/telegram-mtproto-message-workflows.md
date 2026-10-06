@@ -226,7 +226,9 @@ provider exhaustion определяют hasMore; scanLimitReached не счит
 выбранного чата либо global scope. `--page-size 1..200` (default 100)
 ограничивает совпадения одной страницы; общий `--limit` действует раньше.
 Selected/folder search имеет общий потолок 10 000 native hits на вызов,
-включая bounded local verification и look-ahead. Пустая промежуточная страница
+включая bounded local verification, look-ahead и строки, полученные до сбоя
+или отказа при проверке страницы. Ошибка не обнуляет общий scan budget.
+Пустая промежуточная страница
 с безопасным offset продолжается автоматически. В global scope одна
 логическая страница может читать несколько native batches максимум по 100.
 Повторяющийся offset не разрешает бесконечный цикл или фиктивную полноту.

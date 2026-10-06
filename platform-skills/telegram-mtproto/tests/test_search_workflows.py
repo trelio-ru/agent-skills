@@ -62,6 +62,7 @@ class SearchWorkflowsTests(unittest.TestCase):
         self.assertEqual(len(self.client.calls), 2)
         self.assertTrue(result["coverage"]["complete"])
         self.assertTrue(all(chat["complete"] for chat in result["coverage"]["chats"]))
+        self.assertEqual([chat["authorFilter"] for chat in result["coverage"]["chats"]], ["server", "server"])
 
     def test_shared_limit_gives_both_chats_a_share_and_keeps_resumable_offsets(self):
         self.groups()
@@ -250,6 +251,25 @@ class SearchWorkflowsTests(unittest.TestCase):
         self.assertTrue(result["coverage"]["cursorLimitReached"])
         self.assertIsNone(result["coverage"]["nextCursor"])
         self.assertFalse(result["coverage"]["complete"])
+
+    def test_failed_page_keeps_received_hits_in_the_shared_scan_budget(self):
+        self.groups()
+        second_peer = base.PeerChannel(channel_id=78)
+        malformed = [self.message(20), self.message(19, peer_id=second_peer)]
+        remaining = [self.message(i, peer_id=second_peer, from_id=base.PeerUser(user_id=9))
+                     for i in range(20, 10, -1)]
+        def provider(request):
+            rows = malformed if base.peer_id(request.peer) == base.peer_id(self.group) else remaining
+            return NS(messages=rows[:request.limit], users=[], chats=[])
+        self.client.dispatch = provider
+        with mock.patch.object(M, "MAX_SELECTED_SEARCH_SCAN", 5):
+            result = self.call(M.command_search_async, "search", "--chat", "old_group",
+                               "--chat", "lawyers", "--from", "8", "--media-type", "document")
+        self.assertEqual([request.limit for request in self.client.calls], [5, 3])
+        self.assertEqual(result["coverage"]["scanned"], 5)
+        self.assertEqual([chat["scanned"] for chat in result["coverage"]["chats"]], [2, 3])
+        self.assertEqual(result["messages"], [])
+        self.assertFalse(result["coverage"]["absenceProven"])
 
     def test_unresolved_chat_does_not_create_an_all_done_cursor(self):
         async def resolve(reference):

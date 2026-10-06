@@ -3974,7 +3974,8 @@ def search_filter_spec(args: argparse.Namespace) -> dict[str, Any] | None:
 async def filtered_chat_search(client: Any, args: argparse.Namespace, query: str,
                                filters: dict[str, Any], radius: int, *,
                                entity: Any | None = None, raw_output: bool = False,
-                               scan_budget: int = MAX_FILTERED_SEARCH_SCAN) -> dict[str, Any]:
+                               scan_budget: int = MAX_FILTERED_SEARCH_SCAN,
+                               scan_progress: dict | None = None) -> dict[str, Any]:
     functions, _types, utils, _events, _markdown = import_telethon_workflows()
     if entity is None:
         entity = await resolve_entity(client, args.chat)
@@ -4020,6 +4021,10 @@ async def filtered_chat_search(client: Any, args: argparse.Namespace, query: str
             add_offset=0, limit=request_limit, max_id=0, min_id=0, hash=0,
         ))
         batch = hydrate_messages(client, response, utils)
+        if scan_progress is not None:
+            # Count received work before validation: a failed peer/page must
+            # not reset the shared budget and allow other chats to exceed it.
+            scan_progress["scanned"] += min(len(batch), request_limit)
         provider_inexact = provider_inexact or bool(getattr(response, "inexact", False))
         if len(batch) > request_limit:
             raise TelegramRuntimeError("Telegram filtered search exceeded its bounded provider page.")
@@ -4188,16 +4193,20 @@ def describe_search_coverage(coverage: dict, *, unavailable: bool = False) -> No
 
 
 async def plain_chat_search_page(client: Any, entity: Any, query: str, limit: int,
-                                 before: int, scan_budget: int) -> dict:
+                                 before: int, scan_budget: int, *, scan_progress: dict | None = None) -> dict:
     # One extra row proves truncation; consuming only the returned rows keeps
     # the continuation before the look-ahead hit, which must not be lost.
     request_limit = min(limit + 1, scan_budget)
     kwargs = {"search": query, "limit": request_limit}
     if before:
         kwargs["offset_id"] = before
-    rows = [row async for row in client.iter_messages(entity, **kwargs)]
-    if len(rows) > request_limit:
-        raise TelegramRuntimeError("Telegram chat search exceeded its bounded provider page.")
+    rows = []
+    async for row in client.iter_messages(entity, **kwargs):
+        rows.append(row)
+        if scan_progress is not None and len(rows) <= request_limit:
+            scan_progress["scanned"] += 1
+        if len(rows) > request_limit:
+            raise TelegramRuntimeError("Telegram chat search exceeded its bounded provider page.")
     for index, row in enumerate(rows):
         if (type(row.id) is not int or row.id <= 0 or before and row.id >= before
                 or index and row.id >= rows[index - 1].id):
@@ -4254,6 +4263,7 @@ async def selected_chat_search(client: Any, args: argparse.Namespace, query: str
     selected = []
     identities = set()
     scanned_total = 0
+    scan_progress = {"scanned": 0}
     for _round in range(pages):
         active = [state for state in states if state["hasMore"] and state["error"] is None]
         if not active or len(selected) >= total_limit or scanned_total >= MAX_SELECTED_SEARCH_SCAN:
@@ -4270,13 +4280,16 @@ async def selected_chat_search(client: Any, args: argparse.Namespace, query: str
             limit = min(page_size, quota, remaining)
             page_args = argparse.Namespace(**{**vars(args), "chat": state["reference"],
                                              "limit": limit, "before_id": state["before"] or None})
+            scanned_before_page = scan_progress["scanned"]
             try:
                 if filters is None:
-                    page = await plain_chat_search_page(client, state["entity"], query, limit, state["before"], scan_remaining)
+                    page = await plain_chat_search_page(client, state["entity"], query, limit, state["before"], scan_remaining,
+                                                        scan_progress=scan_progress)
                 else:
                     page = await filtered_chat_search(client, page_args, query, filters, 0,
                                                       entity=state["entity"], raw_output=True,
-                                                      scan_budget=min(MAX_FILTERED_SEARCH_SCAN, scan_remaining))
+                                                      scan_budget=min(MAX_FILTERED_SEARCH_SCAN, scan_remaining),
+                                                      scan_progress=scan_progress)
                 coverage = page["coverage"]
                 for raw in page["messages"]:
                     exact_provider_message(raw, state["entity"], raw.id, utils)
@@ -4285,8 +4298,6 @@ async def selected_chat_search(client: Any, args: argparse.Namespace, query: str
                                              or state["before"] and next_before >= state["before"]):
                     raise TelegramRuntimeError("Telegram chat search did not advance its result cursor.")
                 state["pagesRead"] += 1
-                state["scanned"] += coverage["scanned"]
-                scanned_total += coverage["scanned"]
                 state["last"] = coverage
                 # Page/scan limits are temporary: successful automatic
                 # continuation may exhaust the scope within this invocation.
@@ -4304,6 +4315,9 @@ async def selected_chat_search(client: Any, args: argparse.Namespace, query: str
                     raise
                 state["error"] = "search_failed"
                 state["reasons"].add("search_failed")
+            finally:
+                state["scanned"] += scan_progress["scanned"] - scanned_before_page
+                scanned_total = scan_progress["scanned"]
     resumed = prior is not None or bool(getattr(args, "before_id", None))
     per_chat = []
     for state in states:
@@ -4318,6 +4332,7 @@ async def selected_chat_search(client: Any, args: argparse.Namespace, query: str
         coverage = {"chat": public_entity(state["entity"]) if state["entity"] is not None else None,
                     "reference": state["reference"], "returned": state["returned"],
                     "pagesRead": state["pagesRead"], "scanned": state["scanned"],
+                    "authorFilter": state["last"].get("authorFilter"),
                     "hasMore": state["hasMore"] if state["error"] is None else None,
                     "nextBeforeId": (state["before"] or None) if state["hasMore"] else None,
                     "complete": not state["hasMore"] and not reasons,
