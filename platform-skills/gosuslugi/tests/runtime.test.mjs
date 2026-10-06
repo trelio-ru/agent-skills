@@ -767,10 +767,44 @@ test('status and stop report a dead supervisor as closed without calling its sta
   assert.doesNotMatch(JSON.stringify(blocked), /untrusted|synthetic-private-code/);
   assert.equal(requests, 0, 'the old port may already belong to another process');
 });
+test('orphaned receipts use current closed projection after normal cleanup and runtime upgrade', { skip: !supported }, async t => {
+  const env = { TRELIO_CONFIG_HOME: nativeRoot, TRELIO_SKILL_ID: 'gosuslugi', TRELIO_SKILL_COMPANY_ID: identity.company, TRELIO_SKILL_MEMBER_ID: identity.member };
+  const original = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]])); Object.assign(process.env, env);
+  t.after(() => { for (const [key, value] of Object.entries(original)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  const directory = storageDirectory(nativeRoot, identity); await ensurePrivateDirectory(directory, helper);
+  const now = Date.now(), sessionId = crypto.randomUUID();
+  const lease = { leaseId: sessionId, runtimeVersion: '3.3.15', guardPid: process.pid, startedAt: now, expiresAt: now + LEASE_MS };
+  let requests = 0;
+  const server = http.createServer((req, res) => { requests++; req.resume(); res.end('{}'); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.close(); server.closeAllConnections(); });
+  const receipt = { sessionId, phase: 'user_required', expiresAt: lease.expiresAt, portalReady: true,
+    credentialGate: { reason: 'account_temporarily_blocked', retryAt: null },
+    accountRecovery: { url: 'https://untrusted.example.org/?code=synthetic-private-code' },
+    raw: 'synthetic-private-content', requiredAction: 'synthetic-private-action' };
+  // Test every partial-cleanup state. An orphaned controller is never called,
+  // and a former live phase cannot advertise a surviving authorization lease.
+  for (const missing of ['both', 'lease', 'control']) {
+    await fs.rm(path.join(directory, 'lease.json'), { force: true });
+    await fs.rm(path.join(directory, 'control.json'), { force: true });
+    if (missing === 'control') await atomicWrite(path.join(directory, 'lease.json'), JSON.stringify(lease), helper);
+    if (missing === 'lease') await atomicWrite(path.join(directory, 'control.json'), JSON.stringify({ leaseId: sessionId,
+      port: server.address().port, token: crypto.randomBytes(32).toString('hex') }), helper);
+    await atomicWrite(path.join(directory, 'status.json'), JSON.stringify(receipt), helper);
+    const result = await run(['status', '--session', sessionId]);
+    assert.equal(result.phase, 'closed'); assert.equal(result.sessionId, sessionId);
+    assert.equal(result.expiresAt, lease.expiresAt); assert.equal(result.requiredAction, null);
+    assert.deepEqual(result.credentialGate, receipt.credentialGate);
+    assert.equal(result.accountRecovery.url, 'https://www.gosuslugi.ru/679557/1/form');
+    assert.doesNotMatch(JSON.stringify(result), /untrusted|synthetic-private|portalReady/);
+    await assert.rejects(run(['status', '--session', crypto.randomUUID()]), /no_active_session/);
+  }
+  assert.equal(requests, 0);
+});
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
   assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.0.22');
-  assert.equal(release.release.version, '4.3.15');
+  assert.equal(release.release.version, '4.3.16');
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: 'protected-snapshot',

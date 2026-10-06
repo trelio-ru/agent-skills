@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.3.15 объявляет signed host browser-session class
+Runtime 3.3.16 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -29,7 +29,10 @@ Deadline выводится только из наблюдённого обещ�
 `requiresUserAction=true` и инструкцией самостоятельной проверки. Это публичная
 подсказка из trusted source, а не новая capability и не сохранённые данные формы.
 Closed projection заново строит её по валидной причине; URL/text из старого
-status либо ESIA page не копируются. Агент явно показывает пользователю ссылку
+status либо ESIA page не копируются. Та же projection применяется после обычного
+cleanup при отсутствии lease/control, включая receipts прежнего runtime; старый
+live phase не подтверждает живую сессию, неизвестные поля исключаются.
+Агент явно показывает пользователю ссылку
 и просит сообщить о снятии ограничения; сам не проходит проверку/биометрию и
 не создаёт auth transaction ради проверки формы. Доступ к самому порталу не
 исключает ограничения ЕСИА-входа во внешние сервисы. Подсказка не обещает
@@ -323,6 +326,9 @@ document commit внешнего callback либо его redirect chain. Про
 caller-supplied список разрешённых доменов. Redirect URI всё равно берётся
 только из наблюдённого запроса ЕСИА; callback сверяется с его exact origin,
 path, fixed query и state, а успешный ответ и document commit обязательны.
+Для обычного callback отказ передаётся фиксированным кодом
+`service_callback_rejected_target|method|fragment|state|query`: никакие URL,
+значения или операнды сравнения не раскрываются, условия принятия не меняются.
 При начале на `passport.pochta.ru` OAuth callback остаётся там; только
 связанная redirect chain после него может завершиться на `zakaznoe.pochta.ru`
 либо `pochta.ru/account` (`www.pochta.ru/account` после canonical redirect).

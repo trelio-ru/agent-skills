@@ -5,7 +5,7 @@ import os from 'node:os';
 
 export const LEASE_MS = 30 * 60 * 1000;
 export const SKILL = 'gosuslugi';
-export const RUNTIME_VERSION = '3.3.15';
+export const RUNTIME_VERSION = '3.3.16';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // HTTP failure evidence is deliberately smaller than a browser response: a
 // status and a canonical HTTPS origin cannot contain OAuth paths, queries,

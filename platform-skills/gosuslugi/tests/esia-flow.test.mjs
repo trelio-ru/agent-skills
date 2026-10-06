@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ServiceFlow, entryUrl, serviceForOrigin, serviceUrl } from '../scripts/esia-flow.mjs';
 import { EventEmitter } from 'node:events';
 import { PlaywrightAuthorizationFlow } from '../scripts/playwright-flow.mjs';
+import { safeAuthorizationFailure } from '../scripts/playwright-client.mjs';
 const gas = { origin: 'https://first.example.org', entryUrl: 'https://first.example.org/' };
 const callback = 'https://first.example.org/oauth/callback?fixed=1';
 const state = 'synthetic-state-only';
@@ -235,6 +236,29 @@ test('callback scope, state, fixed query, errors, duplicate parameters and trans
     /service_transaction_changed/,
   );
   assert.throws(() => new ServiceFlow(gas).observeNavigation(returned()), /service_callback_rejected/);
+});
+
+test('callback rejection reports only the exact failed invariant and never weakens binding', () => {
+  const cases = [
+    [returned({}, 'https://first.example.org/wrong'), 'GET', 'target'],
+    [returned(), 'POST', 'method'],
+    [returned() + '#synthetic-private-fragment', 'GET', 'fragment'],
+    [returned({ state: 'synthetic-private-wrong-state' }), 'GET', 'state'],
+    [returned({}, callback.replace('fixed=1', 'fixed=2')), 'GET', 'query'],
+  ];
+  for (const [url, method, reason] of cases) {
+    const flow = new ServiceFlow(gas); flow.observeNavigation(authorization());
+    assert.throws(() => flow.observeNavigation(url, method), error => {
+      assert.equal(error.code, `service_callback_rejected_${reason}`);
+      assert.deepEqual(safeAuthorizationFailure(error), { error: error.code });
+      assert.doesNotMatch(JSON.stringify(safeAuthorizationFailure(error)), /https:|synthetic|code=|state=/);
+      return true;
+    });
+    assert.equal(flow.callbackSeen, false); assert.equal(flow.hasAuthenticatedReturn, false);
+  }
+  const valid = new ServiceFlow(gas); valid.observeNavigation(authorization());
+  valid.observeNavigation(returned()); valid.observeResponse(returned(), 200);
+  assert.equal(valid.hasAuthenticatedReturn, true, 'the full original binding remains required');
 });
 
 test('new OAuth cancels cached login proof and recorded failure cancels readiness', () => {

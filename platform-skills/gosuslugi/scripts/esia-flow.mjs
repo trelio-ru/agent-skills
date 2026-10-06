@@ -158,7 +158,7 @@ export class ServiceFlow {
       requireThat(
         this.binding && url.origin === this.binding.callback.origin &&
           url.pathname === this.binding.callback.pathname,
-        'service_callback_rejected',
+        'service_callback_rejected_target',
       );
       for (const name of ['code', 'state', 'error_description', 'access_token', 'id_token'])
         this.remember(uniqueParameter(url, name, false));
@@ -167,16 +167,15 @@ export class ServiceFlow {
         Buffer.from(digest(state)),
         Buffer.from(this.binding.stateHash),
       );
-      requireThat(
-        method === 'GET' &&
-          !url.hash &&
-          stateMatches &&
-          [...this.binding.callback.searchParams].every(
-            ([name, content]) =>
-              url.searchParams.getAll(name).length === 1 && url.searchParams.get(name) === content,
-          ),
-        'service_callback_rejected',
-      );
+      // Fixed rejection codes identify the failed invariant without exposing
+      // the callback URL, OAuth values or comparison operands. Diagnostics do
+      // not relax any condition or turn a partial return into authenticated.
+      requireThat(method === 'GET', 'service_callback_rejected_method');
+      requireThat(!url.hash, 'service_callback_rejected_fragment');
+      requireThat(stateMatches, 'service_callback_rejected_state');
+      requireThat([...this.binding.callback.searchParams].every(
+        ([name, content]) => url.searchParams.getAll(name).length === 1 && url.searchParams.get(name) === content),
+      'service_callback_rejected_query');
       requireThat(
         !url.searchParams.has('error') &&
           uniqueParameter(url, 'code') &&
