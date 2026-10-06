@@ -165,6 +165,9 @@ test("MAX worker closure receipt is private, credential-free and cannot replace 
     // The shared record still belongs to the original worker; its outcome is
     // per-session evidence, rather than a racy replacement of that pointer.
     assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).phase, "ready");
+    fs.writeFileSync(outcomeFile, 'corrupt-private-outcome', { mode: 0o600 });
+    assert.throws(() => readAssistSession(options), (error) =>
+      error.code === "MAX_ASSIST_SESSION_INVALID" && !error.message.includes("corrupt-private-outcome"));
     writePrivateJson(outcomeFile, { schemaVersion: 1, sessionId: record.sessionId,
       pid: process.pid + 1, phase: "closed" });
     assert.throws(() => readAssistSession(options), (error) => error.code === "MAX_ASSIST_SESSION_INVALID");

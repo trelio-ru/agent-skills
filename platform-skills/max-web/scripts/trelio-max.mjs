@@ -764,7 +764,13 @@ const readAssistSession = (options) => {
     throw new MaxRuntimeError("MAX_ASSIST_SESSION_INVALID", "The exact MAX worker outcome is invalid.");
   }
   ensurePrivateFile(terminalFile);
-  const terminal = JSON.parse(fs.readFileSync(terminalFile, "utf8"));
+  let terminal;
+  try {
+    terminal = JSON.parse(fs.readFileSync(terminalFile, "utf8"));
+  } catch {
+    // JSON parse diagnostics can quote bytes from corrupt private state.
+    throw new MaxRuntimeError("MAX_ASSIST_SESSION_INVALID", "The exact MAX worker outcome is invalid.");
+  }
   const terminalKeys = new Set(["schemaVersion", "sessionId", "pid", "phase", "error", "message"]);
   if (!terminal || typeof terminal !== "object" || Array.isArray(terminal)
     || Object.keys(terminal).some((key) => !terminalKeys.has(key))
