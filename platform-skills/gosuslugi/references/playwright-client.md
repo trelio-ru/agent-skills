@@ -135,6 +135,10 @@ resume не возвращается к собственному порталу 
 Для обычного OAuth callback коды `service_callback_rejected_target|method|fragment|state|query`
 называют точный нарушенный invariant, не раскрывая URL, параметры либо значения
 сравнения. Ни один из них не разрешает ослабить привязку или считать вход пройденным.
+Собственный routing `state` на другом пути после принятого callback допустим
+только в его наблюдённой HTTP redirect chain, без OAuth code/error/tokens,
+fragment и POST. Такой переход не заменяет исходный callback/state или
+успешный document commit. Новая несвязанная навигация proof не создаёт.
 
 При `account_temporarily_blocked` пароль, TOTP и смена метода входа остановлены.
 Ограничение может касаться внешнего ЕСИА-входа при работающем портале Госуслуг.
