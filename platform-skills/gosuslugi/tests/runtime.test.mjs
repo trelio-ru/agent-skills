@@ -755,12 +755,22 @@ test('status and stop report a dead supervisor as closed without calling its sta
     });
     await assert.rejects(run([command, '--session', crypto.randomUUID()]), /exact_session_required/);
   }
+  // A dead guardian must not hide the next human step or trust a recovery link
+  // from disk. The closed receipt retains the gate but never contacts that port.
+  await atomicWrite(path.join(directory, 'status.json'), JSON.stringify({ sessionId: lease.leaseId,
+    phase: 'authorization_failed', credentialGate: { reason: 'account_temporarily_blocked', retryAt: null },
+    accountRecovery: { url: 'https://untrusted.example.org/?code=synthetic-private-code' } }), helper);
+  const blocked = await run(['status', '--session', lease.leaseId]);
+  assert.equal(blocked.phase, 'closed');
+  assert.equal(blocked.accountRecovery.url, 'https://www.gosuslugi.ru/679557/1/form');
+  assert.equal(blocked.accountRecovery.requiresUserAction, true);
+  assert.doesNotMatch(JSON.stringify(blocked), /untrusted|synthetic-private-code/);
   assert.equal(requests, 0, 'the old port may already belong to another process');
 });
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
   assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.0.22');
-  assert.equal(release.release.version, '4.3.14');
+  assert.equal(release.release.version, '4.3.15');
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: 'protected-snapshot',

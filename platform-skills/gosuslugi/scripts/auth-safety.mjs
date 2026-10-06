@@ -1,5 +1,17 @@
 import { requireThat, RuntimeError, serviceHttpFailure, UUID } from './core.mjs';
 
+// Recovery is a human verification flow, not another automatic login. Keep
+// its public address in trusted source: an auth page or old status file must
+// never supply a link carrying OAuth values, account data or a phishing host.
+export const ACCOUNT_RECOVERY_URL = 'https://www.gosuslugi.ru/679557/1/form';
+export function accountRecoveryHelp(reason) {
+  if (reason !== 'account_temporarily_blocked') return null;
+  return { url: ACCOUNT_RECOVERY_URL, requiresUserAction: true,
+    instruction: 'Госуслуги ограничили доступ; вход во внешний сервис может быть заблокирован, даже если сам портал работает. ' +
+      `Для досрочного восстановления откройте ${ACCOUNT_RECOVERY_URL} и самостоятельно пройдите проверку. ` +
+      'После успешной проверки сообщите о снятии ограничения. Автоматический повтор входа остановлен.' };
+}
+
 // These recognizers consume private ESIA text, but return only fixed reasons
 // and a bounded duration. Neither the provider message nor account data is
 // copied into the vault, status endpoint, diagnostic error or agent prompt.
@@ -115,5 +127,9 @@ export function closedDiagnostics(value) {
   if (['account_temporarily_blocked', 'credentials_rejected'].includes(gate?.reason) &&
     (gate.retryAt === null || gate.reason === 'account_temporarily_blocked' && Number.isSafeInteger(gate.retryAt) && gate.retryAt > 0))
     result.credentialGate = { reason: gate.reason, retryAt: gate.retryAt };
+  // Rebuild guidance from the validated reason, including after guardian exit.
+  // Do not copy a caller-supplied recovery object from the persisted receipt.
+  const recovery = accountRecoveryHelp(result.credentialGate?.reason ?? result.authorization?.manualReason);
+  if (recovery) result.accountRecovery = recovery;
   return result;
 }

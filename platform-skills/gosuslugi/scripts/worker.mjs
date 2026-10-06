@@ -10,7 +10,7 @@ import { loadPlaywright, launchOwnedBrowser, Portal, loginRole, reusableRoleStor
 import { boundedJson, createPrompt } from './prompt.mjs';
 import { EsiaAuthorizer } from './esia-authorizer.mjs';
 import { validatedAuthorizationRequest } from './transport.mjs';
-import { activeCredentialGate, AuthorizationAttempt, authorizationFailure, credentialGate, recoveredCredentialGate } from './auth-safety.mjs';
+import { accountRecoveryHelp, activeCredentialGate, AuthorizationAttempt, authorizationFailure, credentialGate, recoveredCredentialGate } from './auth-safety.mjs';
 
 // Only this native-supervised process opens the encrypted record/key. During
 // delegated login, bounded input values also pass through the private browser
@@ -48,21 +48,23 @@ function redactAuthSecrets(value) {
 const token = crypto.randomBytes(32).toString('hex');
 const state = () => {
   const gate = getCredentialGate();
+  const recovery = accountRecoveryHelp(activeAuthorizer()?.manualReason) ?? accountRecoveryHelp(gate?.reason);
   return { sessionId: config.leaseId, phase, expiresAt: config.expiresAt,
   portalReady,
   loginRole: delegatedAuthorization ? delegatedLoginRole : loginRole(config.loginRole),
   roleChoiceRequired: Boolean(activeAuthorizer()?.roleChoiceRequired),
   ...(authorizationAttempt ? { authorization: authorizationAttempt.publicState() } : {}),
   ...(gate ? { credentialGate: gate } : {}),
+  ...(recovery ? { accountRecovery: recovery } : {}),
   ...(phase === 'user_required' && activeAuthorizer()?.manualReason
     ? { manualReason: activeAuthorizer().manualReason } : {}),
   ...(phase === 'review_required' && reviewContext ? { review: reviewContext } : {}),
   requiredAction: ({ unlock_required: 'Подтвердите разблокировку в системном окне.', credentials_required: 'Введите данные на локальной странице.',
     code_required: 'Введите запрошенный Госуслугами код на локальной странице.',
-    authorization_failed: 'Вход во внешний сервис не подтверждён. Проверьте ошибку помощника и текущую страницу вызывающего браузера; не запускайте новый вход автоматически.',
+    authorization_failed: recovery?.instruction || 'Вход во внешний сервис не подтверждён. Проверьте ошибку помощника и текущую страницу вызывающего браузера; не запускайте новый вход автоматически.',
     review_required: 'Получите snapshot этой же сессии и определите следующий шаг по безопасному содержимому страницы. Не запрашивайте действие пользователя без конкретного распознанного challenge.',
     user_required: activeAuthorizer()?.manualReason === 'account_temporarily_blocked'
-      ? 'Госуслуги сообщили о блокировке аккаунта. Автоматический ввод остановлен; дождитесь указанного сервисом срока или выполните его ручное восстановление. Не повторяйте вход.'
+      ? recovery.instruction
       : activeAuthorizer()?.manualReason === 'credentials_rejected'
       ? 'Госуслуги отклонили данные входа. Автоматический повтор запрещён; проверьте данные вручную или явно замените их через configure.'
       : portal?.roleChoiceRequired && !activeAuthorization()
