@@ -23,6 +23,8 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 перезапуск процесса или новая transaction не должны обнулять этот запрет.
 Подсказка ручного восстановления должна содержать официальный маршрут из
 trusted source и сохраняться в закрытом статусе; provider text не задаёт её URL.
+Нормальный cleanup и аварийный выход используют одну bounded projection receipt.
+Причину отказа callback уточняй фиксированным кодом, без OAuth URL/параметров.
 Тесты Markdown-контрактов сравнивают смысл после нормализации LF/CRLF:
 переводы строк checkout не меняют инструкции и не должны ломать Windows gate.
 При правке Python CLI проверяй кодировку настоящих stdout/stderr pipes:

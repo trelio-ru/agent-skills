@@ -218,7 +218,13 @@ export async function run(args) {
   if (command === 'status' && (!lease || !control)) {
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
     requireThat(last && options['--session'] === last.sessionId, 'no_active_session');
-    return last;
+    // Normal cleanup can remove both control files while leaving the receipt.
+    // Treat that branch like guardian exit: an old runtime's JSON is evidence,
+    // never a live session or a trusted recovery URL/private payload. Project
+    // the bounded receipt with this runtime so upgrades also add current help.
+    return { sessionId: last.sessionId, phase: 'closed', requiredAction: null,
+      ...(Number.isSafeInteger(last.expiresAt) && last.expiresAt > 0 ? { expiresAt: last.expiresAt } : {}),
+      ...closedDiagnostics(last) };
   }
   requireThat(lease && control && lease.leaseId === control.leaseId, 'no_active_session');
   requireThat(['status', 'stop'].includes(command) || lease.runtimeVersion === RUNTIME_VERSION, 'stop_previous_runtime_session_first');
