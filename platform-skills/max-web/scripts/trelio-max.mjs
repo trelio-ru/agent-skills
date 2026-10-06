@@ -46,7 +46,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "40";
+const ADAPTER_VERSION = "41";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 const MAX_ASSIST_START_TIMEOUT_MS = 15_000;
@@ -5011,9 +5011,13 @@ const collectContactProfile = (page) => page.evaluate(() => {
   // Read only the opened profile/details panel. A phone written in a message,
   // preview, or another contact's sidebar row is never a profile phone.
   const panels = Array.from(document.querySelectorAll(
-    '[role="dialog"], [aria-modal="true"], [class*="profile" i], [class*="details" i], [class*="info" i]',
+    '[role="dialog"], [aria-modal="true"], [class*="profile" i], [class*="details" i], [class*="info" i], main [class~="layout-inner"]',
   )).filter((panel) => visible(panel)
     && panel.getBoundingClientRect().x > 200
+    // Current MAX renders contact details as a routed view in the main pane,
+    // without a dialog role or a profile class. Its layout-inner is also used
+    // by chats: exclude editors as well as history before reading any field.
+    && !panel.querySelector('textarea, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]')
     && !panel.querySelector('[class~="messageWrapper"], [data-message-id]'));
   const scored = panels.map((panel) => {
     const links = Array.from(panel.querySelectorAll('a[href^="tel:"]')).filter(visible);
