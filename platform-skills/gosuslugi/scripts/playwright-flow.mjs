@@ -149,13 +149,14 @@ export class PlaywrightAuthorizationFlow {
           const target = new URL(url), callback = this.flow.binding?.callback;
           // A relying party may keep its own routing `state` on the cabinet
           // URL after an accepted ESIA callback. That is not a second OAuth
-          // reply. Only the actual HTTP redirect chain of that callback may
-          // continue this way: a new navigation, the callback itself, tokens,
-          // a code/error, a fragment or POST still goes through the full guard.
+          // reply. It may continue in the actual HTTP redirect chain, or after
+          // that exact return has already committed. Before that proof an
+          // unrelated navigation still fails. The callback itself, tokens,
+          // a code/error, a fragment or POST always goes through the full guard.
           // This exception creates no new proof; completion still needs the
           // exact same request chain's successful service document commit.
           const routingReturn = this.flow.callbackAccepted &&
-            this.returnRequests.has(request.redirectedFrom()) &&
+            (this.returnRequests.has(request.redirectedFrom()) || this.returned) &&
             serviceUrl(url, this.flow.service) && callback &&
             (target.origin !== callback.origin || target.pathname !== callback.pathname) &&
             request.method() === 'GET' && !target.hash &&

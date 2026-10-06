@@ -26,7 +26,8 @@ trusted source и сохраняться в закрытом статусе; pro
 Нормальный cleanup и аварийный выход используют одну bounded projection receipt.
 Причину отказа callback уточняй фиксированным кодом, без OAuth URL/параметров.
 Routing state после принятого callback не заменяет OAuth state: продолжение
-принимается только по exact HTTP request chain без нового code/error/token.
+принимается по exact HTTP request chain либо после уже проверенного document
+return, без нового code/error/token.
 Успешный document commit и запрет повторного credential input сохраняются.
 Тесты Markdown-контрактов сравнивают смысл после нормализации LF/CRLF:
 переводы строк checkout не меняют инструкции и не должны ломать Windows gate.

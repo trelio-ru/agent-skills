@@ -385,6 +385,24 @@ test('routing-state continuation cannot replace callback checks, authorize new n
   }
 });
 
+test('a committed verified callback allows later business routing state without creating new auth proof', () => {
+  const b = browserFixture(), watcher = b.start();
+  b.request(b.original, authorization());
+  const cb = b.request(b.original, returned()); b.response(cb); b.original.commit(cb.url());
+  assert.equal(watcher.returned, true);
+  // A site's own callback script can start another document instead of an
+  // HTTP redirect. Here the exact callback has already committed successfully;
+  // ignoring a routing-only state neither grants auth nor revives secret input.
+  const cabinet = b.request(b.original, gas.origin + '/cabinet?state=synthetic-route');
+  b.response(cabinet); b.original.commit(cabinet.url());
+  assert.equal(watcher.returned, true); assert.deepEqual(b.errors, []);
+  assert.throws(() => b.flow.allowSecret(), /service_authorization_request_required/);
+  b.request(b.original, returned());
+  assert.deepEqual(b.errors, ['service_callback_already_used']);
+  assert.equal(watcher.returned, false);
+  watcher.close();
+});
+
 test('a new direct popup binds its initial request before Page publication and can close after verified SSO', async () => {
   const b = browserFixture(), watcher = b.start(), popup = b.makePage(b.original, authorization());
   let resolveOpener;
