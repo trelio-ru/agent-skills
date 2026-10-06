@@ -283,6 +283,11 @@ sandbox и approval mode клиента не заменяют, не выдают
 
 ## Долгие команды и JSON-результат
 
+- `TELEGRAM_WINDOWS_NATIVE_FAILURE` означает аварийное завершение локального
+  Python process с `0xC0000005`, а не отказ Telegram или ограничение read-only.
+  Укажи безопасные code/stage; не угадывай компонент, не сбрасывай вход или
+  policy и не повторяй mutation автоматически. Неполный stdout не является
+  полученной перепиской.
 - `export` может работать дольше одного окна command host. Если host вернул
   descriptor живого процесса, например Codex `session_id`, дочитывай тот же
   process штатным continuation primitive. В Codex используй `write_stdin` с

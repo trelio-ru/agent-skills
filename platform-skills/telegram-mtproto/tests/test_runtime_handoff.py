@@ -7,7 +7,6 @@ fixture creates a real venv and drives that boundary through captured pipes.
 """
 
 import json
-import os
 import pathlib
 import subprocess
 import sys
@@ -32,7 +31,11 @@ with mock.patch.object(runtime, "runtime_root", return_value=root), mock.patch.o
 ), mock.patch.object(runtime, "__file__", child), mock.patch.object(
     sys, "argv", [child, *arguments]
 ):
-    runtime.reexec_in_runtime_if_needed("dialogs")
+    try:
+        runtime.reexec_in_runtime_if_needed("dialogs")
+    except runtime.TelegramRuntimeError as error:
+        print(__import__("json").dumps(error.public_payload()), file=sys.stderr)
+        raise SystemExit(2)
 raise AssertionError("The launcher continued after the venv command finished")
 '''
 CHILD = r'''
@@ -41,12 +44,12 @@ sys.stdout.reconfigure(encoding="utf-8")
 # Delay completion to prove the parent preserves process/pipe supervision.
 time.sleep(0.15)
 status = int(sys.argv[-1])
-print(json.dumps({"arguments": sys.argv[1:-1], "isolated": sys.flags.isolated,
-                  "noBytecode": sys.dont_write_bytecode}, ensure_ascii=False), flush=True)
 if status == 3221225477:
     # Produce the reported NTSTATUS without touching invalid memory, personal
     # sessions or the network. Only the disposable test process exits.
     ctypes.windll.kernel32.ExitProcess(ctypes.c_uint(status))
+print(json.dumps({"arguments": sys.argv[1:-1], "isolated": sys.flags.isolated,
+                  "noBytecode": sys.dont_write_bytecode}, ensure_ascii=False), flush=True)
 raise SystemExit(status)
 '''
 
@@ -91,9 +94,13 @@ class TelegramRuntimeHandoffTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "win32", "Windows NTSTATUS process contract")
     def test_windows_native_failure_is_not_reported_as_success(self):
         completed = self.invoke(["read", "--chat", "synthetic_chat"], status=3221225477)
-        self.assertEqual(completed.returncode & 0xFFFFFFFF, 3221225477, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout.decode("utf-8"))["arguments"],
-                         ["read", "--chat", "synthetic_chat"])
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertEqual(completed.stdout, b"")
+        result = json.loads(completed.stderr.decode("utf-8"))
+        self.assertEqual(result["code"], "TELEGRAM_WINDOWS_NATIVE_FAILURE")
+        self.assertEqual(result["details"], {"stage": "venv_process", "exitCode": 3221225477,
+                                            "windowsStatus": "0xC0000005"})
+        self.assertNotIn(str(self.root), completed.stderr.decode("utf-8"))
 
 
 if __name__ == "__main__":

@@ -67,9 +67,9 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
   assert.match(runtimeSource, /MIN_SCHEDULE_LEAD_SECONDS = 60/u);
   assert.match(runtimeSource, /"scheduled"/u);
   assert.match(runtimeSource, /"--schedule-at"/u);
-  assert.equal(releaseManifest.release.version, "2.3.7");
+  assert.equal(releaseManifest.release.version, "2.3.8");
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.3.5");
+  assert.equal(releaseManifest.runtime.version, "2.3.6");
   assert.equal(releaseManifest.runtime.minimumHostVersion, "1.11.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),
@@ -101,6 +101,8 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
   assert.match(runtimeSource, /TELEGRAM_CHAT_RESOLUTION_FAILED/u);
   assert.match(runtimeSource, /doNotGuessPeerPrefix/u);
   assert.match(skillInstructions, /TELEGRAM_CHAT_RESOLUTION_FAILED/u);
+  assert.match(skillInstructions, /TELEGRAM_WINDOWS_NATIVE_FAILURE/u);
+  assert.match(connectionDocs, /TELEGRAM_WINDOWS_NATIVE_FAILURE/u);
   assert.match(skillInstructions, /Не добавляй и не удаляй\s+`-` \/ `-100`/u);
   for (const hostField of [
     "TRELIO_SKILL_COMPANY_ID",
