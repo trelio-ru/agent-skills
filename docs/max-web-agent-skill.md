@@ -466,6 +466,25 @@ stderr/stdout. Домашний каталог, credentials в URL и npm auth/t
 возвращают отдельные `MAX_NPM_CLI_NOT_FOUND`, `MAX_NODE_EXECUTABLE_INVALID` и
 `MAX_RUNTIME_DIRECTORY_UNWRITABLE`.
 
+## Госключ
+
+`read`/`send` принимают exact официальный deep link
+`https://max.ru/goskey_bot` и его browser canonical
+`https://web.max.ru/goskey_bot`. Другие произвольные top-level handles,
+credentials, query и fragment запрещены. Открытие требует сохранения exact
+canonical route и готовой поверхности чата; неизвестный numeric redirect
+fail-closed. Открытие не нажимает «Начать» и не запускает bot callbacks.
+Полный рабочий flow и ссылки на первичные источники находятся в
+[SKILL.md](../platform-skills/max-web/SKILL.md#госключ-через-max).
+
+Поддержка deep link не означает поддержку всех кнопок бота. Отправка документов
+использует существующий exact `send --file ... --confirm`, получение –
+проверенный `read`/`download`. Успешная доставка файла не доказывает
+создание заявки на подпись. Неизвестный результат запрещает второй маршрут;
+human phone signature и ГОСТ validation остаются отдельными этапами.
+Выбор Госуслуги/MAX разрешён только formal operation routing supporting releases,
+без совместного профиля и фиксированного приоритета.
+
 ## Проверки
 
 - `npm ci --prefix platform-skills/max-web --ignore-scripts`

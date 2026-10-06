@@ -105,8 +105,8 @@ const runtimeEntrypoint = fileURLToPath(
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.8.11");
-  assert.equal(release.runtime.version, "2.8.11");
+  assert.equal(release.release.version, "2.8.12");
+  assert.equal(release.runtime.version, "2.8.12");
   assert.equal(release.runtime.minimumHostVersion, "3.4.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -230,7 +230,7 @@ test("MAX local policy defaults to confirm and keeps state outside workspace", (
 test("MAX exposes a versioned, content-free live probe command", () => {
   const options = parseRuntimeArguments(["probe"]);
   assert.equal(options.command, "probe");
-  assert.equal(ADAPTER_VERSION, "37");
+  assert.equal(ADAPTER_VERSION, "38");
 });
 
 test("MAX exposes bounded assisted recovery for reads and exact manual operations", () => {
@@ -1837,6 +1837,37 @@ test("MAX group URLs retain signed numeric IDs and reject other origins and cred
   for (const url of ["https://evil.test/-12345", "https://user:password@web.max.ru/123", "https://web.max.ru/123?other=1", "https://web.max.ru/123#other"]) {
     assert.throws(() => normalizeChatUrl(url), /official numeric/u);
   }
+});
+
+test("MAX accepts only the official Goskey bot deep link", () => {
+  for (const origin of ["https://max.ru", "https://web.max.ru"]) {
+    assert.equal(normalizeChatUrl(origin + "/goskey_bot/"), "https://web.max.ru/goskey_bot");
+  }
+  for (const url of [
+    "https://evil.test/goskey_bot", "http://max.ru/goskey_bot",
+    "https://web.max.ru/goskey_bot?start=other", "https://web.max.ru/goskey_bot#other",
+    "https://user:password@web.max.ru/goskey_bot", "https://web.max.ru/goskey_bot_fake",
+    "https://web.max.ru/some_other_bot", "https://web.max.ru/goskey_bot/extra",
+  ]) assert.throws(() => normalizeChatUrl(url), /official numeric/u);
+});
+
+test("Goskey opening requires the exact route and a loaded chat without starting the bot", async () => {
+  let actual = "https://web.max.ru/goskey_bot";
+  const page = {
+    goto: async (url) => assert.equal(url, "https://web.max.ru/goskey_bot"),
+    waitForFunction: async () => {},
+    evaluate: async () => ({ loginReady: false, authenticatedReady: true }),
+    url: () => actual,
+  };
+  const options = { chat: "https://max.ru/goskey_bot", timeoutMs: 5000 };
+  assert.equal((await openChat(page, options)).url, actual);
+  // A numeric redirect or similarly named bot is not silently accepted as proof.
+  actual = "https://web.max.ru/123";
+  await assert.rejects(() => openChat(page, options), /exact requested chat URL/u);
+  actual = "https://web.max.ru/goskey_bot";
+  page.waitForFunction = async () => { throw new Error("No bot chat surface"); };
+  page.reload = async () => {};
+  await assert.rejects(() => openChat(page, options), /no visible interactive UI/u);
 });
 
 test("MAX history excludes provider controls and recognizes current outgoing metadata", async () => {

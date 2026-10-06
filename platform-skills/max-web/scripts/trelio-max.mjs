@@ -46,7 +46,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "37";
+const ADAPTER_VERSION = "38";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 const MAX_ASSIST_START_TIMEOUT_MS = 15_000;
@@ -1974,8 +1974,13 @@ const normalizeChatUrl = (reference) => {
   const url = new URL(reference, MAX_WEB_URL);
   const numeric = /^\/-?\d+\/?$/u.test(url.pathname);
   const contact = /^\/u\/[A-Za-z0-9_-]+\/?$/u.test(url.pathname);
-  if (url.username || url.password || ![MAX_WEB_ORIGIN, "https://max.ru"].includes(url.origin) || (!numeric && !contact) || url.search || url.hash) {
-    throw new Error("MAX chat URL must be an official numeric or /u/ contact URL.");
+  // The official Goskey public page links directly to this exact web route.
+  // Accepting that provider-owned identity fixes the signing workflow without
+  // opening every arbitrary top-level path or trusting a matching chat title.
+  // openChat still requires the same canonical URL and a ready message surface.
+  const goskeyBot = /^\/goskey_bot\/?$/u.test(url.pathname);
+  if (url.username || url.password || ![MAX_WEB_ORIGIN, "https://max.ru"].includes(url.origin) || (!numeric && !contact && !goskeyBot) || url.search || url.hash) {
+    throw new Error("MAX chat URL must be an official numeric, /u/ contact or exact Goskey bot URL.");
   }
   url.protocol = "https:";
   url.host = "web.max.ru";
