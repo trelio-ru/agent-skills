@@ -166,8 +166,14 @@ test('idle peer failure preserves an observed HTTP rejection instead of converti
   const authorizer = new EsiaAuthorizer({}, { permit: async () => {}, onPhase: async () => {} });
   t.after(() => clearInterval(authorizer.peerTimer));
   authorizer.call = async () => ({ failed: 'service_http_error', httpStatus: 503, httpOrigin: request.origin });
-  const error = await new Promise(resolve => authorizer.watchPeer({ isBusy: () => false,
-    onReturned: () => { throw Error('failed callback is not a return'); }, onLost: resolve }));
+  const error = await new Promise(resolve => {
+    authorizer.watchPeer({ isBusy: () => false,
+      onReturned: () => { throw Error('failed callback is not a return'); }, onLost: resolve });
+    // The real worker has an IPC server/native guardian keeping its loop alive.
+    // This isolated test has neither: retain the production-unref'ed timer only
+    // here so a fast runner cannot exit before the first peer observation.
+    authorizer.peerTimer.ref();
+  });
   assert.equal(error.code, 'service_http_error');
   assert.equal(error.httpStatus, 503);
 });
