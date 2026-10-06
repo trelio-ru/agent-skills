@@ -18,6 +18,10 @@ import {
   clickRowMemberRemovalAction,
   MaxRuntimeError,
   assistAppName,
+  assistStartupDeadline,
+  waitForAssistShutdown,
+  writeAssistTerminalState,
+  readAssistSession,
   assistInteractionAllowed,
   collectDialogResults,
   collectContactProfile,
@@ -104,10 +108,84 @@ const runtimeEntrypoint = fileURLToPath(
   new URL("../scripts/trelio-max.mjs", import.meta.url),
 );
 
+test("MAX assist startup covers sequential cold UI steps without extending its lease", () => {
+  assert.equal(assistStartupDeadline(100_000, 1_000), 46_000);
+  assert.equal(assistStartupDeadline(12_000, 1_000), 12_000);
+  assert.equal(assistStartupDeadline(500, 1_000), 500);
+});
+
+test("MAX stop confirms the exact closed browser even while its Node PID remains alive", async () => {
+  const record = { sessionId: "11111111-1111-4111-8111-111111111111", pid: 123 };
+  let elapsed = 0;
+  const closed = await waitForAssistShutdown(record, {
+    readRecord: () => ({ ...record, phase: elapsed >= 200 ? "closed" : "ready" }),
+    isAlive: () => true,
+    now: () => elapsed,
+    wait: async (ms) => { elapsed += ms; },
+    timeoutMs: 500,
+  });
+  assert.equal(closed, true);
+  assert.equal(elapsed, 200);
+});
+
+test("MAX stop does not treat missing, failed or another worker's record as closure", async () => {
+  const record = { sessionId: "11111111-1111-4111-8111-111111111111", pid: 123 };
+  for (const current of [null, { ...record, phase: "failed" },
+    { ...record, phase: "closed", pid: 124 },
+    { ...record, phase: "closed", sessionId: "22222222-2222-4222-8222-222222222222" }]) {
+    let elapsed = 0;
+    assert.equal(await waitForAssistShutdown(record, {
+      readRecord: () => current, isAlive: () => true, now: () => elapsed,
+      wait: async (ms) => { elapsed += ms; }, timeoutMs: 200,
+    }), false);
+  }
+  assert.equal(await waitForAssistShutdown(record, {
+    readRecord: () => null, isAlive: () => false, timeoutMs: 0,
+  }), true);
+});
+
+test("MAX worker closure receipt is private, credential-free and cannot replace a newer session", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "max-assist-outcome-"));
+  const previous = process.env.TRELIO_CONFIG_HOME;
+  process.env.TRELIO_CONFIG_HOME = root;
+  try {
+    const options = parseRuntimeArguments(["doctor"]);
+    const file = path.join(connectionRoot(options), "state", "assist-session.json");
+    const record = { schemaVersion: 1, sessionId: "11111111-1111-4111-8111-111111111111",
+      phase: "ready", pid: process.pid, port: 1234, token: "synthetic-control-secret" };
+    writePrivateJson(file, record);
+    assert.equal(writeAssistTerminalState(options, record.sessionId, { phase: "closed" }), true);
+    const outcomeFile = path.join(path.dirname(file), "assist-snapshots", record.sessionId, "terminal.json");
+    const outcome = fs.readFileSync(outcomeFile, "utf8");
+    assert.doesNotMatch(outcome, /synthetic-control-secret|token|port/u);
+    if (process.platform !== "win32") assert.equal(fs.statSync(outcomeFile).mode & 0o077, 0);
+    assert.equal(readAssistSession(options).phase, "closed");
+    assert.equal(readAssistSession(options).token, null);
+    assert.equal(readAssistSession(options).port, null);
+    // The shared record still belongs to the original worker; its outcome is
+    // per-session evidence, rather than a racy replacement of that pointer.
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).phase, "ready");
+    fs.writeFileSync(outcomeFile, 'corrupt-private-outcome', { mode: 0o600 });
+    assert.throws(() => readAssistSession(options), (error) =>
+      error.code === "MAX_ASSIST_SESSION_INVALID" && !error.message.includes("corrupt-private-outcome"));
+    writePrivateJson(outcomeFile, { schemaVersion: 1, sessionId: record.sessionId,
+      pid: process.pid + 1, phase: "closed" });
+    assert.throws(() => readAssistSession(options), (error) => error.code === "MAX_ASSIST_SESSION_INVALID");
+    const newer = { ...record, sessionId: "22222222-2222-4222-8222-222222222222" };
+    writePrivateJson(file, newer);
+    assert.equal(writeAssistTerminalState(options, record.sessionId, { phase: "failed" }), false);
+    assert.deepEqual(readAssistSession(options), newer);
+  } finally {
+    if (previous === undefined) delete process.env.TRELIO_CONFIG_HOME;
+    else process.env.TRELIO_CONFIG_HOME = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.8.15");
-  assert.equal(release.runtime.version, "2.8.15");
+  assert.equal(release.release.version, "2.8.16");
+  assert.equal(release.runtime.version, "2.8.16");
   assert.equal(release.runtime.minimumHostVersion, "3.4.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -231,7 +309,7 @@ test("MAX local policy defaults to confirm and keeps state outside workspace", (
 test("MAX exposes a versioned, content-free live probe command", () => {
   const options = parseRuntimeArguments(["probe"]);
   assert.equal(options.command, "probe");
-  assert.equal(ADAPTER_VERSION, "41");
+  assert.equal(ADAPTER_VERSION, "42");
 });
 
 test("MAX exposes bounded assisted recovery for reads and exact manual operations", () => {
