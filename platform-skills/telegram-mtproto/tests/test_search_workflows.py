@@ -25,7 +25,7 @@ class SearchWorkflowsTests(unittest.TestCase):
     def groups(self):
         second = base.Channel(id=78, title="Юристы", username="lawyers", broadcast=False)
         async def resolve(reference):
-            return second if reference in ("lawyers", -1000000000078) else self.group
+            return second if reference in ("lawyers", -1000000000078) or getattr(reference, "channel_id", None) == 78 else self.group
         self.client.get_entity = mock.AsyncMock(side_effect=resolve)
         return second
 
@@ -323,6 +323,20 @@ class SearchWorkflowsTests(unittest.TestCase):
         self.assertEqual(result["folder"]["coverage"]["scannedDialogs"], 0)
         self.client.iter_dialogs.assert_not_called()
         self.assertFalse(any(type(request).__name__ == "SearchGlobalRequest" for request in self.client.calls))
+
+    def test_explicit_folder_can_resolve_a_peer_missing_from_session_cache(self):
+        input_peer = base.tl_type("InputPeerChannel")(channel_id=77, access_hash=123)
+        self.folder_provider([self.folder(include_peers=[input_peer])], [self.message(10)])
+        async def resolve(reference):
+            if reference is input_peer:
+                return self.group
+            raise ValueError("numeric peer is not in the session cache")
+        self.client.get_entity = mock.AsyncMock(side_effect=resolve)
+        result = self.call(M.command_search_async, "search", "--folder", "Работа", "--query", "план")
+        self.assertEqual([row["id"] for row in result["messages"]], [10])
+        self.assertTrue(result["coverage"]["complete"])
+        self.client.get_entity.assert_awaited_once_with(input_peer)
+        self.assertNotIn("access_hash", json.dumps(result))
 
     def test_dynamic_folder_respects_category_archive_read_and_explicit_overrides(self):
         second = self.groups()

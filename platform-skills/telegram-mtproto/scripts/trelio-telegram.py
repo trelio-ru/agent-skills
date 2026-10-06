@@ -2824,12 +2824,16 @@ def unresolved_chat_error(reference: str) -> TelegramRuntimeError:
     )
 
 
-async def resolve_entity(client: Any, reference: str):
+async def resolve_entity(client: Any, reference: str, *, input_peer: Any | None = None):
     value = reference.strip()
     if not value:
         raise TelegramRuntimeError("Chat reference is required.")
     try:
-        return await client.get_entity(int(value) if re.fullmatch(r"-?\d+", value) else value)
+        # A live folder definition already supplies InputPeer access data. Keep
+        # it inside the local process instead of requiring an old numeric peer
+        # to exist in the session cache or exposing its hash to the caller.
+        return await client.get_entity(input_peer if input_peer is not None else
+                                       int(value) if re.fullmatch(r"-?\d+", value) else value)
     except Exception as error:
         if not is_telegram_entity_resolution_error(error):
             raise
@@ -4208,7 +4212,7 @@ async def plain_chat_search_page(client: Any, entity: Any, query: str, limit: in
 
 async def selected_chat_search(client: Any, args: argparse.Namespace, query: str,
                                filters: dict | None, references: list[str], pages: int,
-                               page_size: int, radius: int) -> dict:
+                               page_size: int, radius: int, *, peer_hints: dict | None = None) -> dict:
     _functions, _types, utils, _events, _markdown = import_telethon_workflows()
     key = selected_cursor_key(query, references, filters)
     prior = selected_search_cursor(key, getattr(args, "cursor", None))
@@ -4221,10 +4225,13 @@ async def selected_chat_search(client: Any, args: argparse.Namespace, query: str
                  "hasMore": True, "pagesRead": 0, "scanned": 0, "returned": 0,
                  "reasons": set(), "error": None, "last": {}}
         try:
-            entity = await resolve_entity(client, reference)
+            hint = (peer_hints or {}).get(int(reference)) if re.fullmatch(r"-?\d+", reference) else None
+            entity = await resolve_entity(client, reference, input_peer=hint)
             chat_id = utils.get_peer_id(entity)
             if type(chat_id) is not int or not 0 < abs(chat_id) < 2**63:
                 raise TelegramRuntimeError("Selected chat identity is unavailable.")
+            if hint is not None and chat_id != int(reference):
+                raise TelegramRuntimeError("Folder peer resolved outside its selected chat scope.")
             # Username and numeric references may resolve to the same exact
             # peer. Read it once without merging different peer namespaces.
             if any(previous["id"] == chat_id for previous in states):
@@ -4394,7 +4401,8 @@ async def command_folders_async(args: argparse.Namespace, identity: Identity) ->
         await client.disconnect()
 
 
-async def resolve_search_folder(client: Any, reference: str, chat_type: str | None) -> tuple[list[str], dict]:
+async def resolve_search_folder(client: Any, reference: str, chat_type: str | None, *,
+                                peer_hints: dict | None = None) -> tuple[list[str], dict]:
     """Materialize a bounded custom folder scope from its live definition.
 
     searchGlobal.folder_id refers only to main/archive peer folders (0/1), not
@@ -4415,8 +4423,9 @@ async def resolve_search_folder(client: Any, reference: str, chat_type: str | No
     folder = candidates[0]
     if type(folder).__name__ not in ("DialogFilter", "DialogFilterChatlist"):
         raise TelegramRuntimeError("This Telegram folder definition is unsupported.")
-    include = {utils.get_peer_id(peer) for field in ("include_peers", "pinned_peers")
-               for peer in (getattr(folder, field, None) or [])}
+    include_inputs = {utils.get_peer_id(peer): peer for field in ("include_peers", "pinned_peers")
+                      for peer in (getattr(folder, field, None) or [])}
+    include = set(include_inputs)
     exclude = {utils.get_peer_id(peer) for peer in (getattr(folder, "exclude_peers", None) or [])}
     fields = ("contacts", "non_contacts", "groups", "broadcasts", "bots",
               "exclude_muted", "exclude_read", "exclude_archived")
@@ -4435,6 +4444,8 @@ async def resolve_search_folder(client: Any, reference: str, chat_type: str | No
         if len(peers) > MAX_SEARCH_CHATS:
             reasons.add("folder_chat_limit_reached")
         references = [str(peer) for peer in peers[:MAX_SEARCH_CHATS]]
+        if peer_hints is not None:
+            peer_hints.update({int(ref): include_inputs[int(ref)] for ref in references})
         metadata["coverage"] = {"complete": not reasons, "selectedChats": len(references),
                                 "scannedDialogs": 0, "dialogLimit": MAX_FOLDER_DIALOGS,
                                 "chatLimit": MAX_SEARCH_CHATS, "incompleteReasons": sorted(reasons)}
@@ -4507,7 +4518,7 @@ async def resolve_search_folder(client: Any, reference: str, chat_type: str | No
             break
         if chat_type is not None:
             try:
-                entity = await resolve_entity(client, str(peer_id))
+                entity = await resolve_entity(client, str(peer_id), input_peer=include_inputs[peer_id])
             except Exception:
                 reasons.add("folder_membership_unavailable")
                 continue
@@ -4519,6 +4530,8 @@ async def resolve_search_folder(client: Any, reference: str, chat_type: str | No
             if kind != chat_type:
                 continue
         references.append(str(peer_id))
+    if peer_hints is not None:
+        peer_hints.update({int(ref): include_inputs[int(ref)] for ref in references if int(ref) in include_inputs})
     metadata["coverage"] = {"complete": not reasons, "selectedChats": len(references),
                             "scannedDialogs": min(scanned, MAX_FOLDER_DIALOGS),
                             "dialogLimit": MAX_FOLDER_DIALOGS, "chatLimit": MAX_SEARCH_CHATS,
@@ -4543,10 +4556,14 @@ async def command_search_async(args: argparse.Namespace, identity: Identity) -> 
     try:
         await ensure_authorized(client)
         if folder is not None:
-            references, metadata = await resolve_search_folder(client, folder, getattr(args, "chat_type", None))
+            # Private InputPeers stay in this invocation only. The returned
+            # folder metadata and continuation carry safe IDs/digests only.
+            peer_hints = {}
+            references, metadata = await resolve_search_folder(client, folder, getattr(args, "chat_type", None), peer_hints=peer_hints)
             filters["public"]["folder"] = {key: value for key, value in metadata.items() if key != "coverage"}
             if references:
-                result = await selected_chat_search(client, args, query, filters, references, pages, page_size, context_radius)
+                result = await selected_chat_search(client, args, query, filters, references, pages, page_size, context_radius,
+                                                    peer_hints=peer_hints)
             else:
                 if getattr(args, "cursor", None):
                     raise TelegramRuntimeError("Folder search cursor no longer resolves to the same chat set.")

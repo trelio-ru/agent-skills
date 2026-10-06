@@ -181,6 +181,10 @@ bounded dialog response сохраняются; chat/dialog ceilings отмеч�
 и разрешённый набор peers должны совпасть с cursor. Изменение папки требует
 нового поиска. Raw include lists, access hashes и session credentials не
 попадают в ответ или token.
+Для exact include peers используются InputPeers текущей folder definition,
+даже если numeric peer ещё не известен session cache; приватные access данные
+остаются только внутри локального вызова. Разрешённая сущность обязана
+подтвердить тот же marked peer ID.
 
 ## Фильтры поиска сообщений
 
