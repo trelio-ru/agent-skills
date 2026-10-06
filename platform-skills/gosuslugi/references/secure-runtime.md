@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.3.16 объявляет signed host browser-session class
+Runtime 3.3.17 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -329,6 +329,13 @@ path, fixed query и state, а успешный ответ и document commit о
 Для обычного callback отказ передаётся фиксированным кодом
 `service_callback_rejected_target|method|fragment|state|query`: никакие URL,
 значения или операнды сравнения не раскрываются, условия принятия не меняются.
+После принятого callback собственный routing `state` на другом пути сервиса
+не считается повторным OAuth ответом в его exact HTTP redirect chain либо
+после уже проверенного document return.
+Требуются GET, отсутствие fragment/code/error/access_token/id_token и ровно один
+`state`; callback на исходном пути и новая навигация до проверенного return
+сохраняют полную проверку. Это не новый proof: успешный service document commit
+той же цепочки по-прежнему обязателен, доступ к credentials остаётся отозванным.
 При начале на `passport.pochta.ru` OAuth callback остаётся там; только
 связанная redirect chain после него может завершиться на `zakaznoe.pochta.ru`
 либо `pochta.ru/account` (`www.pochta.ru/account` после canonical redirect).

@@ -345,6 +345,64 @@ function browserFixture(service = gas) {
 }
 const eventsSettled = () => new Promise(resolve => setImmediate(resolve));
 
+test('routing state after an accepted callback stays in its exact HTTP return chain', () => {
+  const b = browserFixture(), watcher = b.start();
+  b.request(b.original, authorization());
+  const cb = b.request(b.original, returned()); b.response(cb, 302);
+  const cabinet = b.request(b.original, gas.origin + '/cabinet?state=synthetic-route', { parent: cb });
+  b.response(cabinet, 302);
+  assert.equal(watcher.returned, false, 'routing state and HTTP acceptance do not replace a document commit');
+  // The exception applies to every exact redirect hop, not to an origin-wide
+  // state waiver. The actual callback state remains the original binding.
+  const final = b.request(b.original, gas.origin + '/cabinet/main?state=another-route', { parent: cabinet });
+  b.response(final); b.original.commit(final.url());
+  assert.equal(watcher.returned, true); assert.deepEqual(b.errors, []);
+  assert.throws(() => b.flow.allowSecret(), /service_authorization_request_required/);
+  assert.throws(() => b.flow.observeNavigation(returned()), /service_callback_already_used/);
+  watcher.close();
+});
+
+test('routing-state continuation cannot replace callback checks, authorize new navigation or accept OAuth payloads', () => {
+  for (const mode of ['unrelated', 'http-pending', 'code', 'error', 'access_token', 'id_token',
+    'fragment', 'post', 'duplicate-state', 'same-callback', 'foreign-origin']) {
+    const b = browserFixture(), watcher = b.start();
+    b.request(b.original, authorization());
+    const cb = b.request(b.original, returned());
+    if (mode !== 'http-pending') b.response(cb, 302);
+    let target = gas.origin + '/cabinet?state=synthetic-route';
+    if (['code', 'error', 'access_token', 'id_token'].includes(mode)) target += `&${mode}=synthetic-private`;
+    if (mode === 'fragment') target += '#synthetic-private';
+    if (mode === 'duplicate-state') target += '&state=duplicate';
+    if (mode === 'same-callback') target = returned();
+    if (mode === 'foreign-origin') target = 'https://unrelated.example.org/cabinet?state=synthetic-route';
+    const next = b.request(b.original, target, {
+      parent: mode === 'unrelated' ? null : cb, method: mode === 'post' ? 'POST' : 'GET',
+    });
+    b.response(next); b.original.commit(target);
+    assert.equal(watcher.returned, false, mode);
+    if (mode !== 'foreign-origin') assert.equal(b.errors.length, 1, mode);
+    watcher.close();
+  }
+});
+
+test('a committed verified callback allows later business routing state without creating new auth proof', () => {
+  const b = browserFixture(), watcher = b.start();
+  b.request(b.original, authorization());
+  const cb = b.request(b.original, returned()); b.response(cb); b.original.commit(cb.url());
+  assert.equal(watcher.returned, true);
+  // A site's own callback script can start another document instead of an
+  // HTTP redirect. Here the exact callback has already committed successfully;
+  // ignoring a routing-only state neither grants auth nor revives secret input.
+  const cabinet = b.request(b.original, gas.origin + '/cabinet?state=synthetic-route');
+  b.response(cabinet); b.original.commit(cabinet.url());
+  assert.equal(watcher.returned, true); assert.deepEqual(b.errors, []);
+  assert.throws(() => b.flow.allowSecret(), /service_authorization_request_required/);
+  b.request(b.original, returned());
+  assert.deepEqual(b.errors, ['service_callback_already_used']);
+  assert.equal(watcher.returned, false);
+  watcher.close();
+});
+
 test('a new direct popup binds its initial request before Page publication and can close after verified SSO', async () => {
   const b = browserFixture(), watcher = b.start(), popup = b.makePage(b.original, authorization());
   let resolveOpener;
