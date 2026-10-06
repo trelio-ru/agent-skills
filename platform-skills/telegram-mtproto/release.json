@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.3.6",
-    "summary": "Ошибка разрешения Telegram-чата теперь возвращает стабильный код, безопасные причины неопределённости и точный следующий шаг без угадывания peer-префиксов и утечки traceback."
+    "version": "2.3.7",
+    "summary": "Названия чатов, сообщения и ошибки с эмодзи и другими Unicode-символами выводятся в UTF-8, включая Windows; чтение больше не прерывается из-за кодировки вывода."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.3.4",
+    "version": "2.3.5",
     "minimumHostVersion": "1.11.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.3.6`
-публикует runtime `2.3.4`, требует Telethon `>=1.44,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.3.7`
+публикует runtime `2.3.5`, требует Telethon `>=1.44,<2` и сохраняет
 minimum host `1.11.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -17,6 +17,21 @@ connection definition, package credential и namespace личной сессии
 Согласие на отправку даёт оператор в текущем разговоре; permission profile,
 sandbox и approval mode клиента его не выдают и не заменяют. Runtime
 patch не меняет backend, plugin, connection или minimum host.
+
+## Кодировка CLI
+
+CLI задаёт UTF-8 для stdout и stderr до разбора аргументов и исполнения команды.
+Кодовая страница Windows console/pipe и `PYTHONIOENCODING` не меняют кодировку
+результата. Названия чатов, текст сообщений и безопасные ошибки сохраняют
+кириллицу, эмодзи, сочетания с ZWJ и остальные Unicode-символы без потери текста.
+Ожидаемые runtime errors остаются JSON с exit code `2`; parser diagnostics
+также выводятся в UTF-8. stdin и системная locale не меняются.
+
+JSON сохраняет `ensure_ascii=False`; `export` / `daily-export` остаются
+compact UTF-8, чтобы прежний `--max-output-bytes` учитывал те же байты.
+`tests/test_cli_output.py` проверяет реальные subprocess pipes с принудительными
+`cp1251`, `cp1252` и `ascii`, без аккаунта, сессии и сети. Эти regressions входят
+в существующий Python provider gate на Windows, macOS и Linux.
 
 ## Состав группы или канала
 

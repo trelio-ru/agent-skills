@@ -18,6 +18,9 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 Изменение поведения одновременно обновляет контракт и содержательные тесты.
 Тесты Markdown-контрактов сравнивают смысл после нормализации LF/CRLF:
 переводы строк checkout не меняют инструкции и не должны ломать Windows gate.
+При правке Python CLI проверяй кодировку настоящих stdout/stderr pipes:
+StringIO и UTF-8 locale не воспроизводят ошибки Windows code page. Для Telegram
+действует [контракт CLI](docs/telegram-mtproto-message-workflows.md#кодировка-cli).
 Проверки идут через GitHub-hosted CI на нужных OS. Локальные full gates и VM не
 заменяют CI без доказанного billing/quota blocker и отдельного решения о VM.
 

@@ -4945,6 +4945,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    # The signed host decodes captured stdout/stderr as UTF-8. Windows Python
+    # can instead select the ANSI code page for pipes, even when its console
+    # supports Unicode. With ensure_ascii=False, an emoji in a successfully
+    # read chat then raises UnicodeEncodeError at the final print; stderr can
+    # also produce undecodable bytes or invalid JSON backslash escapes. Bind
+    # both output streams before argparse, reexec and terminal prompts, keeping
+    # the compact export's existing UTF-8 byte accounting and all text intact.
+    # Reconfigure real text streams in place to retain their buffering/newline
+    # behavior. Embedders/tests may use StringIO with no byte encoding; leave
+    # those streams alone, and never change stdin or the user's system locale.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8")
     parser = build_parser()
     args = parser.parse_args()
     try:
