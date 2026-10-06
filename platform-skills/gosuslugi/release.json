@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.3.12",
-    "summary": "Исправлено распознавание HTTP 503 и других ошибок портала при входе: сохраняются точный HTTP-код и безопасный origin без данных авторизации."
+    "version": "4.3.13",
+    "summary": "Уточнён маршрут Госключа: прямые формы по роли подписанта и независимый выбор между порталом и MAX без повторной отправки."
   },
   "connection": null,
   "runtime": {
-    "version": "3.3.12",
+    "version": "3.3.13",
     "minimumHostVersion": "3.0.22",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",
