@@ -106,8 +106,8 @@ const runtimeEntrypoint = fileURLToPath(
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.8.14");
-  assert.equal(release.runtime.version, "2.8.14");
+  assert.equal(release.release.version, "2.8.15");
+  assert.equal(release.runtime.version, "2.8.15");
   assert.equal(release.runtime.minimumHostVersion, "3.4.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -231,7 +231,7 @@ test("MAX local policy defaults to confirm and keeps state outside workspace", (
 test("MAX exposes a versioned, content-free live probe command", () => {
   const options = parseRuntimeArguments(["probe"]);
   assert.equal(options.command, "probe");
-  assert.equal(ADAPTER_VERSION, "40");
+  assert.equal(ADAPTER_VERSION, "41");
 });
 
 test("MAX exposes bounded assisted recovery for reads and exact manual operations", () => {
@@ -1321,6 +1321,26 @@ test("MAX reads a phone only from the visible contact profile", async () => {
     return { x: 600, y: 100, width: 300, height: 80 };
   };
   assert.equal((await collectContactProfile(sidebarOnly)).recognized, false);
+});
+
+test("MAX reads a routed main-pane profile but excludes chat editors and sidebar copies", async () => {
+  const profile = '<div class="layout-inner"><h3>Виктория</h3><button><span class="content"><span><span>Номер телефона</span></span><span><span>+1 202 555-0123</span></span></span></button></div>';
+  const makePage = (html) => {
+    const page = domPage(html, "/123456789");
+    page.document.defaultView.HTMLElement.prototype.getBoundingClientRect = function () {
+      return { x: 600, y: 100, width: 600, height: 80 };
+    };
+    return page;
+  };
+  const result = await collectContactProfile(makePage(`<main>${profile}</main>`));
+  assert.equal(result.recognized, true);
+  assert.equal(result.phone, "+1 202 555-0123");
+  assert.equal(result.phoneVisibility, "visible");
+  assert.equal((await collectContactProfile(makePage(`<aside>${profile}</aside>`))).recognized, false);
+  for (const excluded of ['<div contenteditable=""></div>', '<div class="messageWrapper">Номер телефона +1 415 555-0100</div>']) {
+    const chat = profile.replace('</div>', `${excluded}</div>`);
+    assert.equal((await collectContactProfile(makePage(`<main>${chat}</main>`))).recognized, false);
+  }
 });
 
 test("MAX opens details by the one labelled chat-header button on a numeric URL", async () => {
