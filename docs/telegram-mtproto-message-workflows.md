@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.3.7`
-публикует runtime `2.3.5`, требует Telethon `>=1.44,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.3.8`
+публикует runtime `2.3.6`, требует Telethon `>=1.44,<2` и сохраняет
 minimum host `1.11.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -32,6 +32,26 @@ compact UTF-8, чтобы прежний `--max-output-bytes` учитывал �
 `tests/test_cli_output.py` проверяет реальные subprocess pipes с принудительными
 `cp1251`, `cp1252` и `ascii`, без аккаунта, сессии и сети. Эти regressions входят
 в существующий Python provider gate на Windows, macOS и Linux.
+
+## Переход в локальный Python
+
+Команды сессии переходят из системного Python host-а в прежний provider venv.
+На Windows это `subprocess.run` с отдельным argv, `shell=False`, наследуемыми
+потоками и ожиданием завершения. CRT exec overlay не используется: он может
+завершиться с `0xC0000005` до запуска команды и не сохраняет quoting аргументов.
+Поисковые фразы с пробелами, кавычками и Unicode передаются как один аргумент;
+пустые значения и trailing backslash также сохраняются. Parent не продолжает
+исполнение команды после child, ненулевой результат не объявляется успехом.
+На POSIX сохраняется настоящий `execve`. Оба пути сохраняют `-I -B` host-а.
+
+Если уже запущенный Windows venv process завершился с `0xC0000005`, launcher
+возвращает JSON `TELEGRAM_WINDOWS_NATIVE_FAILURE` с exit code `2`, closed stage
+`venv_process` и исходным numeric NTSTATUS. Это не доказательство отказа Telegram,
+logout или причины в конкретной библиотеке; без read-back mutation не повторяют.
+Private paths, argv, session и содержимое сообщений в diagnostic не добавляются.
+`tests/test_runtime_handoff.py` создаёт одноразовый venv без зависимостей/аккаунта/
+сети и проверяет argv, isolated startup, ожидание и failure через реальные pipes.
+Windows NTSTATUS моделируется завершением test process, без invalid memory access.
 
 ## Состав группы или канала
 

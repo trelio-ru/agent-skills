@@ -1289,7 +1289,33 @@ def reexec_in_runtime_if_needed(command: str) -> None:
         return
     if not python.exists():
         raise TelegramRuntimeError("Telegram runtime is not installed. Run bootstrap first.")
-    os.execve(str(python), [str(python), str(Path(__file__).resolve()), *sys.argv[1:]], dict(os.environ))
+    arguments = [str(python), "-I", "-B", str(Path(__file__).resolve()), *sys.argv[1:]]
+    environment = dict(os.environ)
+    if sys.platform == "win32":
+        # Windows has no POSIX execve. Its CRT overlay joins argv without the
+        # quoting required for spaces/quotes and ends the supervised launcher
+        # before the venv process finishes. Use CreateProcess via subprocess:
+        # Python quotes each list item, streams stay attached to the same host
+        # pipes, and this parent waits for the exact child result. Never build a
+        # shell string or retry a session command after an uncertain outcome.
+        # Preserve the host's isolated startup when switching interpreters;
+        # the venv's own dependencies remain available, user-site hooks do not.
+        completed = subprocess.run(arguments, env=environment, shell=False, check=False)
+        if completed.returncode & 0xFFFFFFFF == 0xC0000005:
+            # This proves only that the venv process hit an access violation.
+            # Do not blame Python/Telethon, infer denied Telegram access, reset
+            # the session, or expose private paths/argv/native diagnostics.
+            raise TelegramRuntimeError(
+                "The Windows Telegram Python process stopped with an access violation; "
+                "no complete result is available. Do not repeat a mutation automatically.",
+                code="TELEGRAM_WINDOWS_NATIVE_FAILURE",
+                details={"stage": "venv_process", "exitCode": 3221225477,
+                         "windowsStatus": "0xC0000005"},
+            )
+        raise SystemExit(completed.returncode)
+    # POSIX really replaces this PID, so it retains native supervision without
+    # an extra process. Startup isolation must survive this path as well.
+    os.execve(str(python), arguments, environment)
 
 
 def import_telethon():

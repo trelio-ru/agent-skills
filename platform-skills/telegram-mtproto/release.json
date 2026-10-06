@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.3.7",
-    "summary": "Названия чатов, сообщения и ошибки с эмодзи и другими Unicode-символами выводятся в UTF-8, включая Windows; чтение больше не прерывается из-за кодировки вывода."
+    "version": "2.3.8",
+    "summary": "Исправлен переход Telegram-команд в локальный Python на Windows: устранён воспроизводимый сбой 0xC0000005, сохраняются поисковые фразы с пробелами и кавычками, а завершение команды проверяется до возврата результата."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.3.5",
+    "version": "2.3.6",
     "minimumHostVersion": "1.11.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
