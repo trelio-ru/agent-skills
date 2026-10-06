@@ -46,7 +46,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "42";
+const ADAPTER_VERSION = "43";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 // A cold worker must launch Chrome, hydrate home and then resolve the exact
@@ -815,6 +815,30 @@ const waitForAssistShutdown = async (record, {
     if (now() >= deadline) return false;
     await wait(100);
   }
+};
+
+const closeAssistControlServer = (server) => new Promise((resolve, reject) => {
+  // server.close alone waits for clients that have sent only partial headers
+  // or bodies. Those local control sockets must not delay Chrome closure until
+  // Node's HTTP timeout. Stop has already fenced actions and file transfers;
+  // its acknowledgement is flushed before this helper runs. This closes only
+  // the worker's loopback HTTP clients, never MAX's browser/WebSocket traffic.
+  server.close((error) => error ? reject(error) : resolve());
+  server.closeAllConnections();
+});
+
+const afterAssistResponse = (response, callback) => {
+  // Register before response.end: tearing down sockets immediately afterwards
+  // can lose the accepted-stop response. A disconnected caller still requested
+  // cleanup, so either finish or close starts it, exactly once.
+  let settled = false;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    callback();
+  };
+  response.once("finish", settle);
+  response.once("close", settle);
 };
 
 const publicAssistStatus = (record, extra = {}) => ({
@@ -3912,8 +3936,9 @@ const runAssistWorker = async () => {
       const pendingTransfers = new Set();
       let interactionFailure = null;
       let stopSession;
+      let closing = false;
       const stopped = new Promise((resolve) => {
-        stopSession = resolve;
+        stopSession = (reason) => { closing = true; resolve(reason); };
       });
       page.context().on("page", (candidate) => {
         if (candidate === page) return;
@@ -4253,7 +4278,8 @@ const runAssistWorker = async () => {
       };
       const server = http.createServer(async (request, response) => {
         const send = (code, value) => {
-          response.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+          response.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store",
+            Connection: "close" });
           response.end(JSON.stringify(value));
         };
         try {
@@ -4268,6 +4294,9 @@ const runAssistWorker = async () => {
           }
           const packet = await readBoundedAssistBody(request);
           validateAssistControlPacket(packet, config.sessionId);
+          if (closing) {
+            throw new MaxRuntimeError("MAX_ASSIST_SESSION_CLOSING", "The exact MAX session is closing.");
+          }
           if (packet.command === "status") {
             send(200, await status());
             return;
@@ -4291,8 +4320,12 @@ const runAssistWorker = async () => {
               "The exact authorized file transfer is still in progress. Check status before stopping the session.",
             );
           }
-          send(200, await status("closing"));
-          stopSession("requested");
+          // Fence another awaited handler before gathering the last read-only
+          // status; no new action may slip between acceptance and shutdown.
+          closing = true;
+          const acknowledgement = await status("closing");
+          afterAssistResponse(response, () => stopSession("requested"));
+          send(200, acknowledgement);
         } catch (error) {
           send(403, runtimeErrorPayload(error));
         }
@@ -4322,7 +4355,7 @@ const runAssistWorker = async () => {
         clearTimeout(timer);
         if (pendingTransfers.size > 0) await Promise.allSettled([...pendingTransfers]);
         await attachmentTransfer?.stop();
-        await new Promise((resolve) => server.close(resolve));
+        await closeAssistControlServer(server);
         for (const screenshot of screenshots) fs.rmSync(screenshot, { force: true });
         fs.rmSync(path.join(connectionRoot(options), "state", "assist-snapshots", config.sessionId),
           { recursive: true, force: true });
@@ -5965,6 +5998,8 @@ export {
   assistAppName,
   assistStartupDeadline,
   waitForAssistShutdown,
+  closeAssistControlServer,
+  afterAssistResponse,
   writeAssistTerminalState,
   readAssistSession,
   assistInteractionAllowed,
