@@ -46,7 +46,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "38";
+const ADAPTER_VERSION = "39";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 const MAX_ASSIST_START_TIMEOUT_MS = 15_000;
@@ -3756,10 +3756,25 @@ const assertAssistActionAllowed = ({ config, snapshot, packet, fingerprint, now 
   }
   if (!snapshot || packet.snapshotId !== snapshot.id
     || now - snapshot.at > 120_000 || fingerprint !== snapshot.fingerprint) {
-    throw new MaxRuntimeError("MAX_ASSIST_SNAPSHOT_STALE", "Take a fresh MAX snapshot before acting.");
+    throw new MaxRuntimeError("MAX_ASSIST_SNAPSHOT_STALE", "Take a fresh MAX snapshot and reselect the target before acting.", {
+      // This guard runs before any UI action. Refresh only the observation;
+      // never translate an old ref/coordinate onto the changed surface or
+      // extend the exact operation's authorization/absolute session lease.
+      actionApplied: false,
+      recovery: { command: "assist-snapshot", reselectTarget: true, automaticReplay: false },
+      ...(UUID_PATTERN.test(config.sessionId || "")
+        ? { recoveryArguments: ["assist-snapshot", "--session", config.sessionId] }
+        : {}),
+    });
   }
   if (["click", "contextmenu", "fill"].includes(packet.command) && !snapshot.refs.has(packet.ref)) {
-    throw new MaxRuntimeError("MAX_ASSIST_TARGET_INVALID", "The requested control is absent from the current snapshot.");
+    throw new MaxRuntimeError("MAX_ASSIST_TARGET_INVALID", "The requested control is absent from the current snapshot.", {
+      actionApplied: false,
+      recovery: { command: "assist-snapshot", reselectTarget: true, automaticReplay: false },
+      ...(UUID_PATTERN.test(config.sessionId || "")
+        ? { recoveryArguments: ["assist-snapshot", "--session", config.sessionId] }
+        : {}),
+    });
   }
   return snapshot;
 };

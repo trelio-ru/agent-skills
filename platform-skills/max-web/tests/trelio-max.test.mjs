@@ -51,6 +51,7 @@ import {
   normalizeDialogTitle,
   normalizeChatUrl,
   normalizeMaxRuntimeError,
+  runtimeErrorPayload,
   visibleMessages,
   findMessageTarget,
   openChatDetails,
@@ -105,8 +106,8 @@ const runtimeEntrypoint = fileURLToPath(
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.8.12");
-  assert.equal(release.runtime.version, "2.8.12");
+  assert.equal(release.release.version, "2.8.13");
+  assert.equal(release.runtime.version, "2.8.13");
   assert.equal(release.runtime.minimumHostVersion, "3.4.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -230,7 +231,7 @@ test("MAX local policy defaults to confirm and keeps state outside workspace", (
 test("MAX exposes a versioned, content-free live probe command", () => {
   const options = parseRuntimeArguments(["probe"]);
   assert.equal(options.command, "probe");
-  assert.equal(ADAPTER_VERSION, "38");
+  assert.equal(ADAPTER_VERSION, "39");
 });
 
 test("MAX exposes bounded assisted recovery for reads and exact manual operations", () => {
@@ -402,6 +403,30 @@ test("MAX in-session actions cover all authorized commands with a fresh visible 
     assert.throws(() => assertAssistActionAllowed({ ...basis, ...change }),
       (error) => error instanceof MaxRuntimeError && error.code === code);
   }
+});
+
+test("MAX stale or missing target recovery refreshes observation without replay or authorization", () => {
+  const sessionId = "11111111-1111-4111-8111-111111111111";
+  const config = { sessionId, fallbackFor: "read", interactionMode: "read-only", mutationAuthorized: false };
+  const snapshot = { id: "22222222-2222-4222-8222-222222222222", at: 1000, fingerprint: "old", refs: new Set(["r1"]) };
+  const packet = { command: "click", snapshotId: snapshot.id, ref: "r1" };
+  for (const change of [{ fingerprint: "changed" }, { packet: { ...packet, ref: "r2" } }]) {
+    assert.throws(() => assertAssistActionAllowed({ config, snapshot, packet, fingerprint: "old", now: 1001, ...change }), (error) => {
+      const payload = runtimeErrorPayload(error);
+      assert.deepEqual(payload.details, {
+        actionApplied: false,
+        recovery: { command: "assist-snapshot", reselectTarget: true, automaticReplay: false },
+        recoveryArguments: ["assist-snapshot", "--session", sessionId],
+      });
+      assert.equal(config.mutationAuthorized, false);
+      return true;
+    });
+  }
+  // A fresh observation permits only a newly selected step; the old snapshot
+  // remains rejected even if its ref happens to occur on the new surface.
+  const fresh = { ...snapshot, id: "33333333-3333-4333-8333-333333333333", fingerprint: "new" };
+  assert.throws(() => assertAssistActionAllowed({ config, snapshot: fresh, packet, fingerprint: "new", now: 1001 }), (e) => e.code === "MAX_ASSIST_SNAPSHOT_STALE");
+  assert.equal(assertAssistActionAllowed({ config, snapshot: fresh, packet: { ...packet, snapshotId: fresh.id }, fingerprint: "new", now: 1001 }), fresh);
 });
 
 test("MAX visual fallback keeps read-only points on chat navigation", async () => {
