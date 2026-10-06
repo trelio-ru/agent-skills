@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { browserSessionBinding, childEnvironment, configRoot, identityFromEnv, LEASE_MS, requireThat, RUNTIME_VERSION, RuntimeError, serviceHttpFailure, storageDirectory } from './core.mjs';
+import { closedDiagnostics } from './auth-safety.mjs';
 import { atomicWrite, createPrivateFile, ensurePrivateDirectory, nativeHelper, nativeKeyHelper,
   nativeRequestTitleInput, SOURCE, verifyPrivate, keychainStatus, verifyKeychain } from './native.mjs';
 import { bootstrapBrowser, loadPlaywright, loginRole } from './browser.mjs';
@@ -19,22 +20,25 @@ export function parseArguments(args) {
   const options = {};
   while (rest.length) {
     const flag = rest.shift();
-    requireThat(['--session', '--channel', '--confirm', '--role', '--ref', '--browser-session', '--request', '--origin', '--navigate', '--click', '--input-file', '--request-title'].includes(flag) && !Object.hasOwn(options, flag), 'unsupported_option');
-    options[flag] = flag === '--confirm' ? true : rest.shift();
+    requireThat(['--session', '--channel', '--confirm', '--account-recovered', '--role', '--ref', '--browser-session', '--request', '--origin', '--navigate', '--click', '--input-file', '--request-title'].includes(flag) && !Object.hasOwn(options, flag), 'unsupported_option');
+    options[flag] = ['--confirm', '--account-recovered'].includes(flag) ? true : rest.shift();
     requireThat(options[flag] !== undefined, 'option_value_required');
   }
-  const allowed = ['status', 'resume', 'roles', 'snapshot', 'stop'].includes(command) ? ['--session']
+  const allowed = ['status', 'roles', 'snapshot', 'stop'].includes(command) ? ['--session']
+    : command === 'resume' ? ['--session', '--account-recovered', '--confirm']
     : command === 'page' ? ['--session', '--navigate', '--click', '--input-file']
     : command === 'choose-role' ? ['--session', '--ref', '--confirm']
-    : command === 'authorize' ? ['--browser-session', '--request', '--origin', '--confirm', '--role', '--request-title']
+    : command === 'authorize' ? ['--browser-session', '--request', '--origin', '--confirm', '--account-recovered', '--role', '--request-title']
     : ['configure', 'forget'].includes(command) ? ['--confirm', '--channel', '--request-title']
-      : command === 'start' ? ['--channel', '--role', '--confirm', '--request-title'] : [];
+      : command === 'start' ? ['--channel', '--role', '--confirm', '--account-recovered', '--request-title'] : [];
   requireThat(Object.keys(options).every(key => allowed.includes(key)), 'unsupported_option');
   if (options['--channel']) requireThat(['chrome', 'msedge'].includes(options['--channel']), 'unsupported_browser');
   if (options['--session']) requireThat(/^[a-f0-9-]{36}$/.test(options['--session']), 'session_invalid');
   if (Object.hasOwn(options, '--request-title')) nativeRequestTitleInput(options['--request-title']);
   if (Object.hasOwn(options, '--role')) loginRole(options['--role']);
   if (['start', 'authorize'].includes(command)) requireThat(options['--confirm'] === true, 'authorization_permission_required');
+  if (options['--account-recovered']) requireThat(options['--confirm'] === true, 'account_recovery_confirmation_required');
+  if (command === 'resume' && options['--confirm']) requireThat(options['--account-recovered'], 'unsupported_option');
   if (command === 'authorize') {
     requireThat(/^[a-f0-9-]{36}$/.test(options['--browser-session'] || '') && /^[a-f0-9-]{36}$/.test(options['--request'] || ''), 'authorization_request_invalid');
     let origin; try { origin = new URL(options['--origin']); } catch { throw new RuntimeError('authorization_origin_invalid'); }
@@ -155,9 +159,11 @@ export async function run(args) {
       if (command === 'authorize' && authorization && !lease.authorizationRequest) {
         requireThat(control && control.leaseId === lease.leaseId, 'session_unreachable');
         return requestControl(control, { command: 'authorize', sessionId: lease.leaseId,
-          authorization, loginRole: loginRole(options['--role']) });
+          authorization, loginRole: loginRole(options['--role']),
+          ...(options['--account-recovered'] ? { accountRecovered: true } : {}) });
       }
       requireThat(sameAuthorization, 'stop_existing_authorization_first');
+      requireThat(!options['--account-recovered'], 'account_recovery_requires_resume');
       // A new start cannot silently change an existing identity or the intent
       // of its procedure. The operator must finish that session first.
       if (control && control.leaseId === lease.leaseId) {
@@ -191,6 +197,7 @@ export async function run(args) {
       child.stdin.on('error', () => {});
       child.stdin.end(`${JSON.stringify({ ...lease, identity, root, directory, helper, keyHelper, mode: command,
         channel: options['--channel'], loginRole: loginRole(options['--role']), authorization,
+        accountRecovered: options['--account-recovered'] === true,
         // Explanatory UI context is kept only in the guardian/worker pipe. It
         // never enters the lease, encrypted record or Keychain metadata.
         requestTitle: requestTitle || null })}\n`);
@@ -206,7 +213,7 @@ export async function run(args) {
     // encrypted vault remains untouched.
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
     return { sessionId: lease.leaseId, phase: 'closed', expiresAt: lease.expiresAt, requiredAction: null,
-      ...(last?.sessionId === lease.leaseId && last.error ? { error: last.error, ...serviceHttpFailure(last) } : {}) };
+      ...(last?.sessionId === lease.leaseId ? closedDiagnostics(last) : {}) };
   }
   if (command === 'status' && (!lease || !control)) {
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
@@ -218,6 +225,7 @@ export async function run(args) {
   requireThat(options['--session'] === lease.leaseId, 'exact_session_required');
   let extra = {};
   if (command === 'choose-role') extra = { ref: options['--ref'], confirmed: true };
+  if (command === 'resume' && options['--account-recovered']) extra = { accountRecovered: true };
   if (command === 'page') {
     // Only a public navigation URL or an opaque snapshot reference goes in
     // argv. Private form text uses bounded stdin or an explicit owner-only

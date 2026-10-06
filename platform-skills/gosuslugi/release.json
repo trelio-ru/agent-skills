@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.3.13",
-    "summary": "Уточнён маршрут Госключа: прямые формы по роли подписанта и независимый выбор между порталом и MAX без повторной отправки."
+    "version": "4.3.14",
+    "summary": "Исправлен результат ЕСИА-входа во внешний сервис. Блокировка и отказ в данных останавливают автоматические повторы, включая новые сессии; продолжение после восстановления аккаунта требует явного сообщения пользователя."
   },
   "connection": null,
   "runtime": {
-    "version": "3.3.13",
+    "version": "3.3.14",
     "minimumHostVersion": "3.0.22",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",
@@ -33,6 +33,11 @@
       {
         "source": "scripts/core.mjs",
         "path": "scripts/core.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/auth-safety.mjs",
+        "path": "scripts/auth-safety.mjs",
         "mode": 420
       },
       {

@@ -9,6 +9,7 @@ import { nativeHelper } from '../scripts/native.mjs';
 import { createEsiaAuthorization } from '../scripts/playwright-client.mjs';
 import { readAuthorization, requestLocal } from '../scripts/transport.mjs';
 import { EsiaAuthorizer } from '../scripts/esia-authorizer.mjs';
+import { activeCredentialGate, credentialGate, recoveredCredentialGate } from '../scripts/auth-safety.mjs';
 
 // Every network response and credential below is synthetic. The browser,
 // native guardian, private descriptor and per-character permit are real.
@@ -291,6 +292,55 @@ try {
     assert.equal(page.isClosed(), false); assert.equal(page.context(), context);
     await current.close(); current = null;
     await context.close();
+  }
+  await markStage('account_block_recovery');
+  {
+    const context = await owned.browser.newContext();
+    const origin = 'https://blocked.example.org', callback = origin + '/callback?state=synthetic-state&code=synthetic-code';
+    const auth = new URL('https://esia.gosuslugi.ru/aas/oauth2/ac');
+    auth.search = new URLSearchParams({ redirect_uri: origin + '/callback', state: 'synthetic-state',
+      client_id: 'SYNTHETIC', response_type: 'code' });
+    let loginPosts = 0, blocked = true, retainedGate = null;
+    await context.route('**/*', async route => {
+      const request = route.request(), url = new URL(request.url());
+      if (url.origin === origin) return route.fulfill({ contentType: 'text/html; charset=utf-8',
+        body: url.pathname === '/callback'
+          ? `<script>opener.postMessage('synthetic-authorized', ${JSON.stringify(origin)});window.close()</script>`
+          : `<input name="draft"><a id="login">Вход через ЕСИА</a><script>document.querySelector('a').onclick=()=>window.open(${JSON.stringify(auth.href)})</script>` });
+      if (url.origin !== 'https://esia.gosuslugi.ru') return route.abort();
+      if (url.pathname === '/login-post') { loginPosts++; return route.fulfill({ body: 'ok' }); }
+      const form = `<form><input id="login" name="login"><input type="password" id="password" name="password"><button>Войти</button></form>
+        <script>document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch('/login-post',{method:'POST'});location.href=${JSON.stringify(callback)}};</script>`;
+      return route.fulfill({ contentType: 'text/html; charset=utf-8', body: blocked
+        ? '<h1>Доступ временно заблокирован</h1><p>Доступ будет разблокирован в течение 72 часов</p>' + form : form });
+    });
+    const page = await context.newPage(); await page.goto(origin);
+    await page.locator('input[name=draft]').fill('Черновик остаётся после блокировки');
+    current = await createEsiaAuthorization(page, { ...identity, configHome: config.root, origin, confirm: true });
+    await page.getByText('Вход через ЕСИА', { exact: true }).click();
+    const info = await current.request;
+    const authorization = await readAuthorization(config.root, identity, info.sessionId, info.requestId, origin, helper);
+    const authorizer = new EsiaAuthorizer({ identity, leaseId, guardPid: process.pid, authorization, authorizerControl },
+      { permit, onPhase: async () => {}, getCredentialGate: () => activeCredentialGate(retainedGate),
+        onAuthRefused: async (reason, hours) => { retainedGate ??= credentialGate(reason, hours); } });
+    await authorizer.claim();
+    const credentials = { login: '+70000000000', password: 'synthetic-password', totp: null };
+    assert.equal(await authorizer.authenticate(credentials), false);
+    assert.equal(authorizer.manualReason, 'account_temporarily_blocked');
+    assert.equal(loginPosts, 0);
+    const popup = context.pages().find(candidate => candidate !== page);
+    for (const input of await popup.locator('input').all()) assert.equal(await input.inputValue(), '', 'block precedes every secret field');
+    assert.equal(await authorizer.authenticate(credentials), false);
+    assert.equal(loginPosts, 0, 'resume cannot retry a blocked account');
+    blocked = false; await popup.reload();
+    assert.equal(await authorizer.authenticate(credentials), false, 'a clean form alone cannot reset the retained block');
+    retainedGate = recoveredCredentialGate(retainedGate, true); // Synthetic operator reports recovery.
+    assert.equal(await authorizer.authenticate(credentials), true);
+    const result = await current.authenticated;
+    assert.equal(result.context, context); assert.equal(result.page, page);
+    assert.equal(loginPosts, 1, 'exactly one credential submission after explicit recovery');
+    assert.equal(await page.locator('input[name=draft]').inputValue(), 'Черновик остаётся после блокировки');
+    await authorizer.close(); await current.close(); current = null; await context.close();
   }
   assert.ok(nativePermits > 40, 'secret characters need actual native permits');
   await fs.writeFile(config.file, JSON.stringify({ ok: true, browserPid }), { mode: 0o600 });

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { authOrigin, challengeKind, childEnvironment, officialUrl, providerRequestAllowed, qrPasswordChoice, requireThat, RuntimeError, totpCode } from './core.mjs';
 import { runPrivate } from './native.mjs';
+import { accountBlock, credentialsRejected } from './auth-safety.mjs';
 
 export const PLAYWRIGHT_VERSION = '1.60.0';
 export function dependenciesDirectory(root) { return path.join(root, 'runtimes', 'gosuslugi', `playwright-${PLAYWRIGHT_VERSION}`); }
@@ -119,8 +120,9 @@ export async function installPopupGuard(context) {
 }
 
 export class Portal {
-  constructor(browser, permit, { onPhase, askCode, persist }) {
+  constructor(browser, permit, { onPhase, askCode, persist, onAuthRefused = async () => {}, getCredentialGate = () => null }) {
     this.browser = browser; this.permit = permit; this.onPhase = onPhase; this.askCode = askCode; this.persist = persist;
+    this.onAuthRefused = onAuthRefused; this.getCredentialGate = getCredentialGate; this.manualReason = null;
     this.controls = new Map(); this.snapshotId = 0; this.loginSent = false; this.passwordSent = false; this.codeSent = false;
     this.qrSent = false;
     this.loginEntryClicked = false;
@@ -236,12 +238,20 @@ export class Portal {
   async selectRole(ref) { return chooseRole(this, ref); }
   async authenticate(credentials, requestedRole = 'personal') {
     loginRole(requestedRole);
+    this.manualReason = null;
     this.roleChoiceRequired = false;
     this.onPhase('authenticating'); let end = Date.now() + 90000;
     let publicReviewCandidate = null, publicReviewSince = 0;
     while (Date.now() < end) {
       const current = await this.inspectAuth();
-      if (/неверн.*(пароль|код)|неправильн.*(пароль|код)|слишком много/i.test(current.text)) {
+      const blocked = accountBlock(current.text);
+      if (blocked) {
+        await this.onAuthRefused(blocked.reason, blocked.retryAfterHours);
+        this.manualReason = blocked.reason;
+        this.onPhase('user_required'); return false;
+      }
+      if (credentialsRejected(current.text)) {
+        await this.onAuthRefused('credentials_rejected'); this.manualReason = 'credentials_rejected';
         this.onPhase('user_required'); return false;
       }
       if (!authOrigin(this.page.url())) {
@@ -252,6 +262,8 @@ export class Portal {
         // A rendered public shell, its footer or a styled 404 never proves a
         // successful login. Prefer the portal's actual visible sign-in action.
         if (['gosuslugi.ru', 'www.gosuslugi.ru'].includes(url.hostname) && ['/', '/404', '/404/'].includes(url.pathname) && await login.count()) {
+          const gate = this.getCredentialGate();
+          if (gate) { this.manualReason = gate.reason; this.onPhase('user_required'); return false; }
           await this.enterLogin();
         } else if (!notFound && !await login.count() && !await current.password.count() &&
             !await current.login.count() && !await current.code.count() && await authenticatedPortalHeader(this.page)) {
@@ -276,6 +288,8 @@ export class Portal {
         // Only a new observed role choice can bind the next saved state; an
         // expired session must not inherit a previous account's role marker.
         if (!this.roleChoiceClicked) this.selectedRoleKind = null;
+        const gate = this.getCredentialGate();
+        if (gate) { this.manualReason = gate.reason; this.onPhase('user_required'); return false; }
         if (current.qrChoice) {
           // A failed/slow navigation leaves the QR page in place. The button
           // is clicked once per login attempt; a second click after an

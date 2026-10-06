@@ -54,7 +54,7 @@ jobs:
       - name: Validate the pinned storage codec
         run: node platform-skills/gosuslugi/development/build-storage-codec.mjs --check
       - name: Test real native crypto, ACL and crash cleanup
-        run: node --test platform-skills/gosuslugi/tests/runtime.test.mjs platform-skills/gosuslugi/tests/services.test.mjs platform-skills/gosuslugi/tests/authorization.test.mjs platform-skills/gosuslugi/tests/esia-flow.test.mjs
+        run: node --test platform-skills/gosuslugi/tests/runtime.test.mjs platform-skills/gosuslugi/tests/services.test.mjs platform-skills/gosuslugi/tests/authorization.test.mjs platform-skills/gosuslugi/tests/auth-safety.test.mjs platform-skills/gosuslugi/tests/esia-flow.test.mjs
       - name: Test one headed browser and synthetic ESIA flow
         run: node --test platform-skills/gosuslugi/tests/browser-smoke.test.mjs
       - name: Test full caller Playwright context and ESIA authorization
