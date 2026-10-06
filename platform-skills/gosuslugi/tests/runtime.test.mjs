@@ -760,7 +760,7 @@ test('status and stop report a dead supervisor as closed without calling its sta
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
   assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.0.22');
-  assert.equal(release.release.version, '4.3.13');
+  assert.equal(release.release.version, '4.3.14');
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: 'protected-snapshot',

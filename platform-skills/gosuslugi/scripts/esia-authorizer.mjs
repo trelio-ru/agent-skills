@@ -1,6 +1,7 @@
 import { authOrigin, officialUrl, challengeKind, qrPasswordChoice, totpCode, requireThat, RuntimeError } from './core.mjs';
 import { roleChallenge } from './browser.mjs';
 import { requestLocal } from './transport.mjs';
+import { accountBlock, credentialsRejected } from './auth-safety.mjs';
 
 const css = (value) => ({ css: value, visible: true });
 const name = (pattern) => ({ role: 'button', name: { pattern, flags: 'i' }, visible: true });
@@ -16,10 +17,12 @@ const submit = name('^(Продолжить|Подтвердить|Войти)$'
 // party nor inspects its DOM, form, readiness or persisted session. The neutral
 // browser transports private inputs in memory and returns control at callback.
 export class EsiaAuthorizer {
-  constructor(config, { permit, onPhase }) {
+  constructor(config, { permit, onPhase, onAuthRefused = async () => {}, getCredentialGate = () => null }) {
     this.config = config;
     this.permit = permit;
     this.onPhase = onPhase;
+    this.onAuthRefused = onAuthRefused;
+    this.getCredentialGate = getCredentialGate;
     this.loginSent = false;
     this.passwordSent = false;
     this.codeSent = false;
@@ -65,9 +68,10 @@ export class EsiaAuthorizer {
       checking = true;
       try {
         const state = await this.call('auth-state');
+        if (state.failed) throw new RuntimeError(state.failed, state);
         if (!isBusy() && state.returned) await onReturned();
         else if (!isBusy() && this.manualPostCount !== null && state.atAuth &&
-          state.postCount > this.manualPostCount) {
+          state.postCount > this.manualPostCount && !this.getCredentialGate()) {
           // A manual challenge can submit inside the same ESIA page without
           // completing the relying-party callback yet. Resume the existing
           // authorizer once for that observed POST; no login click is repeated.
@@ -75,7 +79,7 @@ export class EsiaAuthorizer {
           await onProgress?.();
         }
       } catch (error) {
-        if (error.code !== 'session_busy' && !this.completed && !isBusy()) await onLost();
+        if (error.code !== 'session_busy' && !this.completed && !isBusy()) await onLost(error);
       } finally { checking = false; }
     }, 2000);
     this.peerTimer.unref();
@@ -108,11 +112,12 @@ export class EsiaAuthorizer {
   }
   async manual(reason, postCount = null) {
     requireThat(['credentials_rejected', 'consent_required', 'role_choice_required',
-      'challenge_required', 'code_required', 'auth_timeout'].includes(reason), 'auth_manual_reason_invalid');
+      'challenge_required', 'code_required', 'auth_timeout', 'account_temporarily_blocked'].includes(reason), 'auth_manual_reason_invalid');
+    const changed = this.manualReason !== reason;
     this.manualReason = reason;
     this.manualPostCount = Number.isInteger(postCount) ? postCount : null;
     await this.onPhase('user_required');
-    await this.call('show');
+    if (changed) await this.call('show');
     return false;
   }
   async finish() {
@@ -164,8 +169,20 @@ export class EsiaAuthorizer {
           throw error;
         }
         const q = current.queries;
-        if (/неверн.*(пароль|код)|неправильн.*(пароль|код)|слишком много/i.test(current.text))
+        const blocked = accountBlock(current.text);
+        if (blocked) {
+          await this.onAuthRefused(blocked.reason, blocked.retryAfterHours);
+          return this.manual(blocked.reason, state.postCount);
+        }
+        if (credentialsRejected(current.text)) {
+          await this.onAuthRefused('credentials_rejected');
           return this.manual('credentials_rejected', state.postCount);
+        }
+        // A new request/process does not reset a previous provider refusal.
+        // Only a verified return, explicit credential replacement or an
+        // observed block's expiry can release the encrypted credential gate.
+        const gate = this.getCredentialGate();
+        if (gate) return this.manual(gate.reason, state.postCount);
         const hasPassword =
           q.password.count > 0 ||
           (this.loginSent &&

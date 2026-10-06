@@ -79,7 +79,7 @@ import { chromium } from 'playwright';
 
 // client.json — точный nonsecret ответ verified команды client.
 const client = JSON.parse(await fs.readFile(process.argv[2], 'utf8'));
-const { createEsiaAuthorization } = await import(pathToFileURL(client.modulePath).href);
+const { createEsiaAuthorization, safeAuthorizationFailure } = await import(pathToFileURL(client.modulePath).href);
 const browser = await chromium.launch({ channel: 'chrome', headless: false });
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
@@ -104,6 +104,10 @@ try {
   // const downloaded = page.waitForEvent('download'); ...
   // await page.evaluate(...); await page.goto(nextApprovedUrl);
   console.log(JSON.stringify({ phase: 'scenario_complete' }));
+} catch (error) {
+  console.log(JSON.stringify({ phase: 'authorization_failed', ...safeAuthorizationFailure(error) }));
+  // Не повторять вход и не выводить message/stack/URL. Сначала проверить
+  // exact status и состояние вызывающего сценария.
 } finally {
   await login?.close();
   await context.close();
@@ -118,6 +122,28 @@ Playwright runner может иметь другой штатный способ
 два локальных процесса можно координировать в текущем разговоре.
 
 ## Границы и ошибки
+
+`authorization.status` относится к exact origin/browserSessionId/requestId:
+`pending`/`user_required` не доказывают вход, `callback_verified` требует ещё
+проверки кабинета, `failed` сохраняет неуспех. `portalReady` и ready отдельной
+Госуслуги-сессии не заменяют этот результат. После `authorization_failed`
+resume не возвращается к собственному порталу и не сбрасывает ошибку.
+В долгоживущем caller сохраняй исход `authenticated` как отдельный settled result
+с `safeAuthorizationFailure(error)`, а не только boolean/`auth_not_completed`.
+Не выводи произвольные exception properties. После terminal failure новый helper
+возможен только после разбора причины и нового основания для попытки.
+
+При `account_temporarily_blocked` пароль, TOTP и смена метода входа остановлены.
+Причина/известный deadline сохраняются в encrypted vault; новый request не
+обнуляет запрет. После прямого сообщения оператора о разблокировке используй
+`resume --session AUTH_SESSION_ID --account-recovered --confirm` для живой
+попытки. При истёкшей lease/caller нужна одна новая штатная transaction в том
+же сохранённом caller context, если он ещё доступен, и `--account-recovered`
+у verified authorize. Одни чистая login form, истечение caller lease, transport
+failure или готовность собственного портала не означают снятия блокировки.
+Не нажимай биометрию, не сбрасывай vault и не повторяй ввод за пользователя.
+`credentials_rejected` – отдельный gate без выдуманного срока; восстановление
+аккаунта не меняет пароль/TOTP и не снимает этот gate.
 
 - Runtime хранит пароль и optional TOTP seed в прежнем encrypted vault с
   OS-protected key. Seed/key не передаются клиенту; login/password/текущий код

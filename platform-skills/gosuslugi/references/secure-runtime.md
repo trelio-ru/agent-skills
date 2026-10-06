@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.3.12 объявляет signed host browser-session class
+Runtime 3.3.14 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -15,6 +15,27 @@ skill/company/member/connection identity. Версии runtime и задачи �
 namespace. В plaintext не записываются телефон, пароль, TOTP seed, текущий
 код, cookies, localStorage или IndexedDB. Новый record атомарно заменяет старый
 после fsync; повреждённый/чужой envelope не запускает повторный setup.
+
+Optional `authGate` в том же ciphertext содержит schema 1, фиксированную причину
+`account_temporarily_blocked`/`credentials_rejected`, `observedAt` и `retryAt`.
+Текст ESIA, account identity и диагностические сообщения не сохраняются.
+Deadline выводится только из наблюдённого обещания разблокировки на 1–168 часов;
+без него `retryAt=null`. Повторный просмотр блокировки не переносит deadline.
+До него либо ручного восстановления новый процесс/request не вводит credentials,
+не выбирает QR/password и не запускает login entry автоматически.
+Неверная структура gate завершается `auth_gate_invalid`, а не сбрасывает защиту.
+Credentials/cookies, `storageRole` и неизвестные legacy поля сохраняются;
+авторизатор внешнего сайта не меняет роль сохранённого портала.
+
+Verified внешний callback снимает gate. Живой cookie/header собственного портала
+этого не доказывает и gate не очищает. Прямое сообщение оператора о снятии
+блокировки представляется `--account-recovered --confirm` у start/authorize/resume:
+это явное основание для одной следующей попытки, не вывод runtime об успешной
+биометрии. Флаг снимает только account-block gate; sent-флаги сохраняются.
+На живой exact сессии применяется resume; повторный start остаётся идемпотентным
+и с этим флагом возвращает `account_recovery_requires_resume`.
+Explicit configure снимает rejected-credentials gate, сохраняя account block.
+Expiry разрешает следующую явно запрошенную попытку, но не запускает её сам.
 
 Телефон и пароль нужны для повторного ЕСИА-входа после отзыва/истечения cookies.
 Seed необязателен, сохраняется только после ввода пользователем; runtime
@@ -342,7 +363,18 @@ member, HTTPS origin, IDs, deadline, broker PID, loopback port и bearer, пос
 чего временный `EsiaAuthorizer` использует уже расшифрованные credentials в RAM.
 Обычный browser/context, его текущая страница и несохранённая форма не закрываются
 и не меняются. После verified callback временный authorizer удаляется, а прежняя
-сессия возвращается в `ready`. Второй одновременный delegated request, worker не
+сессия возвращается в `ready`. `authorization` сохраняет origin, browserSessionId,
+requestId и status `pending`, `user_required`, `callback_verified` либо `failed`.
+Это отдельный результат внешней попытки, а `portalReady` – готовность собственного
+портала. Потеря caller/ошибка заканчивает попытку как `authorization_failed`,
+сохраняет безопасный error/HTTP evidence и не превращается в `ready`.
+Resume terminal attempt даёт `authorization_retry_required`; доступная отдельная
+страница портала по-прежнему допускает snapshot/page. Closed status сохраняет
+bounded receipt и enum `failureStage` без сообщений/stack/path.
+Если verified callback уже завершился, последующая ошибка записи gate сохраняет
+этот proof и прежний запрет; `credential_gate_update_failed`/`vault_write` описывают
+локальное сохранение, а не разрешают повторный вход.
+Второй одновременный delegated request, worker не
 в `ready`, другая identity либо просроченный descriptor завершаются fail-closed;
 автоматической остановки или замены активной сессии нет.
 
@@ -353,10 +385,13 @@ bearer, отсутствие Origin и bounded JSON; CORS и browser-JS command 
 Нет автоматического повторения неоднозначного credential input или submit.
 Bounded auth observations не выводятся через CLI/MCP.
 При delegated `user_required` worker следит за тем же связанным ESIA-окном:
-если ручная проверка отправила новый POST, он один раз возобновляет прежний
+если ручная проверка отправила новый POST и credential gate отсутствует, он один раз возобновляет прежний
 authorizer. Verified callback также подхватывается без команды агента.
 Ручной `resume` нужен, когда проверка прошла без такого сигнала; `status` сам
 не повторяет ввод и не запускает новый вход.
+Распознанная account block имеет `manualReason=account_temporarily_blocked`;
+даже наличие password/TOTP fields не разрешает ввод. При gate POST не запускает
+повтор; проверенный callback после самостоятельного входа человека принимается.
 
 Полный Playwright context сознательно доступен вызывающему коду. Он позволяет
 читать cookies, network и auth fields, поэтому техническая изоляция всей

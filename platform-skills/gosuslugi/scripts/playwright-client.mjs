@@ -20,6 +20,15 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+// Callers need the exact safe rejection to assess a failed OAuth attempt.
+// Exporting a projection avoids the common catch(() => "not completed")
+// pattern without encouraging messages, stacks or private browser data.
+export function safeAuthorizationFailure(error) {
+  const safe = error instanceof RuntimeError && /^[a-z_]{1,80}$/.test(error.code)
+    ? error : new RuntimeError('authorization_result_unknown');
+  return { error: safe.code, ...serviceHttpFailure(safe) };
+}
+
 /**
  * Attach ESIA authorization to an ordinary, caller-owned Playwright Page.
  * No browser, profile or context is created, imported, restricted or closed.
