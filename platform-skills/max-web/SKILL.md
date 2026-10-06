@@ -258,6 +258,8 @@ exact ссылка и `@username` в том же чате. Не требуй ч�
    `READ_MESSAGE`/`READ_REACTION` и возвращает exact `sessionId`, `appName`,
    `interactionMode`, `mutationAuthorized` и `authorizationHash`. Другая
    операция не может переиспользовать активную session.
+   Запуск может занять до 45 секунд из-за последовательной загрузки Chrome,
+   главной страницы и exact контакта; абсолютный срок session не продлевается.
 3. Сразу вызови `assist-status --session UUID`. Для чтения продолжай только при
    `phase=active`, `interactionMode=read-only`, `runtimeReadOnly=true` и
    `interactionGate.installed=true`. Для `members`, `download` и mutation

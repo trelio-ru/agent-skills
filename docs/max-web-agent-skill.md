@@ -104,8 +104,11 @@ Canonical URL удаляет необязательный завершающий
 Owner-only `state/chat-references.json` лежит рядом с dedicated profile в
 host-owned skill/company/member/connection namespace. URL является ключом:
 тёзки сохраняются отдельными записями, старые названия остаются aliases.
-Журнал содержит только ссылки, bounded aliases, task refs и дату проверки;
-сообщения, телефоны, cookies и credentials в него не попадают. Обычный profile
+Журнал содержит ссылки, bounded aliases, task refs, дату проверки и optional
+owner-only locator телефона после успешного штатного поиска. Locator используется
+только для повторного открытия того же exact URL, не выдаётся в knownChats и не
+разрешает отправку; новый login очищает его. Сообщения, cookies и credentials
+в журнал не попадают. Обычный profile
 lock сериализует запись; unique exclusive staging и atomic rename не следуют
 старому временно́му symlink. Symlink, неизвестная схема, лишние поля, unsafe mode
 и повреждённый журнал возвращают `MAX_CHAT_REFERENCE_STORE_INVALID` без вывода
@@ -372,8 +375,16 @@ Manual-control не создаёт второй контур полномочи�
 `--file`/`--avatar`; повторный chooser fail-closed. Download допускает ровно один
 файл в новый exact `--output`, не перезаписывает существующий путь и возвращает
 размер и SHA-256. Stop отказывается закрывать session, пока exact transfer ещё
-выполняется. После принятого stop клиент ждёт завершения worker и Chrome до
-20 секунд; если процесс всё ещё жив, сообщает неподтверждённую остановку.
+выполняется. Запуск worker ждёт до 45 секунд: Chrome, home и exact чат загружаются
+последовательно. Это окно не выходит за существующий абсолютный deadline.
+После принятого stop клиент ждёт до 20 секунд положительного подтверждения
+закрытия. Worker записывает owner-only terminal receipt в собственную UUID-папку
+только после закрытия Chrome и освобождения profile lock. Живой PID Node не
+отменяет это подтверждение; исчезновение записи, чужой UUID/PID и failed не
+доказывают закрытие. Завершившийся процесс сохраняет прежний безопасный путь.
+Receipt не содержит control token или port, не заменяет запись новой сессии и
+удаляется при retirement exact session. Без подтверждения возвращается
+MAX_ASSIST_STOP_UNCONFIRMED.
 
 Текущий MAX descriptor использует host default 30 минут. Assist не создаёт
 собственный срок: его `expiresAt` ограничен одновременно requested hold,

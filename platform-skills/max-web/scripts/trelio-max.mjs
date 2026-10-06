@@ -46,10 +46,12 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "41";
+const ADAPTER_VERSION = "42";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
-const MAX_ASSIST_START_TIMEOUT_MS = 15_000;
+// A cold worker must launch Chrome, hydrate home and then resolve the exact
+// contact. One ordinary UI deadline cannot cover those sequential steps.
+const MAX_ASSIST_START_TIMEOUT_MS = 45_000;
 const MAX_ASSIST_HOLD_MS = 1_800_000;
 const MAX_HISTORY_PAGES = 20;
 const MAX_FILES_PER_MESSAGE = 10;
@@ -754,7 +756,59 @@ const readAssistSession = (options) => {
       "The local MAX assisted-browser session record is invalid.",
     );
   }
-  return record;
+  const terminalFile = path.join(connectionRoot(options), "state", "assist-snapshots",
+    record.sessionId, "terminal.json");
+  if (!fs.existsSync(terminalFile)) return record;
+  const terminalStat = fs.lstatSync(terminalFile);
+  if (!terminalStat.isFile() || terminalStat.isSymbolicLink() || terminalStat.size > 16_384) {
+    throw new MaxRuntimeError("MAX_ASSIST_SESSION_INVALID", "The exact MAX worker outcome is invalid.");
+  }
+  ensurePrivateFile(terminalFile);
+  const terminal = JSON.parse(fs.readFileSync(terminalFile, "utf8"));
+  const terminalKeys = new Set(["schemaVersion", "sessionId", "pid", "phase", "error", "message"]);
+  if (!terminal || typeof terminal !== "object" || Array.isArray(terminal)
+    || Object.keys(terminal).some((key) => !terminalKeys.has(key))
+    || terminal.schemaVersion !== 1 || terminal.sessionId !== record.sessionId
+    || terminal.pid !== record.pid || !["closed", "failed"].includes(terminal.phase)) {
+    throw new MaxRuntimeError("MAX_ASSIST_SESSION_INVALID", "The exact MAX worker outcome is invalid.");
+  }
+  return { ...record, ...terminal, port: null, token: null };
+};
+
+const assistStartupDeadline = (expiresAt, now = Date.now()) =>
+  Math.min(now + MAX_ASSIST_START_TIMEOUT_MS, expiresAt);
+
+const writeAssistTerminalState = (options, sessionId, fields) => {
+  const current = readAssistSession(options);
+  // A timed-out worker can finish after a newer start has acquired the same
+  // namespace. Keep its outcome in its own UUID directory: even a retirement
+  // racing this write cannot overwrite the new session's shared record.
+  if (!current || current.sessionId !== sessionId || current.pid !== process.pid) return false;
+  const file = path.join(connectionRoot(options), "state", "assist-snapshots", sessionId, "terminal.json");
+  writePrivateJson(file, { schemaVersion: 1, sessionId, pid: process.pid, ...fields });
+  return true;
+};
+
+const waitForAssistShutdown = async (record, {
+  readRecord,
+  isAlive = processIsAlive,
+  now = Date.now,
+  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  timeoutMs = 20_000,
+}) => {
+  const deadline = now() + timeoutMs;
+  while (true) {
+    const current = readRecord();
+    // The worker writes this receipt only after the host has awaited browser
+    // closure and released the profile lock. Node may still retain unrelated
+    // handles (or its PID may be reused), so PID liveness alone is not the
+    // browser lifecycle. Missing/replaced records are never positive evidence.
+    if (current?.sessionId === record.sessionId && current.pid === record.pid
+      && current.phase === "closed") return true;
+    if (!isAlive(record.pid)) return true;
+    if (now() >= deadline) return false;
+    await wait(100);
+  }
 };
 
 const publicAssistStatus = (record, extra = {}) => ({
@@ -3035,6 +3089,10 @@ const removeAssistSessionIfExact = (options, sessionId) => {
 const activeAssistSession = async (options) => {
   const record = readAssistSession(options);
   if (!record) return null;
+  if (record.phase === "closed") {
+    removeAssistSessionIfExact(options, record.sessionId);
+    return null;
+  }
   if (record.expiresAt <= Date.now()) {
     removeAssistSessionIfExact(options, record.sessionId);
     return null;
@@ -3147,7 +3205,7 @@ const startAssistSession = async (options) => withAssistStartLock(options, async
   })}\n`);
   child.unref();
 
-  const deadline = Date.now() + MAX_ASSIST_START_TIMEOUT_MS;
+  const deadline = assistStartupDeadline(expiresAt);
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100));
     const record = readAssistSession(options);
@@ -3191,6 +3249,7 @@ const statusAssistSession = async (options) => {
       "The exact MAX assisted-browser session is not active.",
     );
   }
+  if (record.phase === "closed") return { ok: true, ...publicAssistStatus(record), closed: true };
   return requestAssistControl(record, "status");
 };
 
@@ -3223,15 +3282,11 @@ const stopAssistSession = async (options) => {
       "The exact MAX assisted-browser session is not active.",
     );
   }
-  const status = await requestAssistControl(record, "stop");
-  // The worker acknowledges stop before its persistent Chrome context has
-  // finished closing. Give that normal teardown a bounded window instead of
-  // reporting an unconfirmed stop while the same worker is still exiting.
-  const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline && processIsAlive(record.pid)) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  if (processIsAlive(record.pid)) {
+  const status = record.phase === "closed"
+    ? { ok: true, ...publicAssistStatus(record) }
+    : await requestAssistControl(record, "stop");
+  const closed = await waitForAssistShutdown(record, { readRecord: () => readAssistSession(options) });
+  if (!closed) {
     throw new MaxRuntimeError(
       "MAX_ASSIST_STOP_UNCONFIRMED",
       "The MAX assisted-browser worker accepted stop but its shutdown is not yet confirmed.",
@@ -4281,24 +4336,16 @@ const runAssistWorker = async () => {
     publicFailure = runtimeErrorPayload(error);
   } finally {
     if (publicFailure) {
-      writePrivateJson(file, {
-        schemaVersion: 1,
-        sessionId: config.sessionId,
+      writeAssistTerminalState(options, config.sessionId, {
         phase: "failed",
-        fallbackFor: config.fallbackFor,
-        interactionMode: config.interactionMode,
-        mutationAuthorized: config.mutationAuthorized,
-        authorizationHash: config.authorizationHash,
-        expiresAt: config.expiresAt,
-        pid: process.pid,
-        port: null,
-        token: null,
-        appName: assistAppName(options.chromeExecutable),
         error: publicFailure.code || "MAX_ASSIST_WORKER_FAILED",
         message: publicFailure.error,
       });
     } else {
-      removeAssistSessionIfExact(options, config.sessionId);
+      // withBrowser has completed its own finally, including Chrome closure
+      // and lock release. Preserve that exact evidence for the stop caller;
+      // it retires the receipt, or the next start retires an expired one.
+      writeAssistTerminalState(options, config.sessionId, { phase: "closed" });
     }
   }
 };
@@ -5910,6 +5957,10 @@ export {
   clickRowMemberRemovalAction,
   MaxRuntimeError,
   assistAppName,
+  assistStartupDeadline,
+  waitForAssistShutdown,
+  writeAssistTerminalState,
+  readAssistSession,
   assistInteractionAllowed,
   collectDialogResults,
   collectContactProfile,
