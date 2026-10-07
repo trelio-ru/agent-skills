@@ -2,6 +2,7 @@ import './assist-control-shutdown.test.mjs';
 import './http-errors.test.mjs';
 import './chat-references.test.mjs';
 import './direct-chat-history.test.mjs';
+import './phone-assist.test.mjs';
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
