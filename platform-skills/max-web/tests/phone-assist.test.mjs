@@ -38,18 +38,21 @@ test("MAX cold contact lookup survives the actual read-only browser event fence"
       + '<div id="composer" role="textbox" contenteditable=""></div></div></main>';
     const { window, document } = parseHTML(`<html><body>${home}</body></html>`);
     let route = "https://web.max.ru/";
-    window.location = new URL(route);
-    window.innerWidth = 1280;
-    window.getComputedStyle = () => ({ display: "block", visibility: "visible" });
+    // linkedom's Window proxy stores arbitrary properties in a shared global.
+    // Keep the immutable gate and route on a private browser facade so this
+    // imported regression cannot contaminate another test's native gate.
+    const browserWindow = { location: new URL(route), innerWidth: 1280,
+      getComputedStyle: () => ({ display: "block", visibility: "visible" }),
+      addEventListener: (...args) => window.addEventListener(...args) };
     window.HTMLElement.prototype.getBoundingClientRect = function () {
       return this.id === "composer" ? { x: 700, y: 820, width: 400, height: 48 }
         : { x: 20, y: this.id === "search" ? 40 : 160, width: 320, height: 52 };
     };
-    const context = vm.createContext({ window, document, URL, Element: window.Element,
+    const context = vm.createContext({ window: browserWindow, document, URL, Element: window.Element,
       HTMLElement: window.HTMLElement, HTMLInputElement: window.HTMLInputElement,
       HTMLTextAreaElement: window.HTMLTextAreaElement, MutationObserver: window.MutationObserver });
     vm.runInContext(`(${installMaxAssistGate.toString()})({mode:"read-only",fallbackFor:"read"})`, context);
-    const setSurface = (url, html) => { route = url; window.location = new URL(url); document.body.innerHTML = html; };
+    const setSurface = (url, html) => { route = url; browserWindow.location = new URL(url); document.body.innerHTML = html; };
     const search = { first() { return this; }, count: async () => 1, isVisible: async () => true,
       click: async () => {}, fill: async () => {} };
     let openContact = true;
@@ -80,7 +83,7 @@ test("MAX cold contact lookup survives the actual read-only browser event fence"
     assert.equal(opened.method, "url-with-phone-lookup");
     assert.equal(opened.url, options.chat);
     assert.equal(successfulClicks, 2);
-    assert.equal(window.__trelioMaxAssistState.blockedActions, 0);
+    assert.equal(browserWindow.__trelioMaxAssistState.blockedActions, 0);
 
     const input = new window.Event("beforeinput", { bubbles: true, cancelable: true });
     document.querySelector("#composer").dispatchEvent(input);
