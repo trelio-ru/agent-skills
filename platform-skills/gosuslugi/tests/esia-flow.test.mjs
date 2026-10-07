@@ -293,6 +293,18 @@ test('a new direct popup binds its initial request before Page publication and c
   assert.equal(b.original.listenerCount('close'), 0);
 });
 
+test('an early popup with an empty initial URL cannot fail or prove an ESIA return', async () => {
+  for (const initial of ['', 'about:blank']) {
+    const b = browserFixture(), watcher = b.start(), popup = b.makePage(b.original, initial);
+    // The request precedes Page publication, as it does in real Chromium. The
+    // initial placeholder commit is then replayed after the exact opener check.
+    b.request(popup, authorization()); b.context.emit('page', popup); await eventsSettled();
+    assert.equal(b.binds, 1); assert.deepEqual(b.errors, []); assert.equal(watcher.returned, false);
+    const cb = b.request(popup, returned()); b.response(cb); popup.commit(cb.url());
+    assert.equal(watcher.returned, true); assert.deepEqual(b.errors, []); watcher.close();
+  }
+});
+
 test('existing, unrelated, nested and subframe requests cannot acquire or substitute the auth page', async () => {
   const b = browserFixture(), oldPopup = b.makePage(b.original, authorization());
   const watcher = b.start();
@@ -361,7 +373,6 @@ test('popup close, failed/wrong callback, second auth page and closed opener fai
     const b = browserFixture(), watcher = b.start(), popup = b.makePage(b.original, authorization());
     b.request(popup, authorization()); b.context.emit('page', popup); await eventsSettled();
     if (mode === 'close') popup.close();
-    if (mode === 'http-error') { const cb = b.request(popup, returned()); b.response(cb, 500); }
     if (mode === 'wrong-state') b.request(popup, returned({ state: 'wrong' }));
     if (mode === 'second-page') {
       const other = b.makePage(b.original, authorization()); b.request(other, authorization());

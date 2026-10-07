@@ -264,8 +264,9 @@ try {
     await context.close();
   }
   // Exercise actual Playwright main-document HTTP status propagation, including
-  // failure before any OAuth binding. No credentials, OS unlock or auth DOM
-  // enter this synthetic check; the helper must retain the caller context.
+  // failure before any OAuth binding. Only the ESIA response is a provider
+  // failure: the entry error stays caller-owned and the verified callback error
+  // hands back the context. No credentials, OS unlock or auth DOM are needed.
   for (const failureAt of ['entry', 'esia', 'callback']) {
     await markStage(`http_503_${failureAt}`);
     const context = await owned.browser.newContext();
@@ -287,14 +288,28 @@ try {
     const page = await context.newPage(); await page.goto(origin);
     current = await createEsiaAuthorization(page, { ...identity, configHome: config.root, origin, confirm: true });
     await page.goto(failureAt === 'entry' ? origin + '/unavailable' : auth.href);
-    await assert.rejects(current.authenticated, error => {
-      assert.equal(error.code, 'service_http_error');
-      assert.equal(error.httpStatus, 503);
-      assert.equal(error.httpOrigin, failureAt === 'esia' ? 'https://esia.gosuslugi.ru' : origin);
-      assert.ok(!JSON.stringify(error).includes('synthetic-state'));
-      assert.ok(!JSON.stringify(error).includes('synthetic-code'));
-      return true;
-    });
+    if (failureAt === 'esia') {
+      await assert.rejects(current.authenticated, error => {
+        assert.equal(error.code, 'service_http_error'); assert.equal(error.httpStatus, 503);
+        assert.equal(error.httpOrigin, 'https://esia.gosuslugi.ru');
+        assert.doesNotMatch(JSON.stringify(error), /synthetic-state|synthetic-code/); return true;
+      });
+    } else if (failureAt === 'entry') {
+      const result = await Promise.race([current.authenticated.then(() => 'completed', error => error.code),
+        new Promise(resolve => setTimeout(() => resolve('pending'), 50))]);
+      assert.equal(result, 'pending', 'a site error before OAuth is neither ESIA success nor ESIA refusal');
+    } else {
+      await page.getByRole('heading', { name: '503 Service Unavailable', exact: true }).waitFor();
+      const info = await current.request;
+      const authorization = await readAuthorization(config.root, identity, info.sessionId, info.requestId, origin, helper);
+      const authorizer = new EsiaAuthorizer({ identity, leaseId, guardPid: process.pid, authorization, authorizerControl },
+        { permit, onPhase: async () => {} });
+      await authorizer.claim(); assert.equal(authorizer.completed, true, 'a completed ESIA return needs no credentials');
+      const result = await current.authenticated;
+      assert.equal(result.page, page); assert.equal(result.context, context);
+      assert.deepEqual(result.serviceResponse, { httpStatus: 503, httpOrigin: origin });
+      await authorizer.close();
+    }
     assert.equal(page.isClosed(), false); assert.equal(page.context(), context);
     await current.close(); current = null;
     await context.close();

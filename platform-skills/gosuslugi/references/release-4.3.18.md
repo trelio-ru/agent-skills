@@ -14,5 +14,6 @@ Exact callback path/fixed query/state, запрет replay, одна Page/popup,
 permit и encrypted vault сохраняются. ESIA HTTP errors остаются provider failures.
 Проверки включают произвольный broker, HTTP 503 внешнего callback, цепочки
 с токенами, несвязанный переход, двойной callback и ранний отзыв ввода.
+Ранний пустой URL popup не ошибочно прерывает ожидаемый ответ ЕСИА.
 
 Skill 4.3.18, runtime 3.3.18, minimum host 3.0.22.

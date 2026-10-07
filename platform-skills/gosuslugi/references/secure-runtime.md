@@ -345,6 +345,8 @@ Context listeners устанавливаются до клика: событие
 frame/page удерживается в bounded RAM queue до доказанной связи того же
 Request; сопоставления по похожему URL нет. Opener проверяется до публикации
 capability, а request/response/commit/close сохраняют свой порядок.
+Пустой URL/about:blank при создании popup не является document proof: ранний
+placeholder игнорируется до фактического HTTP document commit, без URL parse failure.
 Клиент не маршрутизирует, не блокирует и не исполняет произвольный
 сайтовый код. Exact redirect origin/path/fixed query, state, client identity и отсутствие
 replay проверяются transaction contract; внешние HTTP ответы остаются у caller.

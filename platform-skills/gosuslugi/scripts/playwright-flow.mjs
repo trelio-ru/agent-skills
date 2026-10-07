@@ -208,13 +208,17 @@ export class PlaywrightAuthorizationFlow {
       // A fragment belongs to the site's document, not to its HTTP Request.
       // Strip only that fragment for the exact request/commit comparison; the
       // callback itself still rejects fragments under the OAuth guard.
-      const committed = new URL(event.url); committed.hash = '';
-      if (this.active === record && record.navigation && externalUrl(event.url) &&
-        record.navigation.url() === committed.href &&
-        (this.returnRequests.has(record.navigation) || this.roleReturnRequests.has(record.navigation))) {
-        this.returnCommitted = true;
-        record.committed = record.navigation;
-        this.serviceResponse = this.returnResponses.get(record.navigation) ?? null;
+      // A newly published popup can still have an empty URL or about:blank
+      // while its initial request is buffered. Such a placeholder supplies no
+      // document proof and must not fail URL parsing before opener resolution.
+      if (this.active === record && record.navigation && externalUrl(event.url)) {
+        const committed = new URL(event.url); committed.hash = '';
+        if (record.navigation.url() === committed.href &&
+          (this.returnRequests.has(record.navigation) || this.roleReturnRequests.has(record.navigation))) {
+          this.returnCommitted = true;
+          record.committed = record.navigation;
+          this.serviceResponse = this.returnResponses.get(record.navigation) ?? null;
+        }
       }
       if (this.active && this.active.page !== this.original && record.page === this.original)
         requireThat(this.flow.callbackSeen ? externalUrl(event.url) : entryUrl(event.url, this.flow.service),
