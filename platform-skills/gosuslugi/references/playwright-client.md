@@ -65,6 +65,33 @@ context или новой сессии. Результат `client` можно �
 owner-only локальный JSON вне Git/Workspace: он содержит только nonsecret
 bindings и machine paths, не bearer и не данные входа.
 
+## Подключение к подготовленной форме
+
+Для ПОС начинай с точного публичного `/form/?opaId=...`, а не с главной `/`:
+главная открывает отдельный рабочий вход и не авторизует виджет подачи.
+Заполни и сверь форму, сохрани исходную Page и файлы; пользователь принимает
+показанное согласие. Когда конкретная подача уже поручена и согласована,
+агент сам создаёт helper на этой форме, нажимает нижнюю кнопку и кнопку входа
+в modal, вызывает verified authorize и проверяет номер обращения.
+Поддерживаемый ЕСИА-вход не передаётся человеку из-за совмещённой кнопки.
+
+Если ранее в этом же caller был успешно проверен другой ЕСИА callback,
+старый helper закончен: `await login.close()` отключает только его, сохраняя
+Page/context, поля, файлы и принятую пользователем галочку. До ещё не нажатой
+кнопки новой, отдельно разрешённой процедуры подключи новый helper к этой же
+Page. Это новая transaction для следующего действия, а не повтор старого входа.
+Не перезапускай caller, не пересоздавай форму и не проси повторную галочку.
+Безусловный `if (login) throw helper_already_created` в самописном caller надо
+исправить; это ограничение caller, а не SDK или обязательный ручной шаг.
+
+Сначала оцени предыдущий бизнес-результат: `completed` означает проверенный
+результат завершённой процедуры; `no_business_submission` — что предыдущая
+transaction была только входом и не могла отправить заявление/платёж/подпись.
+Неизвестный исход подачи, прежний failure, pending и начатое без helper окно
+не разрешают этот переход. Ошибку callback/сайта нельзя обходить новым входом.
+Разрешение на следующий вход/подачу берётся из разговора, не из названия
+команды. Уже согласованную конкретную отправку не согласовывай повторно.
+
 ## Пример сценария
 
 Адрес и селекторы ниже иллюстрируют порядок; реальный сценарий получает их
@@ -92,10 +119,11 @@ const page = await context.newPage();
 const origin = 'https://service.example.org';
 await page.goto(origin);
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
-let login, observer, stopped = false;
+let login, observer, step, stopped = false, transitionFailed = false;
+const usedSteps = new Set();
 async function handle(command) {
   if (stopped) return;
-  if (command.action === 'state') return emit(observer?.snapshot() ?? { phase: 'caller_ready' });
+  if (command.action === 'state') return emit(observer ? { ...observer.snapshot(), step } : { phase: 'caller_ready' });
   if (command.action === 'finish') {
     stopped = true;
     await login?.close();
@@ -107,7 +135,25 @@ async function handle(command) {
   // Only inspected, authorized login controls on the public source page.
   // Do not use this command to inspect/click auth fields or accept consent.
   if (new URL(page.url()).origin !== origin) throw new Error('public_page_required');
-  if (command.action === 'authorize' && !login) {
+  if (['authorize', 'authorize_next_step'].includes(command.action)) {
+    if (transitionFailed) throw new Error('previous_authorization_unresolved');
+    // A helper is single-transaction, not single-browser. A different authorized
+    // procedure can attach to the same prepared Page after verified completion.
+    // An unresolved submission/failure must never be converted into a retry.
+    if (!/^[a-z][a-z0-9_-]{0,79}$/.test(command.step ?? '') || usedSteps.has(command.step)) {
+      throw new Error('distinct_authorization_step_required');
+    }
+    if (login) {
+      if (command.action !== 'authorize_next_step' || observer.snapshot().phase !== 'esia_callback_verified' ||
+        !['completed', 'no_business_submission'].includes(command.previousOutcome)) {
+        throw new Error('previous_authorization_unresolved');
+      }
+      transitionFailed = true;
+      await login.close(); // Keeps this Page, its selected files and consent.
+    } else if (command.action !== 'authorize') throw new Error('initial_authorization_required');
+    transitionFailed = true; // A failed close/create cannot be retried by a new step ID.
+    step = command.step;
+    usedSteps.add(step); // Consume before click: an ambiguous click is not replayed.
     login = await createEsiaAuthorization(page, {
       ...client.options,
       configHome: client.configHome,
@@ -115,16 +161,20 @@ async function handle(command) {
       confirm: true, // Разрешение пользователя уже проверено агентом.
     });
     observer = observeEsiaAuthorization(login);
-    login.request.then(request => emit({ phase: 'esia_authorization_required', request }),
-      error => emit({ phase: 'authorization_failed', ...safeAuthorizationFailure(error) }));
-    login.authenticated.then(() => emit(observer.snapshot()),
-      error => emit({ phase: 'authorization_failed', ...safeAuthorizationFailure(error) }));
+    transitionFailed = false;
+    // Capture the generation: late cleanup of a completed helper must not
+    // publish the new helper's state as the old transaction's result.
+    const activeObserver = observer, activeStep = step;
+    login.request.then(request => emit({ phase: 'esia_authorization_required', request, step: activeStep }),
+      error => emit({ phase: 'authorization_failed', ...safeAuthorizationFailure(error), step: activeStep }));
+    login.authenticated.then(() => emit({ ...activeObserver.snapshot(), step: activeStep }),
+      error => emit({ phase: 'authorization_failed', ...safeAuthorizationFailure(error), step: activeStep }));
   } else if (command.action !== 'click_login' || !observer ||
     !['esia_request_pending', 'esia_request_not_observed'].includes(observer.snapshot().phase)) {
     throw new Error('login_step_not_available');
   }
   await page.locator(command.selector).click();
-  emit(observer.snapshot()); // Не await request: modal ещё может требовать click.
+  emit({ ...observer.snapshot(), step }); // Не await request: modal ещё может требовать click.
 }
 const lines = readline.createInterface({ input: process.stdin });
 let queue = Promise.resolve();
@@ -136,6 +186,16 @@ emit({ phase: 'caller_ready' });
 // After verified callback, add the site's business steps to handle() and check
 // its actual result. Only finish closes this caller's context/browser.
 ```
+
+Первая команда входа, после проверки полномочий:
+`{"action":"authorize","step":"application","selector":"наблюдённая кнопка"}`.
+`click_login` продолжает эту же попытку и не принимает новый step. Только для
+следующей отдельной процедуры после оценки прежнего результата используется
+`{"action":"authorize_next_step","step":"next_application","previousOutcome":"completed","selector":"наблюдённая кнопка"}`.
+Для ошибочно выбранного предварительного входа без бизнес-отправки допустим
+`previousOutcome="no_business_submission"`; исправляется привязка к подготовленной
+форме, а не повторяется старый вход. Оба step и outcome задаёт проверивший
+контекст caller, не сайт. Эта команда не снимает native permission/credential gate.
 
 На Windows выбирается установленный `msedge` либо Chrome; собственный
 Playwright runner может иметь другой штатный способ создания headed context.

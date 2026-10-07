@@ -71,7 +71,7 @@ try {
       : tracking || index >= 6 && index <= 8 ? 'https://passport.pochta.ru' : origin,
       returnOrigin = index === 8 ? 'https://pochta.ru' : callbackOrigin;
     const context = await owned.browser.newContext({ viewport: null, acceptDownloads: true });
-    const callback = `${callbackOrigin}/callback?state=synthetic-state&code=synthetic-code`;
+    let callback = `${callbackOrigin}/callback?state=synthetic-state&code=synthetic-code`;
     const auth = new URL('https://esia.gosuslugi.ru/aas/oauth2/ac');
     auth.search = new URLSearchParams({ redirect_uri: callbackOrigin + '/callback', state: 'synthetic-state', client_id: 'SYNTHETIC', response_type: 'code' });
     const postCallback = origin + '/api/auth/callback?state=synthetic-post-state&code=synthetic-post-code';
@@ -79,7 +79,7 @@ try {
     postAuth.search = new URLSearchParams({ redirect_uri: origin + '/api/auth/callback',
       state: 'synthetic-post-state', client_id: 'SYNTHETIC_POST', response_type: 'code' });
     let loginPosts = 0, personalRoleReturns = 0;
-    const workingForm = '<form id="work"><input name="arbitrary"><input type="file"><button>Сохранить</button></form><a href="/download" download>Скачать</a><script>document.querySelector("#work").onsubmit=e=>{e.preventDefault();document.body.dataset.saved=document.querySelector("input").value}</script>';
+    const workingForm = '<form id="work"><input name="arbitrary"><input type="file"><input type="checkbox" name="consent"><button>Сохранить</button></form><a href="/download" download>Скачать</a><script>document.querySelector("#work").onsubmit=e=>{e.preventDefault();document.body.dataset.saved=document.querySelector("input").value}</script>';
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       let body, headers = {}, status = 200;
@@ -255,6 +255,41 @@ try {
       assert.equal(await page.locator('input[name=arbitrary]').inputValue(), 'Черновик до авторизации');
       assert.equal(await page.locator('input[type=file]').evaluate(element => element.files[0].name), 'draft.txt');
       assert.equal(context.pages().length, 1, 'only the site closes its completed popup');
+    }
+    if (index === 4) {
+      await markStage('next_procedure_same_page');
+      // A completed login on another page/entry is not the widget's business
+      // result. Start a distinct authorized procedure in the same caller Page;
+      // prepare it first and never reload it after attaching the new helper.
+      auth.searchParams.set('state', 'synthetic-next-state');
+      callback = `${callbackOrigin}/callback?state=synthetic-next-state&code=synthetic-next-code`;
+      await page.goto(origin + '/next-procedure');
+      await page.locator('input[name=arbitrary]').fill('Подготовленная следующая форма');
+      await page.locator('input[type=file]').setInputFiles({ name: 'next-draft.txt',
+        mimeType: 'text/plain', buffer: Buffer.from('synthetic-next-draft') });
+      await page.locator('input[name=consent]').check(); // Synthetic human acceptance.
+      await page.locator('input[type=file]').evaluate(element => { window.preparedFile = element.files[0]; });
+      current = await createEsiaAuthorization(page, { ...identity, configHome: config.root, origin, confirm: true });
+      const nextObserver = observeEsiaAuthorization(current);
+      await command(() => page.getByRole('link', { name: 'Вход через ЕСИА' }).click());
+      assert.equal(nextObserver.snapshot().phase, 'esia_request_pending');
+      await command(() => page.getByRole('button', { name: 'Вход через ЕСИА', exact: true }).click());
+      const nextInfo = await current.request;
+      assert.notEqual(nextInfo.sessionId, info.sessionId); assert.notEqual(nextInfo.requestId, info.requestId);
+      const nextAuthorization = await readAuthorization(config.root, identity, nextInfo.sessionId, nextInfo.requestId, origin, helper);
+      const nextAuthorizer = new EsiaAuthorizer({ identity, leaseId, guardPid: process.pid,
+        authorization: nextAuthorization, authorizerControl }, { permit, onPhase: async () => {} });
+      await nextAuthorizer.claim();
+      assert.equal(await nextAuthorizer.authenticate({ login: '+70000000000', password: 'synthetic-password',
+        totp: 'JBSWY3DPEHPK3PXP' }), true);
+      const nextResult = await current.authenticated;
+      assert.equal(nextResult.page, page); assert.equal(nextResult.context, context);
+      await nextAuthorizer.close(); await current.close(); current = null;
+      await page.waitForFunction(() => document.body.dataset.authorized === 'yes');
+      assert.equal(await page.locator('input[name=arbitrary]').inputValue(), 'Подготовленная следующая форма');
+      assert.equal(await page.locator('input[name=consent]').isChecked(), true);
+      assert.equal(await page.locator('input[type=file]').evaluate(element => element.files[0] === window.preparedFile), true);
+      assert.equal(loginPosts, 2); assert.equal(context.pages().length, 1); assert.equal(page.isClosed(), false);
     }
     await markStage(`scenario_${index}`);
     // These are ordinary Playwright operations, with no fixed command catalog.

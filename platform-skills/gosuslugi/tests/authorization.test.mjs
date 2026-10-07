@@ -10,7 +10,7 @@ import { atomicWrite, nativeHelper, ensurePrivateDirectory } from '../scripts/na
 import { browserSessionDirectory, readAuthorization, requestLocal } from '../scripts/transport.mjs';
 import { createAuthorizationBroker } from '../scripts/authorization.mjs';
 import { LEASE_MS, RUNTIME_VERSION, RuntimeError } from '../scripts/core.mjs';
-import { observeEsiaAuthorization } from '../scripts/playwright-client.mjs';
+import { observeEsiaAuthorization, safeAuthorizationFailure } from '../scripts/playwright-client.mjs';
 import { EsiaAuthorizer } from '../scripts/esia-authorizer.mjs';
 import { authRpc } from '../scripts/auth-rpc.mjs';
 
@@ -87,6 +87,94 @@ test('observer failures are safe and sticky while verified return survives late 
     assert.throws(() => observeEsiaAuthorization({}, { requestWaitMs }), /authorization_observation_wait_invalid/);
   }
   assert.throws(() => observeEsiaAuthorization({}), /authorization_observation_invalid/);
+});
+
+// Execute the published example itself. A correct SDK is insufficient if the
+// copied caller permanently locks its Page after the first settled helper.
+async function guideCaller({ failCreation } = {}) {
+  const guide = await fs.readFile(new URL('../references/playwright-client.md', import.meta.url), 'utf8').then(value => value.replace(/\r\n/g, '\n'));
+  const code = guide.match(/```js\n([\s\S]*?)\n```/)[1];
+  const body = code.slice(code.indexOf('let login,'), code.indexOf('const lines = readline'));
+  const helpers = [], events = [], clicks = [];
+  const context = { closed: false, close() { this.closed = true; } };
+  const page = { url: () => 'https://service.example.org', context: () => context,
+    draft: 'prepared', files: ['attachment.txt'], consent: true,
+    locator: selector => ({ click: async () => { clicks.push(selector); } }) };
+  const browser = { closed: false, close() { this.closed = true; } };
+  const create = async source => {
+    assert.equal(source, page);
+    let requestResolve, returnedResolve, returnedReject;
+    const helper = { request: new Promise(resolve => { requestResolve = resolve; }),
+      authenticated: new Promise((resolve, reject) => { returnedResolve = resolve; returnedReject = reject; }),
+      closeCount: 0, close: async () => { helper.closeCount++; } };
+    helpers.push({ helper, requestResolve, returnedResolve, returnedReject });
+    if (helpers.length === failCreation) throw new RuntimeError('authorization_target_mismatch');
+    return helper;
+  };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const handle = await new AsyncFunction('page', 'context', 'browser', 'client',
+    'createEsiaAuthorization', 'observeEsiaAuthorization', 'safeAuthorizationFailure',
+    'emit', 'lines', 'origin', body + '\nreturn handle;')(page, context, browser,
+      { options: {}, configHome: '/synthetic' }, create, observeEsiaAuthorization,
+      safeAuthorizationFailure, value => events.push(value), { close() {} }, 'https://service.example.org');
+  return { handle, helpers, page, context, browser, events, clicks };
+}
+
+test('published caller continues a distinct authorized procedure without replacing its prepared Page', async () => {
+  const caller = await guideCaller();
+  await caller.handle({ action: 'authorize', step: 'cabinet', selector: '#first-login' });
+  await assert.rejects(caller.handle({ action: 'authorize_next_step', step: 'application',
+    previousOutcome: 'no_business_submission', selector: '#form-login' }), /previous_authorization_unresolved/);
+  assert.equal(caller.helpers.length, 1);
+  caller.helpers[0].returnedResolve({ page: caller.page, context: caller.context });
+  await Promise.resolve();
+  for (const previousOutcome of [undefined, 'unknown', 'sent_maybe']) {
+    await assert.rejects(caller.handle({ action: 'authorize_next_step', step: 'application', previousOutcome,
+      selector: '#form-login' }), /previous_authorization_unresolved/);
+  }
+  await caller.handle({ action: 'authorize_next_step', step: 'application',
+    previousOutcome: 'no_business_submission', selector: '#form-login' });
+  assert.equal(caller.helpers.length, 2); assert.equal(caller.helpers[0].helper.closeCount, 1);
+  assert.deepEqual(caller.page.files, ['attachment.txt']); assert.equal(caller.page.draft, 'prepared');
+  assert.equal(caller.page.consent, true); assert.equal(caller.context.closed, false); assert.equal(caller.browser.closed, false);
+  await caller.handle({ action: 'state' });
+  assert.equal(caller.events.at(-1).phase, 'esia_request_pending'); assert.equal(caller.events.at(-1).step, 'application');
+  await caller.handle({ action: 'click_login', selector: '#modal-login' });
+  assert.deepEqual(caller.clicks, ['#first-login', '#form-login', '#modal-login']);
+  // The old helper's late event must keep its old generation, even while the
+  // new observer is pending. No private Page/context leaves an emitted state.
+  caller.helpers[0].requestResolve({ origin, arguments: ['authorize', '--confirm'] });
+  await Promise.resolve();
+  assert.equal(caller.events.at(-1).step, 'cabinet');
+  assert.doesNotMatch(JSON.stringify(caller.events), /prepared|attachment.txt/);
+  caller.helpers[1].returnedResolve({ page: caller.page, context: caller.context });
+  await Promise.resolve();
+  await assert.rejects(caller.handle({ action: 'authorize_next_step', step: 'application',
+    previousOutcome: 'completed', selector: '#form-login' }), /distinct_authorization_step_required/);
+  await caller.handle({ action: 'finish' });
+  assert.equal(caller.context.closed, true); assert.equal(caller.browser.closed, true);
+});
+
+test('published caller never turns a failed authorization into a next-step retry', async () => {
+  const caller = await guideCaller();
+  await caller.handle({ action: 'authorize', step: 'application', selector: '#form-login' });
+  caller.helpers[0].returnedReject(new RuntimeError('service_callback_rejected_state'));
+  await Promise.resolve();
+  await assert.rejects(caller.handle({ action: 'authorize_next_step', step: 'another_application',
+    previousOutcome: 'completed', selector: '#form-login' }), /previous_authorization_unresolved/);
+  assert.equal(caller.helpers.length, 1); assert.equal(caller.helpers[0].helper.closeCount, 0);
+  assert.equal(caller.context.closed, false);
+});
+
+test('published caller preserves a failed helper creation instead of minting another step', async () => {
+  const caller = await guideCaller({ failCreation: 2 });
+  await caller.handle({ action: 'authorize', step: 'cabinet', selector: '#first-login' });
+  caller.helpers[0].returnedResolve({}); await Promise.resolve();
+  await assert.rejects(caller.handle({ action: 'authorize_next_step', step: 'application',
+    previousOutcome: 'no_business_submission', selector: '#form-login' }), /authorization_target_mismatch/);
+  await assert.rejects(caller.handle({ action: 'authorize_next_step', step: 'another_application',
+    previousOutcome: 'completed', selector: '#form-login' }), /previous_authorization_unresolved/);
+  assert.equal(caller.helpers.length, 2); assert.equal(caller.context.closed, false);
 });
 
 test('permission is required before host identity, local setup or native unlock', async () => {
