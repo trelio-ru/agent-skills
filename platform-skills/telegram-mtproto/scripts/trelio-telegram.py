@@ -103,7 +103,7 @@ MIN_SCHEDULE_LEAD_SECONDS = 60
 MAX_SCHEDULE_AT_CHARS = 64
 DEFAULT_SCHEDULED_LIMIT = 20
 MAX_SCHEDULED_LIMIT = 100
-MESSAGE_WORKFLOW_VERSION = "2.5.0"
+MESSAGE_WORKFLOW_VERSION = "2.5.1"
 # Overview cursors contain metadata/offsets only. Authenticate them locally so a
 # modified token cannot add peers, skip an unfinished chat or forge completeness.
 # The key stays in the existing owner-only connection namespace, never in JSON.
@@ -3077,6 +3077,19 @@ def inventory_coverage(state: dict) -> dict:
             "incompleteReasons": list(state["reasons"])}
 
 
+def is_dialog_folder(dialog: Any) -> bool:
+    """Recognize Telegram's folder summary before interpreting its peer.
+
+    DialogFolder carries the peer/top_message of the archive's latest chat,
+    but these identify a folder preview, not ordinary dialog membership. Its
+    absence of folder_id therefore must neither fail an inventory nor authorize
+    history for that peer. Only this native constructor is exempt: a genuine
+    dialog with missing folder metadata still fails closed below.
+    """
+
+    return type(dialog).__name__ == "DialogFolder"
+
+
 def inventory_rows(response: Any, folder: int, pinned: bool, utils: Any) -> list[dict]:
     """Project metadata without serializing any preview/message text or hashes."""
 
@@ -3085,8 +3098,7 @@ def inventory_rows(response: Any, folder: int, pinned: bool, utils: Any) -> list
                 if getattr(m, "peer_id", None) is not None}
     rows = []
     for dialog in response.dialogs:
-        # DialogFolder is the archive placeholder, not an extra readable chat.
-        if not hasattr(dialog, "peer"):
+        if is_dialog_folder(dialog) or not hasattr(dialog, "peer"):
             continue
         peer_id = utils.get_peer_id(dialog.peer)
         entity = entities.get(peer_id)
@@ -3157,18 +3169,29 @@ async def inventory_page(client: Any, args: argparse.Namespace, state: dict, lim
             finished = state["pinOffset"] >= len(page)
         else:
             offset = state["offset"]
+            remaining = limit - scanned
             offset_peer = await client.get_input_entity(offset[0]) if offset else Empty()
+            # A folder summary may occupy one native limit slot. Look ahead by
+            # one (still at most 100) so a one-chat page can advance past it.
+            # Surplus ordinary rows are not delivered or included in the digest;
+            # the offset remains on the last returned chat and rereads the rest.
+            native_limit = min(100, remaining + 1)
             response = await client(GetDialogs(
                 exclude_pinned=True, folder_id=folder, offset_peer=offset_peer,
                 offset_id=offset[1] if offset else 0,
                 offset_date=datetime.fromisoformat(offset[2]) if offset and offset[2] else None,
-                limit=min(100, limit - scanned), hash=0))
-            selected = inventory_rows(response, folder, False, utils)
-            if len(selected) > min(100, limit - scanned):
+                limit=native_limit, hash=0))
+            page = inventory_rows(response, folder, False, utils)
+            if len(page) > native_limit:
                 raise TelegramRuntimeError("Telegram inventory returned more dialogs than requested.")
+            selected = page[:remaining]
             # A Slice is partial even when it contains fewer rows than requested.
-            # One terminal Dialogs response or an explicit empty page closes it.
-            finished = type(response).__name__ == "Dialogs" or not selected
+            # A summary-only Slice cannot prove ordinary-dialog exhaustion or
+            # supply a safe offset. Fail rather than claim complete or loop.
+            terminal = type(response).__name__ == "Dialogs"
+            if not page and not terminal and any(is_dialog_folder(d) for d in response.dialogs):
+                raise TelegramRuntimeError("Telegram inventory cannot advance past its folder summary.")
+            finished = (terminal and len(page) <= remaining) or not page
             if selected:
                 last = selected[-1]
                 next_offset = [last["id"], last["topMessageId"], last["lastMessageAt"]]
@@ -3198,7 +3221,10 @@ async def live_dialog_metadata(client: Any, entity: Any) -> dict | None:
     _Dialogs, _Pinned, GetPeer, _Empty, InputDialog, utils = import_telethon_inventory()
     peer_id = utils.get_peer_id(entity)
     response = await client(GetPeer(peers=[InputDialog(await client.get_input_entity(entity))]))
-    matches = [d for d in response.dialogs if hasattr(d, "peer") and utils.get_peer_id(d.peer) == peer_id]
+    # The folder preview can name the same peer as a real dialog. It must not
+    # become a duplicate membership match or supply archive scope on its own.
+    matches = [d for d in response.dialogs if not is_dialog_folder(d)
+               and hasattr(d, "peer") and utils.get_peer_id(d.peer) == peer_id]
     if len(matches) != 1:
         return None
     if not hasattr(matches[0], "folder_id"):

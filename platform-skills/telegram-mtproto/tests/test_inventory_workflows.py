@@ -42,6 +42,15 @@ InputDialog = type('InputDialog', (), {'__init__': lambda self, peer: setattr(se
 Empty = type('Empty', (), {})
 Dialogs = request_class('Dialogs')
 DialogsSlice = request_class('DialogsSlice')
+DialogFolder = request_class('DialogFolder')
+
+
+def folder_summary(peer_id):
+    # Native DialogFolder has a peer and top_message, but no folder_id. The
+    # archived peer need not be in the entities of this active-dialog page.
+    return DialogFolder(folder=NS(id=1, title='Архив'), peer=peer_id, top_message=1,
+                        unread_muted_peers_count=0, unread_unmuted_peers_count=1,
+                        unread_muted_messages_count=0, unread_unmuted_messages_count=1)
 
 
 def message(peer_id, message_id, text='Сообщение', date=None, media=None):
@@ -225,6 +234,64 @@ class OverviewTests(unittest.TestCase):
         self.assertEqual(self.provider.history_calls, [])
         self.assertFalse(result['coverage']['complete'])
         self.assertIn('archive_metadata_unavailable', result['chats'][0]['incomplete_reasons'])
+
+    def test_archive_summary_does_not_enter_inventory_offsets_or_digest(self):
+        self.provider.folders[3] = 1
+        self.provider.pins = [2]
+        original_response = self.provider.response
+        def with_summary(ids, kind=Dialogs):
+            response = original_response(ids, kind)
+            response.dialogs.insert(0, folder_summary(3))
+            return response
+        with mock.patch.object(self.provider, 'response', side_effect=with_summary):
+            pages = self.inventory('--archive-scope', 'active', '--limit', '1')
+        self.assertEqual([d['id'] for p in pages for d in p['dialogs']], [2, 1])
+        self.assertEqual(pages[-1]['coverage']['dialogsScanned'], 2)
+        self.assertTrue(pages[-1]['coverage']['complete'])
+        self.assertEqual(self.provider.history_calls, [])
+
+    def test_archive_summary_never_authorizes_exact_history(self):
+        original_response = self.provider.response
+        def with_summary(ids, kind=Dialogs):
+            response = original_response(ids, kind)
+            # The same peer in both constructors is not duplicate membership.
+            response.dialogs.insert(0, folder_summary(1))
+            return response
+        with mock.patch.object(self.provider, 'response', side_effect=with_summary):
+            result = self.export('--chat', '1', '--archive-scope', 'active')
+        self.assertTrue(result['coverage']['complete'])
+        self.assertEqual([i for i, _ in self.provider.history_calls], [1])
+        self.provider.history_calls.clear()
+        response = original_response([1])
+        response.dialogs = [folder_summary(1)]
+        with mock.patch.object(self.provider, 'response', return_value=response):
+            result = self.export('--chat', '1', '--archive-scope', 'active')
+        self.assertEqual(self.provider.history_calls, [])
+        self.assertFalse(result['coverage']['complete'])
+        self.assertIn('archive_metadata_unavailable', result['chats'][0]['incomplete_reasons'])
+
+    def test_native_summary_counts_toward_limit_without_skipping_chats(self):
+        original_call = self.provider.__class__.__call__
+        async def summary_limited(provider, request):
+            if isinstance(request, GetDialogs) and isinstance(request.offset_peer, Empty):
+                # Model Telegram applying limit to constructors, not chat rows.
+                peers = provider.order[:request.limit - 1]
+                response = provider.response(peers, DialogsSlice)
+                response.dialogs.insert(0, folder_summary(99))
+                return response
+            return await original_call(provider, request)
+        with mock.patch.object(Provider, '__call__', new=summary_limited):
+            pages = self.inventory('--archive-scope', 'active', '--limit', '1')
+        self.assertEqual([d['id'] for p in pages for d in p['dialogs']], [1, 2, 3])
+        self.assertTrue(pages[-1]['coverage']['complete'])
+        self.assertTrue(all(len(p['dialogs']) <= 1 for p in pages))
+
+    def test_summary_only_partial_page_cannot_prove_inventory_exhaustion(self):
+        response = self.provider.response([], DialogsSlice)
+        response.dialogs = [folder_summary(99)]
+        with mock.patch.object(self.provider, 'response', return_value=response):
+            with self.assertRaises(M.TelegramRuntimeError):
+                self.call('dialogs', '--archive-scope', 'active', '--limit', '1')
 
     def test_chat_and_channel_marked_ids_do_not_collide_with_user_ids(self):
         entities = [NS(id=7, kind='user'), NS(id=7, kind='chat'), NS(id=7, kind='channel')]
