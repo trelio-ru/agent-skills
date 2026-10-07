@@ -1,5 +1,5 @@
 import { authOrigin, requireThat, RuntimeError } from './core.mjs';
-import { entryUrl, serviceUrl } from './esia-flow.mjs';
+import { entryUrl, externalUrl } from './esia-flow.mjs';
 
 /**
  * Observe one OAuth transaction in the original page or its new direct popup.
@@ -21,10 +21,10 @@ export class PlaywrightAuthorizationFlow {
     this.closed = false;
     this.postCount = 0;
     this.returnRequests = new WeakSet();
-    this.postReturnRequests = new WeakSet();
+    this.returnResponses = new WeakMap();
+    this.serviceResponse = null;
     this.returnCommitted = false;
     this.roleReturnRequests = new WeakSet();
-    this.roleReturnAccepted = false;
     this.roleChoiceRecord = null;
     this.onRequest = request => this.observeRequest(request);
     this.onResponse = response => this.observeResponse(response);
@@ -46,7 +46,15 @@ export class PlaywrightAuthorizationFlow {
 
   guard(action) {
     if (this.closed) return;
-    try { action(); } catch (error) {
+    try {
+      action();
+      // The helper's scope ends at the first verified non-ESIA document return.
+      // Freeze the proof and remove listeners immediately, even if the native
+      // authorizer has not claimed/completed yet. Later site-owned OAuth, JS
+      // routing, errors or popup closure must not turn ESIA success into a
+      // provider failure. No further secret input is possible after callback.
+      if (this.returned) this.close();
+    } catch (error) {
       const safe = error instanceof RuntimeError ? error : new RuntimeError('authorization_result_unknown');
       this.flow.error ||= safe.code;
       this.close();
@@ -58,7 +66,7 @@ export class PlaywrightAuthorizationFlow {
     if (this.records.has(page)) return this.records.get(page);
     if (page !== this.original && (this.existing.has(page) || page.context() !== this.context)) return null;
     requireThat(this.records.size < 32, 'authorization_pages_exceeded');
-    const record = { page, eligible: page === this.original ? true : null, events: [], navigation: null };
+    const record = { page, eligible: page === this.original ? true : null, events: [], navigation: null, committed: null };
     record.onCommit = frame => {
       if (frame === page.mainFrame()) this.guard(() => this.deliver(page, { kind: 'commit', url: frame.url() }));
     };
@@ -131,6 +139,9 @@ export class PlaywrightAuthorizationFlow {
 
   process(record, event) {
     if (this.closed) return;
+    // Buffered popup events can be delivered in one guard after opener proof.
+    // Stop at the verified return inside that batch as well as between events.
+    if (this.returned) { this.close(); return; }
     if (event.kind === 'request') {
       const { request } = event;
       const url = request.url(), navigation = request.isNavigationRequest();
@@ -145,38 +156,40 @@ export class PlaywrightAuthorizationFlow {
       } else if (this.active === record || !this.active && record.page === this.original) {
         if (navigation) {
           const callbackSeen = this.flow.callbackSeen;
-          const postCallbackSeen = this.flow.postCallbackSeen;
           const target = new URL(url), callback = this.flow.binding?.callback;
-          // A relying party may keep its own routing `state` on the cabinet
-          // URL after an accepted ESIA callback. That is not a second OAuth
-          // reply. It may continue in the actual HTTP redirect chain, or after
-          // that exact return has already committed. Before that proof an
-          // unrelated navigation still fails. The callback itself, tokens,
-          // a code/error, a fragment or POST always goes through the full guard.
-          // This exception creates no new proof; completion still needs the
-          // exact same request chain's successful service document commit.
-          const routingReturn = this.flow.callbackAccepted &&
-            (this.returnRequests.has(request.redirectedFrom()) || this.returned) &&
-            serviceUrl(url, this.flow.service) && callback &&
+          // ESIA's callback and a site's subsequent redirects are different
+          // protocol steps. Once that exact callback has succeeded, the site's
+          // server may issue its own token/routing query on another path. The
+          // Request object's HTTP ancestry proves where this URL came from;
+          // names such as access_token or state do not make it a new ESIA reply.
+          // No provider-specific host/path/query list is needed. The actual
+          // ESIA callback still passes the full guard, as do a new ESIA request
+          // and an unrelated navigation. The site's outer OAuth/SSO flow is
+          // caller-owned; it is not another transaction for this helper.
+          const returnTarget = this.flow.callbackAccepted &&
+            externalUrl(url) && callback &&
             (target.origin !== callback.origin || target.pathname !== callback.pathname) &&
-            request.method() === 'GET' && !target.hash &&
-            target.searchParams.getAll('state').length === 1 &&
-            !['code', 'error', 'access_token', 'id_token'].some(name => target.searchParams.has(name));
-          if (!routingReturn) this.flow.observeNavigation(url, request.method());
+            request.method() === 'GET';
+          const serviceRedirect = returnTarget && this.returnRequests.has(request.redirectedFrom());
+          if (serviceRedirect) {
+            // These values never leave private caller RAM. Remember them for
+            // the existing redactor without logging or exporting a return URL.
+            for (const name of ['code', 'state', 'error_description', 'access_token', 'id_token'])
+              for (const value of target.searchParams.getAll(name)) this.flow.remember(value);
+          }
+          if (!serviceRedirect) this.flow.observeNavigation(url, request.method());
           if (!callbackSeen && this.flow.callbackSeen) this.returnRequests.add(request);
-          if (!postCallbackSeen && this.flow.postCallbackSeen) this.postReturnRequests.add(request);
         }
       } else return;
       if (this.active === record && authOrigin(url) && request.method() === 'POST') this.postCount++;
       if (navigation) {
         if (request.redirectedFrom() && this.returnRequests.has(request.redirectedFrom())) this.returnRequests.add(request);
-        if (request.redirectedFrom() && this.postReturnRequests.has(request.redirectedFrom())) this.postReturnRequests.add(request);
         if (request.redirectedFrom() && this.roleReturnRequests.has(request.redirectedFrom()))
           this.roleReturnRequests.add(request);
         // A verified callback can redirect to the official role chooser.
         // Its later personal-card click starts a new navigation rather than
         // another HTTP redirect, so retain that exact continuation separately.
-        if (this.roleChoiceRecord === record && serviceUrl(url, this.flow.service))
+        if (this.roleChoiceRecord === record && externalUrl(url))
           this.roleReturnRequests.add(request);
         record.navigation = request;
       }
@@ -184,21 +197,27 @@ export class PlaywrightAuthorizationFlow {
       if (this.active !== record && (this.active || record.page !== this.original)) return;
       this.flow.observeResponse(event.url, event.status);
       if (this.flow.error) throw new RuntimeError(this.flow.error, this.flow.httpFailure);
-      if (this.roleReturnRequests.has(event.request) && serviceUrl(event.url, this.flow.service) &&
-        event.status >= 200 && event.status < 400) this.roleReturnAccepted = true;
+      if (externalUrl(event.url) && Number.isInteger(event.status) && event.status >= 200 && event.status <= 599) {
+        // The external site's HTTP error is evidence for the caller. It does
+        // not turn a verified ESIA response into a provider refusal or permit
+        // replay. Retain it by exact Request object until that document commits.
+        this.returnResponses.set(event.request, { httpStatus: event.status, httpOrigin: new URL(event.url).origin });
+        if (record.committed === event.request) this.serviceResponse = this.returnResponses.get(event.request);
+      }
     } else if (event.kind === 'commit') {
-      // Post ID may commit a consent page after ESIA and only later resume its
-      // own callback. That intermediate document is not the relying party's
-      // completed login. Require the outer callback's exact request/redirect
-      // chain, including when consent has broken the inner HTTP redirect chain.
-      const returnRequests = this.flow.postBinding ? this.postReturnRequests : this.returnRequests;
-      if (this.active === record && record.navigation && returnRequests.has(record.navigation) &&
-        record.navigation.url() === event.url && serviceUrl(event.url, this.flow.service)) this.returnCommitted = true;
-      if (!this.flow.postBinding && this.active === record && record.navigation && this.roleReturnRequests.has(record.navigation) &&
-        this.roleReturnAccepted && record.navigation.url() === event.url &&
-        serviceUrl(event.url, this.flow.service)) this.returnCommitted = true;
+      // A fragment belongs to the site's document, not to its HTTP Request.
+      // Strip only that fragment for the exact request/commit comparison; the
+      // callback itself still rejects fragments under the OAuth guard.
+      const committed = new URL(event.url); committed.hash = '';
+      if (this.active === record && record.navigation && externalUrl(event.url) &&
+        record.navigation.url() === committed.href &&
+        (this.returnRequests.has(record.navigation) || this.roleReturnRequests.has(record.navigation))) {
+        this.returnCommitted = true;
+        record.committed = record.navigation;
+        this.serviceResponse = this.returnResponses.get(record.navigation) ?? null;
+      }
       if (this.active && this.active.page !== this.original && record.page === this.original)
-        requireThat((this.flow.callbackSeen ? serviceUrl : entryUrl)(event.url, this.flow.service),
+        requireThat(this.flow.callbackSeen ? externalUrl(event.url) : entryUrl(event.url, this.flow.service),
           'authorization_target_mismatch');
     } else if (event.kind === 'close') {
       if (record.page === this.original) throw new RuntimeError('browser_closed');
@@ -219,7 +238,7 @@ export class PlaywrightAuthorizationFlow {
     this.roleChoiceRecord = this.active;
   }
   get returned() {
-    return !this.original.isClosed() && this.returnCommitted && this.flow.hasAuthenticatedReturn;
+    return !this.original.isClosed() && this.returnCommitted && this.serviceResponse !== null && this.flow.hasAuthenticatedReturn;
   }
 
   close() {

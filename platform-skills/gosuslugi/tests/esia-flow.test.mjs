@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ServiceFlow, entryUrl, serviceForOrigin, serviceUrl } from '../scripts/esia-flow.mjs';
+import { ServiceFlow, entryUrl, externalUrl, serviceForOrigin } from '../scripts/esia-flow.mjs';
 import { EventEmitter } from 'node:events';
 import { PlaywrightAuthorizationFlow } from '../scripts/playwright-flow.mjs';
 import { safeAuthorizationFailure } from '../scripts/playwright-client.mjs';
@@ -24,21 +24,6 @@ function returned(overrides = {}, target = callback) {
     url.searchParams.set(name, value);
   return url.href;
 }
-const postState = 'synthetic-post-state';
-const postCallback = 'https://zakaznoe.pochta.ru/oauth2/cb';
-const esiaPostCallback = 'https://passport.pochta.ru/pc/ext/v1.0/authorize/esia';
-function postAuthorization(overrides = {}) {
-  const url = new URL('https://passport.pochta.ru/oauth2/authorize');
-  url.search = new URLSearchParams({ response_type: 'code', client_id: 'SYNTHETIC_POST',
-    scope: 'openid', state: postState, redirect_uri: postCallback, ...overrides });
-  return url.href;
-}
-function postReturned(overrides = {}, target = postCallback) {
-  const url = new URL(target);
-  url.search = new URLSearchParams({ code: 'synthetic-post-code', state: postState, ...overrides });
-  return url.href;
-}
-
 test('only the actual bound ESIA transaction unlocks credentials and a single matching callback', () => {
   const flow = new ServiceFlow(gas);
   assert.throws(() => flow.allowSecret(), /service_authorization_request_required/);
@@ -55,155 +40,10 @@ test('only the actual bound ESIA transaction unlocks credentials and a single ma
   assert.equal(flow.redact(`url ${state} synthetic-code-only`), 'url [redacted] [redacted]');
 });
 
-test('Russian Post accepts its exact passport callback while other sites remain same-origin', () => {
-  const entry = 'https://zakaznoe.pochta.ru';
-  const passportCallback = 'https://passport.pochta.ru/oauth/callback?fixed=1';
-  const service = serviceForOrigin(entry);
-  const passport = serviceForOrigin('https://passport.pochta.ru');
-  assert.deepEqual(service.callbackOrigins, [entry, 'https://passport.pochta.ru']);
-  assert.deepEqual(passport.callbackOrigins, ['https://passport.pochta.ru']);
-  assert.deepEqual(passport.serviceOrigins, [entry, 'https://passport.pochta.ru',
-    'https://pochta.ru', 'https://www.pochta.ru']);
-  assert.equal(serviceUrl('https://pochta.ru/account', passport), true);
-  assert.equal(serviceUrl('https://www.pochta.ru/account', passport), true);
-  assert.equal(entryUrl('https://pochta.ru/account', passport), false);
-  assert.equal(serviceUrl('https://login.pochta.ru/', passport), false);
-  assert.deepEqual(serviceForOrigin('https://other.example.org').callbackOrigins,
-    ['https://other.example.org']);
-
-  const flow = new ServiceFlow(service);
-  flow.observeNavigation(authorization(passportCallback));
-  flow.allowSecret();
-  flow.observeNavigation(returned({}, passportCallback));
-  flow.observeResponse(returned({}, passportCallback), 302);
-  assert.equal(flow.hasAuthenticatedReturn, true);
-
-  // The callback origin comes from the bound OAuth request. Merely matching
-  // the path and state on the entry site cannot stand in for that response.
-  const wrongReturn = new ServiceFlow(service);
-  wrongReturn.observeNavigation(authorization(passportCallback));
-  assert.throws(() => wrongReturn.observeNavigation(returned({}, entry + '/oauth/callback?fixed=1')),
-    /service_callback_rejected/);
-  assert.throws(() => new ServiceFlow(passport).observeNavigation(authorization(entry + '/oauth/callback')),
-    /service_redirect_rejected/);
-  for (const bad of [
-    returned({ state: 'wrong' }, passportCallback),
-    returned({}, passportCallback.replace('fixed=1', 'fixed=2')),
-  ]) {
-    const rejected = new ServiceFlow(service);
-    rejected.observeNavigation(authorization(passportCallback));
-    assert.throws(() => rejected.observeNavigation(bad), /service_callback_rejected/);
-  }
-  for (const unapproved of [
-    'https://login.pochta.ru/oauth/callback',
-    'https://passport.pochta.ru.evil.org/oauth/callback',
-    'http://passport.pochta.ru/oauth/callback',
-    'https://passport.pochta.ru:444/oauth/callback',
-  ]) {
-    assert.throws(() => new ServiceFlow(service).observeNavigation(authorization(unapproved)),
-      /service_redirect_rejected/);
-  }
-});
-
-test('Post ID and ESIA have separate bound state and both callbacks complete the letters login', () => {
-  const flow = new ServiceFlow(serviceForOrigin('https://zakaznoe.pochta.ru'));
-  flow.observeNavigation(postAuthorization());
-  assert.throws(() => flow.allowSecret(), /service_authorization_request_required/);
-  flow.observeNavigation(authorization(esiaPostCallback));
-  flow.allowSecret();
-  const esiaReturn = returned({}, esiaPostCallback);
-  flow.observeNavigation(esiaReturn);
-  flow.observeResponse(esiaReturn, 303);
-  assert.equal(flow.hasAuthenticatedReturn, false, 'ESIA alone does not establish the letters session');
-  flow.observeNavigation(postReturned());
-  assert.equal(flow.hasAuthenticatedReturn, false, 'outer callback still needs HTTP proof');
-  flow.observeResponse(postReturned(), 302);
-  assert.equal(flow.hasAuthenticatedReturn, true);
-  assert.equal(flow.redact(`${postState} ${state} synthetic-post-code`),
-    '[redacted] [redacted] [redacted]');
-});
-
-test('Post ID callback rejects swapped state, wrong order, duplicate code and an unrelated return', () => {
-  for (const invalid of [
-    postReturned({ state }), postReturned({ state: 'wrong' }), postReturned() + '&code=duplicate',
-    postReturned() + '&state=duplicate', postReturned({ error: 'denied' }),
-    postReturned({ access_token: 'not-accepted' }),
-  ]) {
-    const flow = new ServiceFlow(serviceForOrigin('https://zakaznoe.pochta.ru'));
-    flow.observeNavigation(postAuthorization());
-    flow.observeNavigation(authorization(esiaPostCallback));
-    const esiaReturn = returned({}, esiaPostCallback);
-    flow.observeNavigation(esiaReturn);
-    flow.observeResponse(esiaReturn, 303);
-    assert.throws(() => flow.observeNavigation(invalid),
-      /service_(callback_rejected|oauth_parameters_invalid)/);
-    assert.equal(flow.hasAuthenticatedReturn, false);
-  }
-  const early = new ServiceFlow(serviceForOrigin('https://zakaznoe.pochta.ru'));
-  early.observeNavigation(postAuthorization());
-  assert.throws(() => early.observeNavigation(postReturned()), /service_callback_rejected/);
-  const failed = new ServiceFlow(serviceForOrigin('https://zakaznoe.pochta.ru'));
-  failed.observeNavigation(postAuthorization());
-  failed.observeNavigation(authorization(esiaPostCallback));
-  const esiaReturn = returned({}, esiaPostCallback);
-  failed.observeNavigation(esiaReturn); failed.observeResponse(esiaReturn, 303);
-  failed.observeNavigation(postReturned()); failed.observeResponse(postReturned(), 500);
-  assert.equal(failed.error, 'service_http_error');
-  assert.equal(failed.hasAuthenticatedReturn, false);
-  assert.throws(() => new ServiceFlow(serviceForOrigin('https://zakaznoe.pochta.ru'))
-    .observeNavigation(postAuthorization({ state: '' })), /service_oauth_parameters_invalid/);
-  for (const redirect_uri of [
-    'https://login.pochta.ru/oauth2/cb', 'https://zakaznoe.pochta.ru.evil.org/oauth2/cb',
-    'http://zakaznoe.pochta.ru/oauth2/cb', 'https://zakaznoe.pochta.ru/other',
-  ]) assert.throws(() => new ServiceFlow(serviceForOrigin('https://zakaznoe.pochta.ru'))
-    .observeNavigation(postAuthorization({ redirect_uri })), /service_redirect_rejected/);
-});
-
-test('tracking binds its own outer callback before ESIA and rejects wrong state, scope and lost initiation', () => {
-  const origin = 'https://www.pochta.ru', target = origin + '/api/auth/callback';
-  const service = serviceForOrigin(origin);
-  assert.deepEqual(service.callbackOrigins, ['https://passport.pochta.ru']);
-  assert.equal(entryUrl('https://passport.pochta.ru/pc/ext/v2.0/form/signIn', service), true);
-  const begin = () => {
-    const flow = new ServiceFlow(service);
-    flow.observeNavigation(postAuthorization({ redirect_uri: target }));
-    flow.observeNavigation(authorization(esiaPostCallback));
-    flow.observeNavigation(returned({}, esiaPostCallback));
-    flow.observeResponse(returned({}, esiaPostCallback), 303);
-    assert.equal(flow.hasAuthenticatedReturn, false);
-    return flow;
-  };
-  const flow = begin();
-  flow.observeNavigation(postReturned({}, target));
-  assert.equal(flow.hasAuthenticatedReturn, false);
-  flow.observeResponse(postReturned({}, target), 302);
-  assert.equal(flow.hasAuthenticatedReturn, true);
-  assert.throws(() => flow.observeNavigation(postReturned({}, target)), /service_callback_rejected/);
-  for (const invalid of [
-    postReturned({ state }, target), postReturned({ state: 'wrong' }, target),
-    postReturned({}, target) + '&code=duplicate', postReturned({}, target) + '&state=duplicate',
-    postReturned({ error: 'denied' }, target), postReturned({ id_token: 'forbidden' }, target),
-    postReturned({}, target) + '#fragment', postReturned(),
-  ]) assert.throws(() => begin().observeNavigation(invalid), /service_(callback_rejected|oauth_parameters_invalid)/);
-  for (const redirect_uri of [postCallback, target + '/extra', target + '?fixed=1',
-    'https://pochta.ru/api/auth/callback', 'https://www.pochta.ru.evil.org/api/auth/callback']) {
-    assert.throws(() => new ServiceFlow(service).observeNavigation(postAuthorization({ redirect_uri })),
-      /service_redirect_rejected/);
-  }
-  // Attaching only after Passport has loaded cannot recover the missed state.
-  const late = new ServiceFlow(serviceForOrigin('https://passport.pochta.ru'));
-  late.observeNavigation(authorization(esiaPostCallback));
-  late.observeNavigation(returned({}, esiaPostCallback));
-  late.observeResponse(returned({}, esiaPostCallback), 302);
-  assert.throws(() => late.observeNavigation(postReturned({}, target)), /service_callback_rejected/);
-  const failed = begin();
-  failed.observeNavigation(postReturned({}, target)); failed.observeResponse(postReturned({}, target), 500);
-  assert.equal(failed.hasAuthenticatedReturn, false);
-});
-
 test('callback scope, state, fixed query, errors, duplicate parameters and transaction replacement fail closed', () => {
   for (const target of [
-    'https://evil.org/cb',
+    'https://esia.gosuslugi.ru/cb',
+    'https://user:pass@broker.example.org/cb',
     'http://first.example.org/cb',
     'https://first.example.org/cb#x',
     'https://first.example.org/cb?state=x',
@@ -235,7 +75,9 @@ test('callback scope, state, fixed query, errors, duplicate parameters and trans
     () => flow.observeNavigation(authorization(callback, { state: 'new' })),
     /service_transaction_changed/,
   );
-  assert.throws(() => new ServiceFlow(gas).observeNavigation(returned()), /service_callback_rejected/);
+  const unbound = new ServiceFlow(gas); unbound.observeNavigation(returned());
+  assert.equal(unbound.hasAuthenticatedReturn, false);
+  assert.throws(() => unbound.allowSecret(), /service_authorization_request_required/);
 });
 
 test('callback rejection reports only the exact failed invariant and never weakens binding', () => {
@@ -271,35 +113,24 @@ test('new OAuth cancels cached login proof and recorded failure cancels readines
   assert.equal(flow.hasAuthenticatedReturn, false);
 });
 
-test('callback HTTP failure never becomes a ready service session', () => {
-  const flow = new ServiceFlow(gas);
-  flow.observeNavigation(authorization());
-  flow.observeNavigation(returned());
-  flow.observeResponse(returned(), 500);
-  assert.equal(flow.error, 'service_http_error');
-  assert.equal(flow.hasAuthenticatedReturn, false);
+test('external callback errors do not revoke a verified ESIA response or permit another secret input', () => {
+  for (const status of [200, 302, 401, 403, 500, 503]) {
+    const flow = new ServiceFlow(gas);
+    flow.observeNavigation(authorization()); flow.observeNavigation(returned());
+    flow.observeResponse(returned(), status);
+    assert.equal(flow.error, null); assert.equal(flow.hasAuthenticatedReturn, true);
+    assert.throws(() => flow.allowSecret(), /service_authorization_request_required/);
+  }
 });
 
-test('a relying-party 401 before OAuth revokes cached proof and permits sign-in, not readiness', () => {
+test('HTTP errors on an external entry stay caller-owned while ESIA HTTP errors remain provider failures', () => {
   const flow = new ServiceFlow(gas, { reused: true });
   flow.observeResponse(gas.entryUrl, 401);
+  assert.equal(flow.error, null); assert.equal(flow.hasAuthenticatedReturn, false);
+  flow.observeResponse(gas.entryUrl, 503);
   assert.equal(flow.error, null);
-  assert.equal(flow.hasAuthenticatedReturn, false);
-  assert.throws(() => flow.allowSecret(), /service_authorization_request_required/);
-  flow.observeNavigation(authorization());
-  flow.allowSecret();
-  flow.observeNavigation(returned());
-  flow.observeResponse(returned(), 401);
-  assert.equal(flow.error, 'service_http_error');
-  assert.equal(flow.hasAuthenticatedReturn, false);
-  for (const [url, status] of [
-    [authorization(), 401],
-    [gas.entryUrl, 403],
-  ]) {
-    const rejected = new ServiceFlow(gas);
-    rejected.observeResponse(url, status);
-    assert.equal(rejected.error, 'service_http_error');
-  }
+  flow.observeNavigation(authorization()); flow.observeResponse(authorization(), 503);
+  assert.equal(flow.error, 'service_http_error'); assert.equal(flow.hasAuthenticatedReturn, false);
 });
 
 // Event fixtures deliberately vary the order of Page, opener, response and
@@ -362,19 +193,14 @@ test('routing state after an accepted callback stays in its exact HTTP return ch
   watcher.close();
 });
 
-test('routing-state continuation cannot replace callback checks, authorize new navigation or accept OAuth payloads', () => {
-  for (const mode of ['unrelated', 'http-pending', 'code', 'error', 'access_token', 'id_token',
-    'fragment', 'post', 'duplicate-state', 'same-callback', 'foreign-origin']) {
+test('service redirect continuation cannot replace callback checks or authorize unrelated navigation', () => {
+  for (const mode of ['unrelated', 'http-pending', 'post', 'same-callback']) {
     const b = browserFixture(), watcher = b.start();
     b.request(b.original, authorization());
     const cb = b.request(b.original, returned());
     if (mode !== 'http-pending') b.response(cb, 302);
     let target = gas.origin + '/cabinet?state=synthetic-route';
-    if (['code', 'error', 'access_token', 'id_token'].includes(mode)) target += `&${mode}=synthetic-private`;
-    if (mode === 'fragment') target += '#synthetic-private';
-    if (mode === 'duplicate-state') target += '&state=duplicate';
     if (mode === 'same-callback') target = returned();
-    if (mode === 'foreign-origin') target = 'https://unrelated.example.org/cabinet?state=synthetic-route';
     const next = b.request(b.original, target, {
       parent: mode === 'unrelated' ? null : cb, method: mode === 'post' ? 'POST' : 'GET',
     });
@@ -385,22 +211,65 @@ test('routing-state continuation cannot replace callback checks, authorize new n
   }
 });
 
-test('a committed verified callback allows later business routing state without creating new auth proof', () => {
+test('any relying party may issue its own parameters in the exact accepted callback redirect chain', () => {
+  for (const origin of ['https://unlisted.example.org', 'https://another.example.net']) {
+    const service = serviceForOrigin(origin), cbPath = origin + '/auth/return';
+    const b = browserFixture(service), watcher = b.start();
+    b.request(b.original, authorization(cbPath));
+    const cb = b.request(b.original, returned({}, cbPath)); b.response(cb, 302);
+    // Both steps are site-owned HTTP redirects, not new OAuth callbacks. The
+    // generic observer must not know a cabinet route or a provider's token name.
+    const first = b.request(b.original, origin + '/next?state=route&access_token=synthetic-service-token', { parent: cb });
+    b.response(first, 303);
+    assert.equal(watcher.returned, false, 'a redirect and token do not replace a document commit');
+    const final = b.request(b.original, origin + '/work?code=site-code&id_token=site-id&state=one&state=two', { parent: first });
+    b.response(final); b.original.commit(final.url());
+    assert.equal(watcher.returned, true); assert.deepEqual(b.errors, []);
+    assert.throws(() => b.flow.allowSecret(), /service_authorization_request_required/);
+    assert.equal(b.flow.redact('synthetic-service-token site-code site-id'), '[redacted] [redacted] [redacted]');
+    // Even a redirect cannot replay the bound callback or start another ESIA
+    // transaction after the original callback has revoked secret access.
+    assert.throws(() => b.flow.observeNavigation(authorization(cbPath)), /service_callback_already_used/);
+    b.request(b.original, authorization(cbPath), { parent: final });
+    assert.deepEqual(b.errors, []); assert.equal(watcher.returned, true, 'later caller-owned navigation cannot revoke the frozen proof');
+    watcher.close();
+  }
+});
+
+test('a site token is not accepted without the exact HTTP callback chain', () => {
+  for (const mode of ['unrelated', 'http-pending', 'post', 'same-callback']) {
+    const b = browserFixture(), watcher = b.start();
+    b.request(b.original, authorization());
+    const cb = b.request(b.original, returned());
+    if (mode !== 'http-pending') b.response(cb, 302);
+    let target = gas.origin + '/work?access_token=synthetic-service-token';
+    if (mode === 'same-callback') target = returned({ access_token: 'synthetic-service-token' });
+    const next = b.request(b.original, target, {
+      parent: mode === 'unrelated' ? null : cb,
+      method: mode === 'post' ? 'POST' : 'GET',
+    });
+    b.response(next); b.original.commit(target);
+    assert.equal(watcher.returned, false, mode);
+    assert.equal(b.errors.length, 1, mode);
+    assert.doesNotMatch(JSON.stringify(b.failures.map(safeAuthorizationFailure)), /synthetic-service-token|access_token|https:.*work/);
+    watcher.close();
+  }
+});
+
+test('a committed verified ESIA return detaches observation before the caller continues its site flow', () => {
   const b = browserFixture(), watcher = b.start();
   b.request(b.original, authorization());
   const cb = b.request(b.original, returned()); b.response(cb); b.original.commit(cb.url());
-  assert.equal(watcher.returned, true);
-  // A site's own callback script can start another document instead of an
-  // HTTP redirect. Here the exact callback has already committed successfully;
-  // ignoring a routing-only state neither grants auth nor revives secret input.
-  const cabinet = b.request(b.original, gas.origin + '/cabinet?state=synthetic-route');
-  b.response(cabinet); b.original.commit(cabinet.url());
+  assert.equal(watcher.returned, true); assert.equal(watcher.closed, true);
+  assert.equal(b.context.listenerCount('request'), 0);
+  assert.equal(b.original.listenerCount('framenavigated'), 0);
+  // No callbacks or browser restrictions remain for the caller's own SSO,
+  // token-bearing SPA route, business error or a different HTTPS site.
+  const next = b.request(b.original, 'https://other.example.org/work?code=site-code&access_token=site-token');
+  b.response(next, 500); b.original.commit(next.url());
   assert.equal(watcher.returned, true); assert.deepEqual(b.errors, []);
   assert.throws(() => b.flow.allowSecret(), /service_authorization_request_required/);
-  b.request(b.original, returned());
-  assert.deepEqual(b.errors, ['service_callback_already_used']);
-  assert.equal(watcher.returned, false);
-  watcher.close();
+  assert.throws(() => b.flow.observeNavigation(returned()), /service_callback_already_used/);
 });
 
 test('a new direct popup binds its initial request before Page publication and can close after verified SSO', async () => {
@@ -487,69 +356,8 @@ test('a callback redirected through the official identity chooser needs one sele
   watcher.close();
 });
 
-test('Passport-first login may commit a bound callback redirect in either Postal cabinet', () => {
-  const passport = 'https://passport.pochta.ru';
-  for (const destination of ['https://zakaznoe.pochta.ru/cabinet', 'https://pochta.ru/account',
-    'https://www.pochta.ru/account']) {
-    const b = browserFixture(serviceForOrigin(passport)), watcher = b.start();
-    const oauth = authorization(passport + '/oauth/callback?fixed=1');
-    b.request(b.original, oauth);
-    assert.equal(b.binds, 1);
-    const callbackUrl = returned({}, passport + '/oauth/callback?fixed=1');
-    const callbackRequest = b.request(b.original, callbackUrl);
-    b.response(callbackRequest, 302);
-    const cabinet = b.request(b.original, destination, { parent: callbackRequest });
-    b.response(cabinet);
-    b.original.commit(cabinet.url());
-    assert.equal(watcher.returned, true);
-    assert.deepEqual(b.errors, []);
-    watcher.close();
-  }
-});
-
-test('Post ID then ESIA redirect chain requires both HTTP callbacks from either Postal entry', () => {
-  for (const origin of ['https://zakaznoe.pochta.ru', 'https://passport.pochta.ru']) {
-    const b = browserFixture(serviceForOrigin(origin));
-    const watcher = b.start();
-    const outer = b.request(b.original, postAuthorization()); b.response(outer, 303);
-    assert.equal(b.binds, 0);
-    const inner = b.request(b.original, authorization(esiaPostCallback), { parent: outer });
-    b.response(inner, 302);
-    assert.equal(b.binds, 1);
-    const esiaReturn = b.request(b.original, returned({}, esiaPostCallback));
-    b.response(esiaReturn, 303);
-    assert.equal(watcher.returned, false);
-    const postReturn = b.request(b.original, postReturned(), { parent: esiaReturn });
-    b.response(postReturn, 302);
-    assert.equal(watcher.returned, false);
-    const cabinet = b.request(b.original, 'https://zakaznoe.pochta.ru/cabinet', { parent: postReturn });
-    b.response(cabinet); b.original.commit(cabinet.url());
-    assert.equal(watcher.returned, true);
-    assert.deepEqual(b.errors, []);
-    watcher.close();
-  }
-});
-
-test('tracking consent document cannot replace the outer callback document even after its HTTP response', () => {
-  const origin = 'https://www.pochta.ru', target = origin + '/api/auth/callback';
-  const b = browserFixture(serviceForOrigin(origin)), watcher = b.start();
-  const outer = b.request(b.original, postAuthorization({ redirect_uri: target })); b.response(outer, 302);
-  b.request(b.original, authorization(esiaPostCallback));
-  const inner = b.request(b.original, returned({}, esiaPostCallback)); b.response(inner, 302);
-  const consent = b.request(b.original, 'https://passport.pochta.ru/consent', { parent: inner });
-  b.response(consent); b.original.commit(consent.url());
-  assert.equal(watcher.returned, false);
-  // Consent starts a new navigation, not an HTTP redirect from the ESIA reply.
-  const finish = b.request(b.original, postReturned({}, target)); b.response(finish, 302);
-  assert.equal(watcher.returned, false, 'old Passport document is not the tracking callback commit');
-  const cabinet = b.request(b.original, origin + '/tracking', { parent: finish });
-  b.response(cabinet); b.original.commit(cabinet.url());
-  assert.equal(watcher.returned, true); assert.deepEqual(b.errors, []);
-  watcher.close();
-});
-
 test('popup close, failed/wrong callback, second auth page and closed opener fail without closing caller pages', async () => {
-  for (const mode of ['close', 'http-error', 'wrong-state', 'second-page', 'opener-close']) {
+  for (const mode of ['close', 'wrong-state', 'second-page', 'opener-close']) {
     const b = browserFixture(), watcher = b.start(), popup = b.makePage(b.original, authorization());
     b.request(popup, authorization()); b.context.emit('page', popup); await eventsSettled();
     if (mode === 'close') popup.close();
@@ -570,34 +378,57 @@ test('popup close, failed/wrong callback, second auth page and closed opener fai
   }
 });
 
-for (const stage of ['entry', 'esia', 'callback']) {
-  test(`HTTP 503 at ${stage} preserves only status/origin and never proves login`, () => {
-    const b = browserFixture(), watcher = b.start();
-    let url = gas.entryUrl;
-    if (stage !== 'entry') {
-      const auth = b.request(b.original, authorization());
-      if (stage === 'esia') { b.response(auth, 503); url = authorization(); }
-      else { b.response(auth); url = returned(); b.response(b.request(b.original, url), 503); }
-    } else b.response(b.request(b.original, url), 503);
-    const error = b.failures[0];
-    assert.equal(error.code, 'service_http_error');
-    assert.equal(error.httpStatus, 503);
-    assert.equal(error.httpOrigin, new URL(url).origin);
-    assert.deepEqual(Object.keys(error).sort(), ['code', 'httpOrigin', 'httpStatus']);
-    assert.equal(watcher.returned, false);
-    assert.ok(!JSON.stringify(error).includes('synthetic-code'));
-    assert.ok(!JSON.stringify(error).includes('synthetic-state'));
-  });
-}
+test('generic broker callbacks and cross-origin redirects return browser control without a site catalog', () => {
+  const origin = 'https://unlisted.example.net', broker = 'https://identity.example.org';
+  const b = browserFixture(serviceForOrigin(origin)), watcher = b.start();
+  assert.equal(entryUrl(broker, b.flow.service), false);
+  assert.equal(externalUrl(broker), true);
+  b.request(b.original, broker + '/authorize?state=site-state');
+  const auth = b.request(b.original, authorization(broker + '/esia/callback'));
+  b.response(auth);
+  const cb = b.request(b.original, returned({}, broker + '/esia/callback')); b.response(cb, 302);
+  const cabinet = b.request(b.original, origin + '/work?state=outer-state&access_token=site-token', { parent: cb });
+  b.response(cabinet, 503);
+  assert.equal(watcher.returned, false);
+  b.original.commit(cabinet.url() + '#view');
+  assert.equal(watcher.returned, true); assert.deepEqual(b.errors, []);
+  assert.deepEqual(watcher.serviceResponse, { httpStatus: 503, httpOrigin: origin });
+  assert.throws(() => b.flow.allowSecret(), /service_authorization_request_required/);
+  watcher.close();
+});
 
-test('service response failure keeps the first status and ignores non-document/sibling errors', () => {
+test('an external callback error page is returned separately from ESIA success', () => {
+  for (const status of [401, 403, 500, 503]) {
+    const b = browserFixture(), watcher = b.start();
+    b.request(b.original, authorization());
+    const cb = b.request(b.original, returned()); b.response(cb, status); b.original.commit(cb.url());
+    assert.equal(watcher.returned, true); assert.deepEqual(b.errors, []);
+    assert.deepEqual(watcher.serviceResponse, { httpStatus: status, httpOrigin: gas.origin });
+    watcher.close();
+  }
+});
+
+test('an unrelated external navigation cannot substitute the verified ESIA return even with the same callback state', () => {
+  const b = browserFixture(), watcher = b.start();
+  b.request(b.original, authorization());
+  const cb = b.request(b.original, returned()); b.response(cb, 302);
+  const unrelated = b.request(b.original, 'https://foreign.example.org/work');
+  b.response(unrelated); b.original.commit(unrelated.url());
+  assert.equal(watcher.returned, false); watcher.close();
+});
+
+test('ESIA HTTP 503 keeps only its first safe status/origin and never proves login', () => {
   const b = browserFixture(), watcher = b.start();
   b.response(b.request(b.original, gas.origin + '/asset', { navigation: false }), 503);
-  const sibling = b.makePage(null);
-  b.response(b.request(sibling, gas.entryUrl), 503);
+  b.response(b.request(b.makePage(null), authorization()), 502);
   assert.equal(b.flow.error, null);
-  b.response(b.request(b.original, gas.entryUrl), 502);
-  b.flow.observeResponse(gas.entryUrl, 503);
-  assert.deepEqual(b.flow.httpFailure, { httpStatus: 502, httpOrigin: gas.origin });
+  const auth = b.request(b.original, authorization()); b.response(auth, 503);
+  b.flow.observeResponse(authorization(), 502);
+  const error = b.failures[0];
+  assert.deepEqual(safeAuthorizationFailure(error), {
+    error: 'service_http_error', httpStatus: 503, httpOrigin: 'https://esia.gosuslugi.ru',
+  });
+  assert.deepEqual(Object.keys(error).sort(), ['code', 'httpOrigin', 'httpStatus']);
   assert.equal(watcher.returned, false);
+  assert.doesNotMatch(JSON.stringify(error), /synthetic-code|synthetic-state/);
 });

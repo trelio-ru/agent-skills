@@ -133,7 +133,11 @@ export async function createEsiaAuthorization(page, options = {}) {
       if (packet.command === 'claim') nativeControl = packet.nativeControl;
       respond(200, result);
       if (packet.command === 'complete' || packet.command === 'claim' && result.returned === true) {
-        done.resolve({ context: page.context(), page });
+        // ESIA has returned the bound response; whether the external site
+        // exchanged it successfully or rendered its cabinet belongs to the
+        // caller. Provide only the committed document's safe HTTP metadata.
+        done.resolve({ context: page.context(), page,
+          ...(observation.serviceResponse ? { serviceResponse: { ...observation.serviceResponse } } : {}) });
         // Allow the completion reply to flush before closing the listener.
         setImmediate(() => { void cleanup(); });
       }
