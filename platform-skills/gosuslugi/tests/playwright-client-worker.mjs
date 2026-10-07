@@ -57,16 +57,18 @@ try {
   for (const [index, origin] of ['https://first.example.org', 'https://unlisted.example.org', 'https://sso.example.org',
     'https://popup.example.org', 'https://popup-totp.example.org', 'https://popup-sso.example.org',
     'https://zakaznoe.pochta.ru', 'https://zakaznoe.pochta.ru', 'https://passport.pochta.ru',
-    'https://qr-choice.example.org', 'https://role-choice.example.org', 'https://www.pochta.ru'].entries()) {
+    'https://qr-choice.example.org', 'https://role-choice.example.org', 'https://www.pochta.ru',
+    'https://unknown-relying-party.example.net'].entries()) {
     await markStage(`site_${index}`);
     const tracking = index === 11;
-    const popupFlow = index >= 3 && index !== 6 && index !== 8 && !tracking,
+    const popupFlow = index >= 3 && index !== 6 && index !== 8 && index !== 12 && !tracking,
       sso = index !== 9 && index !== 10 && !tracking && index % 3 === 2,
       withTotp = index !== 10 && index % 3 === 1;
     // Exercise both same-page and popup entry from the public letter service.
     // Passport-first SSO also returns to the general account after
     // the exact callback, without making that portal an OAuth redirect URI.
-    const callbackOrigin = tracking || index >= 6 && index <= 8 ? 'https://passport.pochta.ru' : origin,
+    const callbackOrigin = index === 12 ? 'https://unlisted-login-broker.example.net'
+      : tracking || index >= 6 && index <= 8 ? 'https://passport.pochta.ru' : origin,
       returnOrigin = index === 8 ? 'https://pochta.ru' : callbackOrigin;
     const context = await owned.browser.newContext({ viewport: null, acceptDownloads: true });
     const callback = `${callbackOrigin}/callback?state=synthetic-state&code=synthetic-code`;
@@ -80,7 +82,7 @@ try {
     const workingForm = '<form id="work"><input name="arbitrary"><input type="file"><button>Сохранить</button></form><a href="/download" download>Скачать</a><script>document.querySelector("#work").onsubmit=e=>{e.preventDefault();document.body.dataset.saved=document.querySelector("input").value}</script>';
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
-      let body, headers = {};
+      let body, headers = {}, status = 200;
       if (url.origin === origin || url.origin === callbackOrigin || url.origin === returnOrigin) {
         if (url.pathname === '/download') return route.fulfill({ status: 200, headers: {
           'content-type': 'text/plain', 'content-disposition': 'attachment; filename=proof.txt' }, body: 'synthetic-download' });
@@ -92,9 +94,11 @@ try {
         } else if (url.pathname === '/callback') {
           headers['set-cookie'] = 'synthetic_session=active; Secure; Path=/';
           if (index === 10) personalRoleReturns++;
+          if (index === 12) status = 503;
           if (tracking) {
             // The ESIA return is a real intermediate document. Its delayed
-            // site-owned continuation must not complete the SDK too early.
+            // site-owned continuation belongs to the caller after ESIA has
+            // returned. The helper must detach before this new outer callback.
             body = `<p>Возврат в отслеживание</p><script>setTimeout(()=>location.replace(${JSON.stringify(postCallback)}),250)</script>`;
           } else if (index === 8) body = `<script>location.replace(${JSON.stringify(returnOrigin + '/account')})</script>`;
           else {
@@ -102,7 +106,7 @@ try {
             // closes itself. The SDK must retain the verified document return,
             // keep the original form, and never synthesize this message/click.
             body = popupFlow ? `<script>opener.postMessage('synthetic-authorized', ${JSON.stringify(origin)});window.close()</script>`
-              : '<h1>Кабинет</h1>' + workingForm;
+              : (index === 12 ? '<h1>Ошибка внешнего сайта</h1>' : '<h1>Кабинет</h1>') + workingForm;
           }
         } else if (index === 8 && url.origin === returnOrigin && url.pathname === '/account') {
           body = '<h1>Кабинет</h1>' + workingForm;
@@ -149,7 +153,7 @@ try {
         } else body = `<form><label>Телефон<input id="login" name="login"></label><label>Пароль<input id="password" name="password" type="password"></label><button>Войти</button></form><script>document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch('/login-post',{method:'POST',body:new URLSearchParams(new FormData(e.target))});location.href=${JSON.stringify(index === 10 ? 'https://roles.gosuslugi.ru/roles' : withTotp ? 'https://esia.gosuslugi.ru/totp' : callback)}};</script>`;
       } else if (url.origin === 'https://another-workflow.example.org') body = '<h1>Следующий шаг произвольного сценария</h1>';
       else return route.abort();
-      await route.fulfill({ status: 200, headers, contentType: 'text/html; charset=utf-8', body: '<!doctype html><meta charset="utf-8">' + body });
+      await route.fulfill({ status, headers, contentType: 'text/html; charset=utf-8', body: '<!doctype html><meta charset="utf-8">' + body });
     });
     const page = await context.newPage(); await page.goto(origin);
     const navigationEvidence = [], seenRequests = new WeakSet();
@@ -223,6 +227,8 @@ try {
     }
     const result = await current.authenticated;
     assert.equal(result.page, page); assert.equal(result.context, context); assert.equal(loginPosts, sso ? 0 : 1);
+    if (index === 12) assert.deepEqual(result.serviceResponse, { httpStatus: 503, httpOrigin: callbackOrigin },
+      'an unknown broker callback error is caller-owned, not an ESIA refusal');
     if (index === 10) {
       assert.equal(authorizer.roleSent, true, 'the official personal card is selected once');
       assert.equal(personalRoleReturns, 1, 'the role choice returns to the service once');
@@ -258,8 +264,9 @@ try {
     await context.close();
   }
   // Exercise actual Playwright main-document HTTP status propagation, including
-  // failure before any OAuth binding. No credentials, OS unlock or auth DOM
-  // enter this synthetic check; the helper must retain the caller context.
+  // failure before any OAuth binding. Only the ESIA response is a provider
+  // failure: the entry error stays caller-owned and the verified callback error
+  // hands back the context. No credentials, OS unlock or auth DOM are needed.
   for (const failureAt of ['entry', 'esia', 'callback']) {
     await markStage(`http_503_${failureAt}`);
     const context = await owned.browser.newContext();
@@ -281,14 +288,28 @@ try {
     const page = await context.newPage(); await page.goto(origin);
     current = await createEsiaAuthorization(page, { ...identity, configHome: config.root, origin, confirm: true });
     await page.goto(failureAt === 'entry' ? origin + '/unavailable' : auth.href);
-    await assert.rejects(current.authenticated, error => {
-      assert.equal(error.code, 'service_http_error');
-      assert.equal(error.httpStatus, 503);
-      assert.equal(error.httpOrigin, failureAt === 'esia' ? 'https://esia.gosuslugi.ru' : origin);
-      assert.ok(!JSON.stringify(error).includes('synthetic-state'));
-      assert.ok(!JSON.stringify(error).includes('synthetic-code'));
-      return true;
-    });
+    if (failureAt === 'esia') {
+      await assert.rejects(current.authenticated, error => {
+        assert.equal(error.code, 'service_http_error'); assert.equal(error.httpStatus, 503);
+        assert.equal(error.httpOrigin, 'https://esia.gosuslugi.ru');
+        assert.doesNotMatch(JSON.stringify(error), /synthetic-state|synthetic-code/); return true;
+      });
+    } else if (failureAt === 'entry') {
+      const result = await Promise.race([current.authenticated.then(() => 'completed', error => error.code),
+        new Promise(resolve => setTimeout(() => resolve('pending'), 50))]);
+      assert.equal(result, 'pending', 'a site error before OAuth is neither ESIA success nor ESIA refusal');
+    } else {
+      await page.getByRole('heading', { name: '503 Service Unavailable', exact: true }).waitFor();
+      const info = await current.request;
+      const authorization = await readAuthorization(config.root, identity, info.sessionId, info.requestId, origin, helper);
+      const authorizer = new EsiaAuthorizer({ identity, leaseId, guardPid: process.pid, authorization, authorizerControl },
+        { permit, onPhase: async () => {} });
+      await authorizer.claim(); assert.equal(authorizer.completed, true, 'a completed ESIA return needs no credentials');
+      const result = await current.authenticated;
+      assert.equal(result.page, page); assert.equal(result.context, context);
+      assert.deepEqual(result.serviceResponse, { httpStatus: 503, httpOrigin: origin });
+      await authorizer.close();
+    }
     assert.equal(page.isClosed(), false); assert.equal(page.context(), context);
     await current.close(); current = null;
     await context.close();

@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.3.17 объявляет signed host browser-session class
+Runtime 3.3.18 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -307,44 +307,35 @@ context; plaintext persistent profile, export cookies/storageState в файл �
 `serviceSessions` ciphertext не используется и не удаляется.
 
 `createEsiaAuthorization(page, { company, member, configHome, origin, confirm })`
-регистрируется до первого штатного входа на указанном HTTPS origin. Для
-`https://zakaznoe.pochta.ru` и `https://www.pochta.ru` подписанный клиент
-принимает наблюдённый ЕСИА callback на `https://passport.pochta.ru`; для
-остальных origin действует same-origin правило. Почта сначала создаёт
-собственную Post ID транзакцию: `passport.pochta.ru/oauth2/authorize` привязан
-к отдельному state и exact callback исходного кабинета –
-`zakaznoe.pochta.ru/oauth2/cb` для писем либо
-`www.pochta.ru/api/auth/callback` для отслеживания. Менять эти callback местами
-нельзя. Helper отслеживания создаётся на `www.pochta.ru` до login click;
-подключение уже на форме Passport теряет внешний state и не восстанавливается
-задним числом. Затем ЕСИА привязывается к своему callback на Passport.
-Вход подтверждается только после успешных HTTP ответов обоих callback и
-document commit внешнего callback либо его redirect chain. Промежуточная
-страница согласия Passport не заменяет этот commit; её штатное продолжение
-может начать новую навигацию. Post ID state сам
-по себе не является ответом ЕСИА. Это фиксированная карта внутри runtime, а не
-caller-supplied список разрешённых доменов. Redirect URI всё равно берётся
-только из наблюдённого запроса ЕСИА; callback сверяется с его exact origin,
-path, fixed query и state, а успешный ответ и document commit обязательны.
-Для обычного callback отказ передаётся фиксированным кодом
-`service_callback_rejected_target|method|fragment|state|query`: никакие URL,
-значения или операнды сравнения не раскрываются, условия принятия не меняются.
-После принятого callback собственный routing `state` на другом пути сервиса
-не считается повторным OAuth ответом в его exact HTTP redirect chain либо
-после уже проверенного document return.
-Требуются GET, отсутствие fragment/code/error/access_token/id_token и ровно один
-`state`; callback на исходном пути и новая навигация до проверенного return
-сохраняют полную проверку. Это не новый proof: успешный service document commit
-той же цепочки по-прежнему обязателен, доступ к credentials остаётся отозванным.
-При начале на `passport.pochta.ru` OAuth callback остаётся там; только
-связанная redirect chain после него может завершиться на `zakaznoe.pochta.ru`
-либо `pochta.ru/account` (`www.pochta.ru/account` после canonical redirect).
-Последний доказывает вход в общий кабинет Почты, но
-не подтверждает сессию электронных заказных писем. Вход в них должен проверить
-вызывающий сценарий в том же browser context.
-Без `confirm=true`
-нет browser inspection или native bootstrap. Разрешение проверяется в текущем
-разговоре; уже данное разрешение на этот сайт не запрашивается повторно.
+регистрируется на exact исходном HTTPS origin до первого штатного входа.
+Реальный запрос ЕСИА в этой Page либо новом direct popup определяет callback:
+любой внешний HTTPS origin без userinfo/нестандартного порта, exact path/fixed
+query и state. Нет provider-specific карты внешних callback/кабинетов или
+caller-supplied allowlist. Ни начало на другом broker origin, ни его outer
+OAuth/SSO не дают новой capability: допускается только один наблюдённый ESIA
+request в exact связанном окне. Credentials всё равно вводятся только на
+официальных ESIA origins под прежним native permit.
+
+Callback code/state/fixed query, GET, отсутствие fragment/token payload,
+дубликатов и replay проверяются до первого return proof. Отказ возвращается
+фиксированным `service_callback_rejected_target|method|fragment|state|query`,
+без URL/значений. После принятого callback сайт может выдать собственные
+параметры и токены на другом пути/origin в exact HTTP redirect chain.
+Связь сохраняется по Request object ancestry, а не по URL или token name.
+Новая несвязанная навигация до commit не заменяет callback. Внешний HTTPS
+document commit именно этого callback/chain завершает ответственность helper-а:
+listeners немедленно отключаются, credentials уже отозваны. В буферизованном
+popup batch наблюдение также останавливается на первом verified return.
+Дальнейшая авторизация, routing, данные, ошибки и кабинет сайта – у caller.
+`authenticated` возвращает те же context/page и `serviceResponse` только с
+`httpStatus`/`httpOrigin` committed документа; raw URL/query/fragment отсутствуют.
+Даже HTTP 401/403/500/503 на внешнем callback не превращает verified ответ
+ЕСИА в provider refusal. Ошибка документа ЕСИА/официального role chooser
+остаётся `service_http_error`. Helper не доказывает обмен code внешним сайтом,
+готовность кабинета или успех бизнес-действия; это проверяет вызывающий агент.
+
+Без `confirm=true` нет browser inspection или native bootstrap. Разрешение
+проверяется в текущем разговоре; уже данное на этот сайт не спрашивается повторно.
 Подача, подпись, платёж и consent не включаются в разрешение на вход.
 
 Клиент наблюдает main-frame запросы/ответы и document commit в исходной странице
@@ -354,9 +345,11 @@ Context listeners устанавливаются до клика: событие
 frame/page удерживается в bounded RAM queue до доказанной связи того же
 Request; сопоставления по похожему URL нет. Opener проверяется до публикации
 capability, а request/response/commit/close сохраняют свой порядок.
+Пустой URL/about:blank при создании popup не является document proof: ранний
+placeholder игнорируется до фактического HTTP document commit, без URL parse failure.
 Клиент не маршрутизирует, не блокирует и не исполняет произвольный
-сайтовый код. Exact redirect origin/path/fixed query, state, client identity,
-HTTP результат и отсутствие replay проверяются прежним transaction contract.
+сайтовый код. Exact redirect origin/path/fixed query, state, client identity и отсутствие
+replay проверяются transaction contract; внешние HTTP ответы остаются у caller.
 Existing/`noopener`/вложенный popup не получает credentials; второй auth popup
 или новая transaction прерывают помощник без переноса ввода. Только
 после реального bound request создаётся одноразовый owner-only descriptor
@@ -428,7 +421,7 @@ page }`. Callback request немедленно прекращает auth input; 
 и document commit authorizer ждёт без нового ввода и не сообщает готовый возврат.
 В popup-режиме сохраняется proof document commit точного callback request
 либо его серверной redirect chain в том же окне. Самозакрытие после такого
-возврата сохраняет proof; закрытие до него, HTTP error, чужая страница и
+возврата сохраняет proof; закрытие до него, ошибка ЕСИА, несвязанный document и
 `postMessage` без callback не означают успех. Последний символ TOTP может
 успеть закрыть окно до подтверждения Playwright: отправленная операция не
 повторяется, authorizer только ждёт проверенный результат. Проверка отзыва
@@ -437,8 +430,8 @@ page }`. Callback request немедленно прекращает auth input; 
 `roles.gosuslugi.ru` до document commit сервиса, private authorizer ждёт
 видимый заголовок «Войти как» и единственную ограниченную карточку физлица.
 Её выбор – отдельная одноразовая операция после отзыва доступа к паролю и
-коду; неоднозначная карточка остаётся ручным шагом. Успех требует нового
-успешного HTTP-ответа и document commit на разрешённом origin сервиса в той же
+коду; неоднозначная карточка остаётся ручным шагом. Возврат требует нового
+внешнего HTTP-ответа и document commit после exact выбора роли в той же
 связанной вкладке. Сам экран роли, клик и произвольная навигация на сервис не
 доказывают вход.
 Исходный caller page и выбранные файлы не пересоздаются и не перезагружаются.
@@ -660,7 +653,7 @@ manifest сами по себе не меняют live current catalog. Не в�
 
 ## Безопасная диагностика HTTP-ошибок
 
-`service_http_error` сохраняет `httpStatus` (целое 400–599) и `httpOrigin`
+Для документов ЕСИА/официального role chooser `service_http_error` сохраняет `httpStatus` (целое 400–599) и `httpOrigin`
 (только canonical HTTPS origin) наблюдённого main-frame ответа. Путь, query,
 OAuth code/state, headers, сетевое тело и auth DOM не входят в ошибку. Metadata
 проверяется заново на каждом private HTTP/CLI и межпроцессном переходе. Первый

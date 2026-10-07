@@ -25,10 +25,13 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 trusted source и сохраняться в закрытом статусе; provider text не задаёт её URL.
 Нормальный cleanup и аварийный выход используют одну bounded projection receipt.
 Причину отказа callback уточняй фиксированным кодом, без OAuth URL/параметров.
-Routing state после принятого callback не заменяет OAuth state: продолжение
-принимается по exact HTTP request chain либо после уже проверенного document
-return, без нового code/error/token.
-Успешный document commit и запрет повторного credential input сохраняются.
+Делегированный helper реализует только ЕСИА: callback берётся из реального
+request без карты внешних сайтов. После exact callback/state и внешнего
+HTTP document commit он сразу отключает observation и возвращает те же
+context/page. Request ancestry связывает redirect-параметры/токены сайта;
+ошибки внешнего HTTP идут caller-у отдельно и не означают отказ ЕСИА.
+Готовность кабинета проверяет вызывающий сценарий. Доступ к credentials
+отзывается на callback, повтор transaction не разрешается.
 Тесты Markdown-контрактов сравнивают смысл после нормализации LF/CRLF:
 переводы строк checkout не меняют инструкции и не должны ломать Windows gate.
 При правке Python CLI проверяй кодировку настоящих stdout/stderr pipes:

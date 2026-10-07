@@ -22,25 +22,24 @@
    request IDs, origin, expiresAt и готовый массив CLI arguments. Агент передаёт
    `arguments` тому же verified runtime, не запускает repository source и
    не подменяет identity. Во время этого вызова браузерный процесс остаётся живым.
-5. `await login.authenticated` возвращает исходные объекты после проверенного
-   callback и document commit сервиса. Если принятый callback открыл в связанном
-   окне официальный экран «Войти как», runtime один раз выбирает единственную
-   карточку физлица и ждёт возврата в сервис; экран роли сам по себе не означает
-   успех. Для `https://zakaznoe.pochta.ru` подписанный клиент также принимает
-   exact callback `https://passport.pochta.ru`; вход всё равно начинается на
-   `zakaznoe.pochta.ru`. Если вход начинается на `passport.pochta.ru`, проверенный
-   возврат может открыть `pochta.ru/account` или `www.pochta.ru/account`; это не доказывает готовность
-   кабинета заказных писем. Сценарий проверяет его отдельно и продолжает код.
-   Fast SSO с прежними cookies завершается до чтения vault/OS key и не требует
-   новых credentials. Сам callback не равен готовности кабинета.
+5. `await login.authenticated` возвращает `{ context, page, serviceResponse }`
+   после точного callback/state и document commit внешнего ответа либо его
+   наблюдённой HTTP redirect chain. Это возврат из ЕСИА, а не проверка кабинета.
+   `serviceResponse` содержит только `httpStatus`/`httpOrigin`; HTTP-ошибка
+   внешнего callback/сайта не является отказом ЕСИА. Агент отдельно разбирает
+   её и проверяет результат нужного сайта. Если возврат ещё ведёт на официальный
+   экран «Войти как», runtime один раз выбирает единственную карточку физлица
+   и ждёт внешнего document commit. Fast SSO до чтения vault/OS key не требует
+   новых credentials.
 
-Для отслеживания Почты helper создаётся на `https://www.pochta.ru` **до первого
-клика «Войти»**, с этим же `origin`. Он должен наблюдать внешний Post ID request
-и его exact callback `https://www.pochta.ru/api/auth/callback`, затем отдельную
-ЕСИА-транзакцию на Passport. Создание helper-а после перехода на форму Passport
-теряет внешнюю привязку и приводит к `service_callback_rejected`. Не исправляй
-это отключением state checks. Если первая transaction уже утрачена, начни новую
-штатную попытку в том же context с helper-ом, подключённым вовремя.
+Callback берётся из реального запроса ЕСИА в exact странице или её новом direct
+popup. Он может находиться на отдельном HTTPS broker origin; никакого каталога
+внешних сайтов и callback-путей нет. Хост/path/fixed query и state этого callback
+проверяются точно. Helper создаётся **до первого login click**, а не после
+перехода на broker; утраченная transaction не восстанавливается задним числом.
+После verified external document return listeners сразу отключаются. Дальнейшие
+outer OAuth/SSO, JS-переходы, токены, ошибки и закрытие popup принадлежат вызывающему
+сценарию и не отзывают завершённый ответ ЕСИА. Доступ к credentials уже закрыт.
 
 Используй обычный живой процесс Node.js для модуля клиента. В Codex VM
 `node_repl` успешный `import()` ещё не доказывает работоспособность: вызов
@@ -54,7 +53,7 @@ Popup поддерживается тем же вызовом, без новог
 Помощник заранее слушает context и связывает первый реальный OAuth request
 с новым direct popup. Исходные форма и выбранные файлы остаются в первой
 странице. Callback может штатно отправить `postMessage` и закрыть popup:
-успех требует exact callback/state, успешного HTTP ответа и document commit
+возврат требует exact callback/state, наблюдённого HTTP ответа и document commit
 именно в связанном окне. Одни сообщение или закрытие окна не доказывают вход.
 Сценарий проверяет кабинет/номер обращения на исходной странице самостоятельно.
 Помощник не отправляет сообщения окну, не повторяет login click/submit и не
@@ -135,10 +134,12 @@ resume не возвращается к собственному порталу 
 Для обычного OAuth callback коды `service_callback_rejected_target|method|fragment|state|query`
 называют точный нарушенный invariant, не раскрывая URL, параметры либо значения
 сравнения. Ни один из них не разрешает ослабить привязку или считать вход пройденным.
-Собственный routing `state` на другом пути после принятого callback допустим
-в его наблюдённой HTTP redirect chain либо после уже проверенного document
-return, без OAuth code/error/tokens, fragment и POST. Такой переход не заменяет
-исходный callback/state или успешный document commit. Новая несвязанная навигация proof не создаёт.
+После принятого callback внешняя HTTP redirect chain может содержать собственные
+параметры/токены сайта и перейти на другой HTTPS origin. Привязка строится по
+exact Request objects, а не по списку token names, похожему URL или бренду сайта.
+Новая несвязанная навигация до document return не создаёт proof. Исходный callback
+по-прежнему требует exact path/fixed query/state и не допускает replay, fragment,
+дубликаты code/state либо token payload вместо ответа ЕСИА.
 
 При `account_temporarily_blocked` пароль, TOTP и смена метода входа остановлены.
 Ограничение может касаться внешнего ЕСИА-входа при работающем портале Госуслуг.
@@ -182,28 +183,15 @@ failure или готовность собственного портала не
   по соответствующему запросу; не собирай пароль через сценарий/чат. Повреждённый
   vault и transport failure не разрешают повторную настройку.
 - Helper поддерживает same-page и новый direct-popup OAuth code flow с exact
-  callback/state. По умолчанию callback остаётся на исходном origin. Только для
-  `zakaznoe.pochta.ru` и `www.pochta.ru` signed runtime допускает наблюдённый callback на
-  `passport.pochta.ru`; origin проверяются как точные HTTPS-хосты. Почта
-  сначала проводит отдельную Post ID транзакцию через
-  `passport.pochta.ru/oauth2/authorize` и `zakaznoe.pochta.ru/oauth2/cb`;
-  для tracking внешний callback – `www.pochta.ru/api/auth/callback`.
-  Её state проверяется отдельно от ЕСИА. Требуются оба успешных callback и
-  commit внешнего возврата; промежуточная страница Passport этого не доказывает.
-  После callback связанная redirect chain может закончиться на `pochta.ru`
-  либо `www.pochta.ru`:
-  это только proof завершения входа, не proof входа в сервис писем. Уже
-  открытое до helper-а окно, `noopener`, вложенный popup, второй auth popup,
-  form-post callback или иной callback origin не принимаются автоматически и
-  требуют отдельного разбора.
-  Старую начатую transaction нельзя восстановить новым helper-ом: он должен
-  наблюдать её с первого request. Не пересоздавай форму ради такого восстановления.
-  Не считай timeout доказательством неуспеха сайта и не повторяй его подачу.
-- `service_http_error` содержит `httpStatus` (400–599) и `httpOrigin` из
-  наблюдённого main-frame ответа, включая 503 до OAuth, на ЕСИА и callback.
-  Только status/origin разрешено перенести в результат; path/query/code/state,
-  headers, тело и auth DOM остаются приватными. Код не доказывает неверные
-  credentials или технические работы и не разрешает автоматический повтор входа.
+  HTTPS callback/state из наблюдённого запроса, включая отдельный broker origin.
+  Дальнейший protocol внешнего сайта не реализуется внутри Госуслуг. Уже открытое
+  до helper-а окно, `noopener`, вложенный/второй popup или form-post ESIA callback
+  не принимаются автоматически; причина требует отдельного разбора.
+- `service_http_error` содержит `httpStatus` (400–599) и `httpOrigin` из ошибки
+  документа ЕСИА/официального role chooser. Path/query/code/state, headers, тело
+  и auth DOM остаются приватными. HTTP-ответ внешнего документа после verified
+  ESIA callback возвращается отдельно через `serviceResponse`, включая ошибки;
+  он не разрешает повторный вход или повтор внешней подачи.
 - `.request` и `.authenticated` отклоняются при cancellation/expiry/ошибке;
   обрабатывай их через `try/finally`. Runtime не повторяет credential submit
   после неизвестного результата. Crash клиента может оставить просроченную
