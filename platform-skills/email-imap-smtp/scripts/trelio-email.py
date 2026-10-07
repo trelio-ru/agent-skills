@@ -140,6 +140,97 @@ class MailboxError(RuntimeError):
     """Expected configuration, protocol, or user-input error."""
 
 
+class SmtpFailure(MailboxError):
+    """Bounded protocol facts safe for the native worker/result boundary.
+
+    SMTP replies can echo credentials, recipients, message content or a URL.
+    A fixed reason projection preserves useful evidence without turning raw
+    provider text into the agent's instructions or a diagnostic log.
+    """
+
+    def __init__(self, details: dict[str, Any]):
+        self.details = details
+        super().__init__(
+            f"SMTP {details['outcome']} at {details['stage']}: {details['reasonCode']}"
+            + (f"; status {details['smtpCode']}" if details.get("smtpCode") else "")
+            + (f"; enhanced status {details['enhancedStatusCode']}" if details.get("enhancedStatusCode") else "")
+            + (f"; Message-ID: {details['messageId']}" if details.get("messageId") else "")
+            + ". Do not retry automatically."
+        )
+
+
+def error_payload(error: Exception) -> dict[str, Any]:
+    """Keep direct CLI and native worker failure projections identical."""
+    result = {"ok": False, "error": str(error)}
+    if isinstance(error, SmtpFailure):
+        result["smtp"] = error.details
+    return result
+
+
+def smtp_failure(error: Exception, *, stage: str, transaction_started: bool = False) -> SmtpFailure:
+    code = getattr(error, "smtp_code", None)
+    code = code if type(code) is int and 400 <= code <= 599 else None
+    raw = getattr(error, "smtp_error", b"")
+    # Classify only a bounded prefix. Unknown response text is omitted, not
+    # passed through a blacklist that could miss secrets or quoted mail bytes.
+    response = raw[:1024].decode("ascii", errors="replace") if isinstance(raw, bytes) else ""
+    match = re.match(r"\s*([45]\.\d{1,3}\.\d{1,3})(?:\s|$)", response)
+    enhanced = match.group(1) if match and code and match[1][0] == str(code)[0] else None
+    reason = "server_rejected" if code else "transport_failure"
+    if code:
+        # A fixed hint is not proof of the provider's underlying policy. No
+        # address, URL, opaque ID or arbitrary word is copied into the result.
+        for pattern, label in (
+            (r"\b(spam|unsolicited)\b", "spam_policy"),
+            (r"\b(virus|malware|infected)\b", "malware_policy"),
+            (r"\b(too (?:large|big)|size (?:limit|exceeded)|message size exceeds)\b", "message_size_limit"),
+            (r"\b(quota|mailbox full)\b", "mailbox_quota"),
+            (r"\b(rate limit|too many messages)\b", "rate_limit"),
+            (r"\b(mime|content.transfer.encoding|malformed message)\b", "message_format"),
+        ):
+            if re.search(pattern, response, re.IGNORECASE):
+                reason = label
+                break
+        else:
+            if enhanced:
+                reason = {"1": "address_status", "2": "mailbox_status", "3": "mail_system_status",
+                          "4": "routing_status", "5": "protocol_status", "6": "message_content_status",
+                          "7": "security_policy_status"}.get(enhanced.split(".")[1], reason)
+    if isinstance(error, smtplib.SMTPDataError):
+        stage = "data"
+    elif isinstance(error, smtplib.SMTPSenderRefused):
+        stage = "mail_from"
+    elif isinstance(error, smtplib.SMTPRecipientsRefused):
+        stage, reason = "rcpt_to", "all_recipients_refused"
+    elif isinstance(error, smtplib.SMTPNotSupportedError):
+        reason = "extension_not_supported"
+    elif isinstance(error, UnicodeError):
+        reason = "invalid_encoding"
+    # A negative SMTP response proves rejection; a connection loss during
+    # sendmail does not. Missing Sent copies must never supply that proof.
+    rejected = code is not None or isinstance(error, smtplib.SMTPRecipientsRefused)
+    outcome = "rejected" if rejected else "unknown" if transaction_started else "not_attempted"
+    details = {
+        "stage": stage, "outcome": outcome, "smtpCode": code,
+        "enhancedStatusCode": enhanced, "reasonCode": reason,
+        "reasonSource": "safe_response_classification" if code else "exception_category",
+        "responseTextOmitted": True, "temporary": code // 100 == 4 if code else None,
+        "automaticRetryAllowed": False,
+    }
+    if isinstance(error, smtplib.SMTPRecipientsRefused):
+        details["recipientResponses"] = smtp_recipient_responses(error.recipients)
+    return SmtpFailure(details)
+
+
+def smtp_recipient_responses(refused: dict) -> dict[str, Any]:
+    """Summarize RCPT refusals without copying recipient keys or reply text."""
+    responses = []
+    for code, response in list(refused.values())[:20]:
+        details = smtp_failure(smtplib.SMTPResponseException(code, response), stage="rcpt_to").details
+        responses.append({key: details[key] for key in ("smtpCode", "enhancedStatusCode", "reasonCode", "temporary")})
+    return {"count": len(refused), "truncated": len(refused) > 20, "responses": responses}
+
+
 class ProtectedPromptUnavailable(MailboxError):
     """Protected browser prompt cannot be shown in the current environment."""
 
@@ -1364,27 +1455,29 @@ def imap_connection(account: Account) -> imaplib.IMAP4_SSL:
 def smtp_connection(account: Account) -> smtplib.SMTP:
     password = load_password(account)
     context = ssl.create_default_context()
+    stage = "connection"
+    client = None
     try:
         if account.smtp_security == "ssl":
             client: smtplib.SMTP = smtplib.SMTP_SSL(account.smtp_host, account.smtp_port, context=context, timeout=30)
         else:
             client = smtplib.SMTP(account.smtp_host, account.smtp_port, timeout=30)
+            stage = "tls"
             client.ehlo()
             client.starttls(context=context)
             client.ehlo()
-        try:
-            client.login(account.username, password)
-        except (OSError, UnicodeError, smtplib.SMTPException) as error:
-            category = "transport" if isinstance(error, OSError) else "authentication"
-            # SMTPException subclasses OSError, so protocol errors must retain
-            # their actual protocol classification rather than imply a timeout.
-            if isinstance(error, smtplib.SMTPException):
-                category = "authentication"
-            status = f", status {error.smtp_code}" if isinstance(error, smtplib.SMTPResponseException) else ""
-            raise MailboxError(f"SMTP {category} failed ({type(error).__name__}{status}).") from None
+        stage = "authentication"
+        client.login(account.username, password)
         return client
-    except (OSError, smtplib.SMTPException) as error:
-        raise MailboxError(f"SMTP connection failed: {error}") from error
+    except (OSError, UnicodeError, smtplib.SMTPException) as error:
+        # Failed setup never enters the caller's context manager. Close the
+        # socket here without another protocol command or raw cleanup error.
+        if client is not None:
+            try:
+                client.close()
+            except OSError:
+                pass
+        raise smtp_failure(error, stage=stage) from None
 
 
 def validate_folder_name(folder: str) -> str:
@@ -1663,7 +1756,8 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
     with smtp_connection(account) as smtp_client:
         smtp_code, _ = smtp_client.noop()
         smtp_ok = 200 <= smtp_code < 400
-    return {"account": account.name, "imap": imap_ok, "smtp": smtp_ok}
+    return {"account": account.name, "imap": imap_ok, "smtp": smtp_ok,
+            "smtpChecks": ["connection", "authentication", "noop"], "messageAcceptanceChecked": False}
 
 
 def command_folders(args: argparse.Namespace) -> dict[str, Any]:
@@ -2070,6 +2164,13 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
             raise MailboxError(f"Attachment does not exist: {attachment_path}")
         mime_type, _ = mimetypes.guess_type(attachment_path.name)
         major_type, minor_type = (mime_type or "application/octet-stream").split("/", 1)
+        # add_attachment(bytes) uses base64. RFC 2046 forbids it on
+        # message/rfc822 and multipart containers. Treat these source files as
+        # opaque downloads: their .eml filename and exact bytes are preserved,
+        # including signatures/nested MIME; parsing and regenerating them here
+        # would silently rewrite the original evidence.
+        if attachment_path.suffix.lower() == ".eml" or major_type in {"message", "multipart"}:
+            major_type, minor_type = "application", "octet-stream"
         message.add_attachment(
             attachment_path.read_bytes(),
             maintype=major_type,
@@ -2079,28 +2180,46 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
     recipients = to_addresses + cc_addresses + bcc_addresses
     smtp_accepted = False
     smtp_cleanup_warning = False
+    send_failure = None
+    wire_message = None
+    stage = "connection"
+    transaction_started = False
     try:
         with smtp_connection(account) as client:
             # Match send_message's SMTPUTF8 behavior, but serialize exactly
             # once: multipart boundaries, line endings and Bcc omission must
             # be identical in SMTP DATA and the IMAP copy.
-            international = not all(address.isascii() for address in [account.email_address, *recipients])
-            client.ehlo_or_helo_if_needed()
-            if international and not client.has_extn("smtputf8"):
-                raise smtplib.SMTPNotSupportedError("SMTPUTF8 is required for these addresses.")
-            wire_message = message.as_bytes(policy=default.clone(linesep="\r\n", utf8=international))
-            mail_options = ("SMTPUTF8", "BODY=8BITMIME") if international else ()
-            refused = client.sendmail(account.email_address, recipients, wire_message, mail_options=mail_options)
-            smtp_accepted = True
-    except (OSError, smtplib.SMTPException) as error:
-        if not smtp_accepted:
-            raise MailboxError(
-                f"SMTP send failed or its result is ambiguous ({type(error).__name__}); "
-                f"Message-ID: {message_id}. Do not retry automatically."
-            ) from error
+            try:
+                stage = "preflight"
+                international = not all(address.isascii() for address in [account.email_address, *recipients])
+                client.ehlo_or_helo_if_needed()
+                if international and not client.has_extn("smtputf8"):
+                    raise smtplib.SMTPNotSupportedError("SMTPUTF8 is required for these addresses.")
+                # A 7-bit body encoding also supports servers without
+                # 8BITMIME; SMTPUTF8 remains necessary for an international
+                # envelope. Serialize once for both DATA and the Sent copy.
+                wire_message = message.as_bytes(policy=default.clone(linesep="\r\n", utf8=international, cte_type="7bit"))
+                mail_options = ("SMTPUTF8", "BODY=8BITMIME") if international else ()
+                stage = "send"
+                transaction_started = True
+                refused = client.sendmail(account.email_address, recipients, wire_message, mail_options=mail_options)
+                smtp_accepted = True
+            except (OSError, UnicodeError, smtplib.SMTPException) as error:
+                # Retain the primary failure before __exit__ sends QUIT. A
+                # second error there must not mask a proven DATA rejection.
+                send_failure = smtp_failure(error, stage=stage, transaction_started=transaction_started)
+    except SmtpFailure as error:
+        send_failure = error
+    except (OSError, UnicodeError, smtplib.SMTPException) as error:
+        if not smtp_accepted and send_failure is None:
+            send_failure = smtp_failure(error, stage=stage, transaction_started=transaction_started)
         # A failed QUIT cannot undo the successful final DATA response. Keep
         # that evidence and still save the already accepted message in Sent.
         smtp_cleanup_warning = True
+    if send_failure is not None:
+        raise SmtpFailure({**send_failure.details, "messageId": message_id,
+                           "wireBytes": len(wire_message) if wire_message is not None else None,
+                           "attachmentCount": len(args.attach)}) from None
     accepted_recipients = [address for address in recipients if address not in refused]
     sent_copy = save_sent_copy(account, wire_message, message_id, sent_at) if accepted_recipients else {
         "saved": False, "verified": False, "status": "not_sent", "appendAttempted": False,
@@ -2110,6 +2229,8 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
         "sent": not bool(refused),
         "smtpStatus": "accepted" if not refused else "partially_accepted" if accepted_recipients else "not_sent",
         "smtpCleanupWarning": smtp_cleanup_warning,
+        "wireBytes": len(wire_message),
+        "attachmentCount": len(args.attach),
         "messageId": message_id,
         "date": str(message["Date"]),
         "sentCopy": sent_copy,
@@ -2120,6 +2241,7 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
         "subject": args.subject,
         "policyMode": policy_mode,
         "refusedRecipients": sorted(refused),
+        "recipientResponses": smtp_recipient_responses(refused),
         "retryPolicy": "Never repeat SMTP sending because Sent-copy storage or verification failed. Do not retry ambiguous SMTP or APPEND mutations automatically.",
     }
 
@@ -2281,7 +2403,7 @@ def main(*, _owned: bool = False) -> int:
                 raise MailboxError(str(error)) from None
         result = args.handler(args)
     except (MailboxError, OSError, UnicodeError, ValueError, imaplib.IMAP4.error) as error:
-        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps(error_payload(error), ensure_ascii=False), file=sys.stderr)
         return 2
     print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
     return 0
