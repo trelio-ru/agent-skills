@@ -46,7 +46,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "45";
+const ADAPTER_VERSION = "46";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 // A cold worker must launch Chrome, hydrate home and then resolve the exact
@@ -1825,8 +1825,15 @@ const inspectDirectChatHistorySurface = (page) => page.evaluate(() => {
     return rect.width > 0 && rect.height > 0 && style.display !== "none"
       && style.visibility !== "hidden";
   };
-  const histories = main && Array.from(main.querySelectorAll('[class~="history"]')).filter(visible);
-  const history = histories?.length === 1 ? histories[0] : null;
+  const histories = main ? Array.from(main.querySelectorAll('[class~="history"]')).filter(visible) : [];
+  // MAX's openedChat has its own .history shell around the actual history
+  // component. Two nested containers therefore describe one conversation,
+  // not two candidates. Select the one visible leaf; separate visible leaves
+  // (for example a search/pins surface) still make the empty state ambiguous.
+  // Do not choose the first/last node: DOM order cannot establish identity.
+  const leaves = histories.filter((candidate) => !histories.some((other) =>
+    other !== candidate && candidate.contains(other)));
+  const history = leaves.length === 1 ? leaves[0] : null;
   const profile = main && Array.from(main.querySelectorAll('button, [role="button"]'))
     .find((node) => visible(node) && /^Открыть профиль\s+/iu.test(node.getAttribute("aria-label") || ""));
   const composer = history && Array.from(history.querySelectorAll(
@@ -1840,9 +1847,12 @@ const inspectDirectChatHistorySurface = (page) => page.evaluate(() => {
     .some((node) => visible(node) && Array.from(node.querySelectorAll("span, p, h1, h2, h3, div"))
       .some((label) => visible(label) && ["сообщений пока нет", "no messages yet"]
         .includes((label.textContent || "").replace(/\s+/gu, " ").trim().toLowerCase())));
-  const loading = history && (history.getAttribute("aria-busy") === "true" || Array.from(history.querySelectorAll(
-    '[class~="loader"], [class~="spinner"], [role="progressbar"], [aria-busy="true"]',
-  )).some(visible));
+  // Hydration can be declared by the outer openedChat shell as well. Selecting
+  // its inner history must not hide a busy ancestor or a loader beside it.
+  const loading = history && histories.filter((candidate) => candidate === history || candidate.contains(history))
+    .some((candidate) => candidate.getAttribute("aria-busy") === "true" || Array.from(candidate.querySelectorAll(
+      '[class~="loader"], [class~="spinner"], [role="progressbar"], [aria-busy="true"]',
+    )).some(visible));
   // Count structural messages even if their text/geometry cannot be parsed.
   // A changed selector or an unrendered attachment must not become empty history.
   const messageNodes = main ? Array.from(main.querySelectorAll(

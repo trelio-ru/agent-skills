@@ -72,6 +72,26 @@ test("MAX waits the bounded empty window and prefers messages hydrated during it
   assert.ok(Date.now() - start >= 30);
 });
 
+test("MAX recognizes one nested openedChat history but rejects independent histories and busy shells", async () => {
+  // The public provider wraps the history component in openedChat > .history;
+  // model both containers rather than flattening the real routed surface.
+  const nested = shell().replace('<div class="history">', '<div class="openedChat"><div class="history"><div class="history">')
+    .replace('</main>', '</div></div></main>');
+  const result = await readChatMessages(pageFor(nested), options);
+  assert.equal(result.emptyState, "direct-chat-empty");
+  assert.deepEqual(result.messages, []);
+  assert.equal(result.chatReference.url, opened.url);
+
+  for (const html of [
+    nested.replace('class="openedChat"><div class="history"', 'class="openedChat"><div class="history" aria-busy="true"'),
+    nested.replace('</main>', '<div class="history">' + emptyHistory + '<textarea></textarea></div></main>'),
+    nested.replace('<div class="openedChat"><div class="history">', '<div class="openedChat"><div class="history"><div class="loader"></div>'),
+  ]) {
+    await assert.rejects(() => waitForDirectChatHistory(pageFor(html), opened, options),
+      (error) => error.code === "MAX_UI_UNSUPPORTED" && error.details.finalMutationActionStarted === false);
+  }
+});
+
 test("MAX fails closed for shells, loading, blocked state and conflicting message nodes", async () => {
   const fixtures = [
     shell(""),
