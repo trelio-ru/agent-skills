@@ -46,7 +46,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "43";
+const ADAPTER_VERSION = "44";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 // A cold worker must launch Chrome, hydrate home and then resolve the exact
@@ -1797,6 +1797,84 @@ const waitForFavoritesHistory = async (page, timeoutMs) => {
   throw new Error(
     `MAX Favorites history did not reach a verifiable loaded or empty state. Safe structural state: ${safeState}. The runtime failed closed; do not retry automatically.`,
   );
+};
+
+const inspectDirectChatHistorySurface = (page) => page.evaluate(() => {
+  const main = document.querySelector("main");
+  const visible = (node) => {
+    if (!node) return false;
+    const rect = node.getBoundingClientRect();
+    const style = window.getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 && style.display !== "none"
+      && style.visibility !== "hidden";
+  };
+  const histories = main && Array.from(main.querySelectorAll('[class~="history"]')).filter(visible);
+  const history = histories?.length === 1 ? histories[0] : null;
+  const profile = main && Array.from(main.querySelectorAll('button, [role="button"]'))
+    .find((node) => visible(node) && /^Открыть профиль\s+/iu.test(node.getAttribute("aria-label") || ""));
+  const composer = history && Array.from(history.querySelectorAll(
+    'textarea, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]',
+  )).find(visible);
+  // MAX's ordinary history renders .emptyHistory when lastMessageId is absent
+  // and the pending queue is empty. The same class is used for blocked chats,
+  // scheduled messages and pins, so require the direct-dialog placeholder in
+  // the one visible conversation history, never a phrase anywhere on the page.
+  const empty = history && Array.from(history.querySelectorAll('[class~="emptyHistory"]'))
+    .some((node) => visible(node) && Array.from(node.querySelectorAll("span, p, h1, h2, h3, div"))
+      .some((label) => visible(label) && ["сообщений пока нет", "no messages yet"]
+        .includes((label.textContent || "").replace(/\s+/gu, " ").trim().toLowerCase())));
+  const loading = history && (history.getAttribute("aria-busy") === "true" || Array.from(history.querySelectorAll(
+    '[class~="loader"], [class~="spinner"], [role="progressbar"], [aria-busy="true"]',
+  )).some(visible));
+  // Count structural messages even if their text/geometry cannot be parsed.
+  // A changed selector or an unrendered attachment must not become empty history.
+  const messageNodes = main ? Array.from(main.querySelectorAll(
+    '[class~="messageWrapper"], [data-message-id], [class~="message"]',
+  )).filter((node) => !node.classList.contains("messageWrapper--control")) : [];
+  return {
+    directRoute: /^\/(?:[1-9]\d*|u\/[A-Za-z0-9_-]+)\/?$/u.test(window.location.pathname),
+    headerVisible: Boolean(profile),
+    historyVisible: Boolean(history),
+    composerVisible: Boolean(composer),
+    emptyPlaceholderVisible: Boolean(empty),
+    loading: Boolean(loading),
+    messageNodeCount: messageNodes.length,
+  };
+});
+
+const waitForDirectChatHistory = async (page, opened, options) => {
+  const expectedUrl = normalizeChatUrl(opened.url);
+  const deadline = Date.now() + Math.min(options.timeoutMs, MAX_UI_READY_TIMEOUT_MS);
+  let state;
+  for (;;) {
+    assertDocumentAvailable(page);
+    // Identity is rechecked throughout hydration, including the final empty
+    // decision. A phone lookup, saved locator or matching title alone proves
+    // neither an empty conversation nor permission to select another person.
+    let sameChat = false;
+    try { sameChat = normalizeChatUrl(page.url()) === expectedUrl; } catch { /* Home is not a chat. */ }
+    if (!sameChat) throw new MaxRuntimeError("MAX_CHAT_IDENTITY_UNVERIFIED",
+      "MAX changed the requested chat while loading history. No message action was started.",
+      { reason: "history-chat-changed", finalMutationActionStarted: false });
+    state = await inspectDirectChatHistorySurface(page);
+    const hasMessages = (await visibleMessages(page, 1)).length > 0;
+    try { sameChat = normalizeChatUrl(page.url()) === expectedUrl; } catch { sameChat = false; }
+    if (!sameChat) throw new MaxRuntimeError("MAX_CHAT_IDENTITY_UNVERIFIED",
+      "MAX changed the requested chat while loading history. No message action was started.",
+      { reason: "history-chat-changed", finalMutationActionStarted: false });
+    if (hasMessages) return null;
+    if (Date.now() >= deadline) break;
+    await page.waitForTimeout(Math.min(250, Math.max(1, deadline - Date.now())));
+  }
+  // Wait the full bounded hydration window even when the placeholder is
+  // already painted. Ordinary messages arriving during that window take
+  // precedence over the early empty frame; composer-only shells fail closed.
+  if (state.directRoute && state.headerVisible && state.historyVisible
+    && state.composerVisible && state.emptyPlaceholderVisible && !state.loading
+    && state.messageNodeCount === 0) return "direct-chat-empty";
+  throw new MaxRuntimeError("MAX_UI_UNSUPPORTED",
+    "MAX message history did not expose recognized messages or a verified empty direct dialog. Keep the dedicated profile.",
+    { reason: "history-empty-unverified", ...state, finalMutationActionStarted: false });
 };
 
 const collectDialogResults = (page, query = "", unreadOnly = false) => page.evaluate(({ needle, onlyUnread }) => {
@@ -4505,20 +4583,29 @@ const markReadAfterVerifiedReply = async (page, options, readGuard) => {
 const readChatMessages = async (page, options) => {
   const opened = await openChat(page, options);
   const loadedPages = await loadHistoryPages(page, options.pages, options.timeoutMs);
-  const messages = await visibleMessages(page, options.limit);
+  let messages = await visibleMessages(page, options.limit);
+  let emptyState = opened.emptyState || null;
+  if (!emptyState && messages.length === 0) {
+    emptyState = await waitForDirectChatHistory(page, opened, options);
+    messages = await visibleMessages(page, options.limit);
+  }
   if (messages.length === 0) {
-    if (opened.emptyState === "favorites-empty") {
+    if (emptyState) {
+      const chatReference = await rememberOpenedChat(page, options, opened, true);
+      if (!chatReference) throw new MaxRuntimeError("MAX_CHAT_IDENTITY_UNVERIFIED",
+        "MAX did not retain the exact empty chat surface.",
+        { reason: "empty-history-chat-changed", finalMutationActionStarted: false });
       return {
         opened,
-        chatReference: await rememberOpenedChat(page, options, opened, true),
+        chatReference,
         loadedPages,
         messages: [],
-        emptyState: "favorites-empty",
+        emptyState,
       };
     }
     // Missing/changed message selectors must not silently claim empty history.
-    // Only the fully hydrated exact /0 surface above has a recognized empty
-    // state. Other empty-looking conversations remain unverified.
+    // Only explicitly verified provider empty states are accepted. A message
+    // disappearing between hydration and extraction is not such evidence.
     throw new Error("MAX message history has no recognized messages; empty history is not verified. Keep the dedicated profile and report the UI limitation.");
   }
   return {
@@ -6050,6 +6137,9 @@ export {
   selectExactDialogResult,
   isFavoritesReference,
   inspectFavoritesSurface,
+  inspectDirectChatHistorySurface,
+  waitForDirectChatHistory,
+  readChatMessages,
   selectFavoritesHomeDialog,
   selectExactContactResult,
   collectPickerResults,
