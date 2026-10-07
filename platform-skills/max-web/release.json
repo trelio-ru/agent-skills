@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "max-web",
-    "version": "2.8.18",
-    "summary": "MAX автоматически распознаёт пустую историю личного диалога, включая нового контакта по телефону, и не требует ручного осмотра."
+    "version": "2.8.19",
+    "summary": "MAX распознаёт пустые личные диалоги и исправляет открытие нового контакта по телефону в защищённом ручном режиме."
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,7 +17,7 @@
     ]
   },
   "runtime": {
-    "version": "2.8.18",
+    "version": "2.8.19",
     "minimumHostVersion": "3.4.0",
     "entrypoint": {
       "path": "trelio-max.mjs",
