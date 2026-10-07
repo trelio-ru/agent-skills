@@ -10,7 +10,7 @@ import {
   contextChatReference, inspectOpenedChatReference, knownChatReferences,
   loadChatReferences, lookupContactByPhone, normalizeChatContextRef, normalizeChatUrl, openChat,
   parseArguments, prepareAssistAuthorization, rememberChatReference,
-  rememberOpenedChat, selectExactDialogResult, validateCommandOptions,
+  rememberOpenedChat, readChatMessages, selectExactDialogResult, validateCommandOptions,
 } from "../scripts/trelio-max.mjs";
 
 const identity = {
@@ -58,7 +58,7 @@ const surface = '<main><button aria-label="Открыть профиль Вик�
 // A cold contact deep link is discarded, whereas the provider-owned phone
 // action opens the contact without creating a conversation or sending text.
 // Use real DOM inspectors so a route-only success cannot satisfy the test.
-const phoneLookupPage = (target = "https://web.max.ru/123") => {
+const phoneLookupPage = (target = "https://web.max.ru/123", chatHtml = surface) => {
   const home = '<input placeholder="Поиск">';
   const page = chatPage(home, "https://web.max.ru/");
   const searched = [];
@@ -68,7 +68,7 @@ const phoneLookupPage = (target = "https://web.max.ru/123") => {
   page.getByPlaceholder = () => search;
   page.getByRole = (_role, { name }) => String(name).includes("найти по номеру")
     ? { count: async () => 1, isVisible: async () => true, click: async () => {
-      page.setUrl(target); page.setHtml(surface);
+      page.setUrl(target); page.setHtml(chatHtml);
     } } : { first() { return this; }, count: async () => 0 };
   page.locator = () => ({ first() { return this; }, count: async () => 0 });
   page.waitForTimeout = async () => {};
@@ -86,6 +86,21 @@ test("MAX restores a cold contact URL through its verified private phone locator
   assert.equal(opened.method, "url-with-phone-lookup");
   assert.equal(opened.url, "https://web.max.ru/123");
   assert.deepEqual(searched, [phone, phone]);
+}));
+
+test("MAX reads a new phone contact with no messages after restoring its cold URL", async () => withJournal(async () => {
+  const html = '<main><button aria-label="Открыть профиль Test Contact"></button><div class="history">'
+    + '<div class="emptyHistory"><span>Сообщений пока нет</span></div>'
+    + '<div class="composer"><div role="textbox" contenteditable=""></div></div></div></main>';
+  const { page, searched } = phoneLookupPage("https://web.max.ru/123", html);
+  await lookupContactByPhone(page, { ...options, timeoutMs: 50 }, "+12025550123");
+  const result = await readChatMessages(page, { ...options, chat: "123", timeoutMs: 0, pages: 1 });
+  assert.equal(result.opened.method, "url-with-phone-lookup");
+  assert.equal(result.emptyState, "direct-chat-empty");
+  assert.deepEqual(result.messages, []);
+  assert.equal(result.chatReference.url, "https://web.max.ru/123");
+  assert.equal(result.chatReference.contextMatched, true);
+  assert.deepEqual(searched, ["+12025550123", "+12025550123"]);
 }));
 
 test("MAX rejects a reassigned phone and an unknown deep link before message actions", async () => withJournal(async () => {

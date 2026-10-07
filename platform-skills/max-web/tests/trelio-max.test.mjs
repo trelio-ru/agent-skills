@@ -1,6 +1,7 @@
 import './assist-control-shutdown.test.mjs';
 import './http-errors.test.mjs';
 import './chat-references.test.mjs';
+import './direct-chat-history.test.mjs';
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -185,8 +186,8 @@ test("MAX worker closure receipt is private, credential-free and cannot replace 
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.8.17");
-  assert.equal(release.runtime.version, "2.8.17");
+  assert.equal(release.release.version, "2.8.18");
+  assert.equal(release.runtime.version, "2.8.18");
   assert.equal(release.runtime.minimumHostVersion, "3.4.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -310,7 +311,7 @@ test("MAX local policy defaults to confirm and keeps state outside workspace", (
 test("MAX exposes a versioned, content-free live probe command", () => {
   const options = parseRuntimeArguments(["probe"]);
   assert.equal(options.command, "probe");
-  assert.equal(ADAPTER_VERSION, "43");
+  assert.equal(ADAPTER_VERSION, "44");
 });
 
 test("MAX exposes bounded assisted recovery for reads and exact manual operations", () => {
