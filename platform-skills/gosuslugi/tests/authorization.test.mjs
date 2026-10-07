@@ -9,7 +9,8 @@ import { parseArguments as gosArguments, run as gosRun } from '../scripts/trelio
 import { atomicWrite, nativeHelper, ensurePrivateDirectory } from '../scripts/native.mjs';
 import { browserSessionDirectory, readAuthorization, requestLocal } from '../scripts/transport.mjs';
 import { createAuthorizationBroker } from '../scripts/authorization.mjs';
-import { LEASE_MS, RUNTIME_VERSION } from '../scripts/core.mjs';
+import { LEASE_MS, RUNTIME_VERSION, RuntimeError } from '../scripts/core.mjs';
+import { observeEsiaAuthorization } from '../scripts/playwright-client.mjs';
 import { EsiaAuthorizer } from '../scripts/esia-authorizer.mjs';
 import { authRpc } from '../scripts/auth-rpc.mjs';
 
@@ -19,6 +20,74 @@ const identity = {
   member: '22222222-2222-4222-8222-222222222222',
 };
 const origin = 'https://ordinary.example.org';
+
+function observedLogin(requestWaitMs) {
+  let requestResolve, requestReject, returnedResolve, returnedReject;
+  const login = {
+    request: new Promise((resolve, reject) => { requestResolve = resolve; requestReject = reject; }),
+    authenticated: new Promise((resolve, reject) => { returnedResolve = resolve; returnedReject = reject; }),
+  };
+  return { observer: observeEsiaAuthorization(login, { requestWaitMs }),
+    requestResolve, requestReject, returnedResolve, returnedReject };
+}
+
+test('nonblocking observer keeps a serialized caller usable between two login clicks', async () => {
+  const pending = observedLogin(60000), events = [];
+  let chain = Promise.resolve();
+  const enqueue = action => (chain = chain.then(action));
+  const request = { sessionId: crypto.randomUUID(), requestId: crypto.randomUUID(), origin,
+    expiresAt: Date.now() + LEASE_MS, arguments: ['authorize', '--confirm'] };
+  // The first click only opens a site-owned modal. Waiting for request here
+  // would trap both the following state command and the actual login click.
+  await enqueue(() => { events.push('modal'); return pending.observer.snapshot(); });
+  assert.equal((await enqueue(() => pending.observer.snapshot())).phase, 'esia_request_pending');
+  await enqueue(() => { events.push('popup'); pending.requestResolve(request); });
+  const ready = await enqueue(() => pending.observer.snapshot());
+  assert.deepEqual(events, ['modal', 'popup']);
+  assert.deepEqual(ready, { phase: 'esia_authorization_required', request });
+  ready.request.arguments.push('unwanted');
+  request.arguments.push('also-unwanted');
+  assert.deepEqual(pending.observer.snapshot().request.arguments, ['authorize', '--confirm']);
+  pending.returnedResolve({ page: { secret: 'private-page' }, context: { secret: 'private-context' },
+    serviceResponse: { httpStatus: 503, httpOrigin: origin, rawUrl: 'never-return' } });
+  await Promise.resolve();
+  assert.deepEqual(pending.observer.snapshot(), { phase: 'esia_callback_verified',
+    serviceResponse: { httpStatus: 503, httpOrigin: origin } });
+});
+
+test('observer wait expiry requests inspection without cancelling the same helper', async () => {
+  const pending = observedLogin(1);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(pending.observer.snapshot(), { phase: 'esia_request_not_observed' });
+  // A later, authorized second click can still create this exact request.
+  pending.requestResolve({ arguments: ['authorize'], origin });
+  await Promise.resolve();
+  assert.equal(pending.observer.snapshot().phase, 'esia_authorization_required');
+  pending.returnedReject(new RuntimeError('service_callback_rejected_state'));
+  await Promise.resolve();
+  assert.deepEqual(pending.observer.snapshot(), {
+    phase: 'authorization_failed', error: 'service_callback_rejected_state',
+  });
+});
+
+test('observer failures are safe and sticky while verified return survives late cleanup', async () => {
+  const failed = observedLogin(1000);
+  failed.requestReject(new Error('private OAuth URL and password must not escape'));
+  await Promise.resolve();
+  failed.returnedResolve({ context: {}, page: {} });
+  await Promise.resolve();
+  assert.deepEqual(failed.observer.snapshot(), { phase: 'authorization_failed', error: 'authorization_result_unknown' });
+  const verified = observedLogin(1000);
+  verified.returnedResolve({ context: {}, page: {} });
+  await Promise.resolve();
+  verified.requestReject(new RuntimeError('authorization_cancelled'));
+  await Promise.resolve();
+  assert.deepEqual(verified.observer.snapshot(), { phase: 'esia_callback_verified' });
+  for (const requestWaitMs of [0, -1, 60001, 1.5, '15']) {
+    assert.throws(() => observeEsiaAuthorization({}, { requestWaitMs }), /authorization_observation_wait_invalid/);
+  }
+  assert.throws(() => observeEsiaAuthorization({}), /authorization_observation_invalid/);
+});
 
 test('permission is required before host identity, local setup or native unlock', async () => {
   for (const args of [['start'], ['authorize'], ['authorize', '--origin', origin]]) {

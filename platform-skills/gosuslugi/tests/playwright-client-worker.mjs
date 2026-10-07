@@ -6,7 +6,7 @@ import readline from 'node:readline';
 import { childEnvironment, guardianConfig } from '../scripts/core.mjs';
 import { loadPlaywright } from '../scripts/browser.mjs';
 import { nativeHelper } from '../scripts/native.mjs';
-import { createEsiaAuthorization } from '../scripts/playwright-client.mjs';
+import { createEsiaAuthorization, observeEsiaAuthorization } from '../scripts/playwright-client.mjs';
 import { readAuthorization, requestLocal } from '../scripts/transport.mjs';
 import { EsiaAuthorizer } from '../scripts/esia-authorizer.mjs';
 import { activeCredentialGate, credentialGate, recoveredCredentialGate } from '../scripts/auth-safety.mjs';
@@ -111,9 +111,12 @@ try {
         } else if (index === 8 && url.origin === returnOrigin && url.pathname === '/account') {
           body = '<h1>Кабинет</h1>' + workingForm;
         } else if (popupFlow) {
-          body = workingForm + `<a href="#" id="login-popup">Вход через ЕСИА</a><script>
-            document.querySelector('#login-popup').onclick=e=>{e.preventDefault();window.authPopup=window.open(${JSON.stringify(withTotp ? 'about:blank' : auth.href)}, 'esia-popup');
+          body = workingForm + `<a href="#" id="login-popup">Вход через ЕСИА</a>
+            ${index === 4 ? '<div id="login-modal" hidden><p>Чтобы продолжить, войдите</p><button id="modal-login">Вход через ЕСИА</button></div>' : ''}<script>
+            function openAuth(){window.authPopup=window.open(${JSON.stringify(withTotp ? 'about:blank' : auth.href)}, 'esia-popup');
               ${withTotp ? `setTimeout(()=>window.authPopup.location.href=${JSON.stringify(auth.href)}, 100)` : ''}};
+            document.querySelector('#login-popup').onclick=e=>{e.preventDefault();${index === 4 ? "document.querySelector('#login-modal').hidden=false" : 'openAuth()'}};
+            ${index === 4 ? "document.querySelector('#modal-login').onclick=openAuth;" : ''}
             addEventListener('message',e=>{if(e.source===window.authPopup&&e.origin===${JSON.stringify(callbackOrigin)}&&e.data==='synthetic-authorized')document.body.dataset.authorized='yes'});
             </script>`;
         } else body = `<a href="${(tracking ? postAuth : auth).href.replaceAll('&', '&amp;')}">Вход через ЕСИА</a>`;
@@ -165,6 +168,7 @@ try {
     });
     await assert.rejects(createEsiaAuthorization(page, { ...identity, configHome: config.root, origin }), /authorization_permission_required/);
     current = await createEsiaAuthorization(page, { ...identity, configHome: config.root, origin, confirm: true });
+    const observer = observeEsiaAuthorization(current);
     assert.equal(current.page, page); assert.equal(current.context, context);
     if (popupFlow) {
       // In-memory form text and selected File objects must survive OAuth; a
@@ -172,8 +176,19 @@ try {
       await page.locator('input[name=arbitrary]').fill('Черновик до авторизации');
       await page.locator('input[type=file]').setInputFiles({ name: 'draft.txt', mimeType: 'text/plain', buffer: Buffer.from('synthetic-draft') });
     }
-    await page.getByRole('link', { name: 'Вход через ЕСИА' }).click();
+    // Use the same serialized command channel as a stepwise caller. Its first
+    // handler returns after opening a modal; state and the second click must
+    // run before the ESIA request exists, without a second helper or reload.
+    let commandQueue = Promise.resolve();
+    const command = action => (commandQueue = commandQueue.then(action));
+    await command(() => page.getByRole('link', { name: 'Вход через ЕСИА' }).click());
+    if (index === 4) {
+      assert.equal((await command(() => observer.snapshot())).phase, 'esia_request_pending');
+      assert.equal(context.pages().length, 1);
+      await command(() => page.getByRole('button', { name: 'Вход через ЕСИА', exact: true }).click());
+    }
     const info = await current.request;
+    if (index === 4) assert.equal(observer.snapshot().phase, 'esia_authorization_required');
     assert.equal(info.origin, origin); assert.ok(info.arguments.includes('--confirm'));
     // Match a serialized port field, not the legitimate "passport" hostname.
     assert.doesNotMatch(JSON.stringify(info), /token|"port"\s*:|password|synthetic-state|synthetic-code/);

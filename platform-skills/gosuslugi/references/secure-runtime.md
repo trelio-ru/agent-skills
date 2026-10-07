@@ -338,6 +338,21 @@ popup batch наблюдение также останавливается на 
 проверяется в текущем разговоре; уже данное на этот сайт не спрашивается повторно.
 Подача, подпись, платёж и consent не включаются в разрешение на вход.
 
+`observeEsiaAuthorization(login, {requestWaitMs: 15000})` подписывается на
+request/authenticated вне очереди caller-команд. Синхронный `snapshot()`
+возвращает только фазу, копию публичного request/CLI arguments либо safe error
+и bounded HTTP evidence; browser objects и auth data не возвращаются.
+Промежуточная modal после первого click не блокирует state и второй разрешённый
+login click в той же Page/helper. Через диагностические 15 секунд без request
+фаза `esia_request_not_observed` требует проверки публичного промежуточного
+экрана и command channel. Это monotonic advisory wait (целые 1–60000 ms),
+не отказ ЕСИА и не основание для нового helper, повторного входа или выдуманного
+manual challenge. Поздний request той же попытки принимается; observer не
+отменяет, не повторяет и не продлевает native lease. Terminal failure сохраняется,
+а late cleanup rejection не заменяет verified callback. Пример долгоживущего
+caller в playwright-client.md возвращается после click и выдаёт результаты
+promises независимыми событиями; await внутри command queue запрещён.
+
 Клиент наблюдает main-frame запросы/ответы и document commit в исходной странице
 либо в новом direct popup с exact исходной Page как opener в том же context.
 Context listeners устанавливаются до клика: событие `popup` само по себе
@@ -584,7 +599,11 @@ Delegated regression `playwright-client.test.mjs` проверяет насто�
 browser с synthetic transport для двух несвязанных сайтов, password/TOTP,
 native permits, permission, callback и возврат тех же context/page. Те же
 password/TOTP/SSO сценарии проверяют direct popup, собственные postMessage/close
-сайта и сохранение текста/выбранного файла в исходной форме. После входа
+сайта и сохранение текста/выбранного файла в исходной форме. Отдельный
+сценарий с двумя кнопками проверяет промежуточную modal, доступность state
+в последовательной очереди и появление ESIA popup только после второго click.
+Unit gate проверяет advisory wait, поздний request, failure/cleanup precedence
+и отсутствие Page/Context/raw errors в snapshot. Затем
 выполняются arbitrary JS, заполнение, upload, browser Blob download и переход
 к следующему сайту. HTTP скачивание реального provider этим fixture не моделируется. Tests не
 выполняют реальный ЕСИА-вход. Native crash/hang tests реально запускают
