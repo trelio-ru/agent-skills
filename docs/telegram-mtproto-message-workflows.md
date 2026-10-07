@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.5.0`
-публикует runtime `2.5.0`, требует Telethon `>=1.44,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.5.1`
+публикует runtime `2.5.1`, требует Telethon `>=1.44,<2` и сохраняет
 minimum host `1.11.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -116,6 +116,13 @@ transport failures сохраняют отдельную семантику и �
 безопасную entity, `chatType`, `unreadCount`, `archived`, `folderId`,
 `pinned`, `topMessageId` и `lastMessageAt`. Недоступные метаданные не
 превращаются в фиктивное отсутствие чата или доказанную принадлежность.
+Native `DialogFolder` – сводная строка архива: её `peer` и `top_message`
+относятся к preview папки. Она исключается до проверки folder metadata,
+не влияет на pagination/digest и не разрешает exact history. Обычный dialog
+без `folder_id` по-прежнему оставляет область недоступной.
+Native limit допускает одну дополнительную строку в пределах 100, поскольку
+summary может занимать слот. Выдача и offset учитывают только возвращённые
+чаты; summary-only Slice без безопасного offset не доказывает конец списка.
 
 Продолжение – exact `coverage.nextCursor` в `--cursor` с той же областью.
 Лимит ограничивает одну страницу, не весь аккаунт; больше 1000 диалогов
@@ -402,8 +409,9 @@ message ID, exact history read и совпадение доставленног�
 ## Проверка
 
 `tests/test_inventory_workflows.py` проверяет >1000 peers, pinned/ordinary
-pagination, metadata-only archive scope, generation/list changes, cursor
-integrity/account/scope/expiry, equal timestamps, caps/resumption, closed-chat
+pagination, metadata-only archive scope, generation/list changes,
+native `DialogFolder` с peer (включая совпадение с обычным dialog и native limit),
+cursor integrity/account/scope/expiry, equal timestamps, caps/resumption, closed-chat
 reuse, access/metadata failures, attachment distinction и отсутствие reply
 lookups/исходящих действий. Fixtures синтетические, без аккаунта и сети.
 

@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.5.0",
+    "version": "2.5.1",
     "summary": "Полный обход чатов Telegram вне архива с пагинацией, проверкой изменений списка и возобновляемым экспортом периода. Результат отдельно показывает охват чатов, непрочитанные участки сообщений и вложения без прочитанного содержимого."
   },
   "connection": {
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.5.0",
+    "version": "2.5.1",
     "minimumHostVersion": "1.11.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
