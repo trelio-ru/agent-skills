@@ -40,6 +40,11 @@ context/page. Request ancestry связывает redirect-параметры/т
 ошибки внешнего HTTP идут caller-у отдельно и не означают отказ ЕСИА.
 Готовность кабинета проверяет вызывающий сценарий. Доступ к credentials
 отзывается на callback, повтор transaction не разрешается.
+Пошаговый caller Госуслуг не ждёт request/authenticated внутри очереди
+browser-команд. Первый click может открыть только modal: observer сохраняет
+доступность state и следующего разрешённого click в той же Page/helper.
+Advisory wait без запроса требует осмотра промежуточного экрана, а не повторного
+входа, нового helper или выдуманного ручного challenge.
 Тесты Markdown-контрактов сравнивают смысл после нормализации LF/CRLF:
 переводы строк checkout не меняют инструкции и не должны ломать Windows gate.
 При правке Python CLI проверяй кодировку настоящих stdout/stderr pipes:

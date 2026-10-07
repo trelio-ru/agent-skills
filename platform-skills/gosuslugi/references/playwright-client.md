@@ -18,11 +18,11 @@
    читает сам runtime; `requestTitle` остаётся необязательной короткой темой
    поручения и используется лишь когда точное чтение недоступно. ЕСИА может открыться
    в этой странице либо в новом popup с этой exact страницей как opener.
-4. Сценарий выводит только результат `await login.request`: opaque session и
+4. Сценарий выводит request отдельным событием `login.request.then(...)`: opaque session и
    request IDs, origin, expiresAt и готовый массив CLI arguments. Агент передаёт
    `arguments` тому же verified runtime, не запускает repository source и
    не подменяет identity. Во время этого вызова браузерный процесс остаётся живым.
-5. `await login.authenticated` возвращает `{ context, page, serviceResponse }`
+5. `login.authenticated` возвращает `{ context, page, serviceResponse }`
    после точного callback/state и document commit внешнего ответа либо его
    наблюдённой HTTP redirect chain. Это возврат из ЕСИА, а не проверка кабинета.
    `serviceResponse` содержит только `httpStatus`/`httpOrigin`; HTTP-ошибка
@@ -46,8 +46,8 @@ outer OAuth/SSO, JS-переходы, токены, ошибки и закрыт
 клиента может завершиться `process is not defined`. Не подменяй globals и не
 меняй проверенный package; запускай долгоживущий Node caller с управляющим
 каналом, проверенным до входа. Авторизация и отдельный browser-шаг не должны
-закрывать этот caller. `finally` в примере ниже завершает **весь сценарий**;
-для пошаговой работы cleanup выполняется отдельной командой после её окончания.
+закрывать этот caller. В примере ниже cleanup выполняется отдельной командой
+`finish` после окончания всего сценария.
 
 Popup поддерживается тем же вызовом, без нового helper-а на второй странице.
 Помощник заранее слушает context и связывает первый реальный OAuth request
@@ -69,49 +69,72 @@ bindings и machine paths, не bearer и не данные входа.
 
 Адрес и селекторы ниже иллюстрируют порядок; реальный сценарий получает их
 из публичной страницы нужного сайта. Playwright устанавливается штатными
-средствами среды вызывающего агента, а не новым Agent Skill.
+средствами среды вызывающего агента, а не новым Agent Skill. Для пошаговой
+работы используй приведённую очередь: `authorize` создаёт один helper и
+заканчивается после первого click. Следующий `click_login` проходит наблюдённую
+промежуточную кнопку в той же странице. Request появляется независимым событием,
+после которого агент вызывает verified `authorize`. Не добавляй ожидание
+request/authenticated в `handle`: оно заблокирует `state` и второй click.
 
 ```js
 import fs from 'node:fs/promises';
+import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 
 // client.json — точный nonsecret ответ verified команды client.
 const client = JSON.parse(await fs.readFile(process.argv[2], 'utf8'));
-const { createEsiaAuthorization, safeAuthorizationFailure } = await import(pathToFileURL(client.modulePath).href);
+const { createEsiaAuthorization, observeEsiaAuthorization, safeAuthorizationFailure } =
+  await import(pathToFileURL(client.modulePath).href);
 const browser = await chromium.launch({ channel: 'chrome', headless: false });
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
-let login;
-try {
-  await page.goto('https://service.example.org/');
-  login = await createEsiaAuthorization(page, {
-    ...client.options,
-    configHome: client.configHome,
-    origin: 'https://service.example.org',
-    confirm: true, // Разрешение пользователя уже проверено агентом.
-  });
-  await page.getByRole('link', { name: 'Вход через ЕСИА' }).click();
-  console.log(JSON.stringify({ phase: 'esia_authorization_required', ...await login.request }));
-  // Здесь агент запускает отдельный verified authorize с выданными arguments.
-  const session = await login.authenticated;
-  if (session.page !== page || session.context !== context) throw new Error('context_changed');
-
-  // Обычный произвольный Playwright-код в пределах поручения:
-  // await page.locator(...).fill(...);
-  // await page.locator('input[type=file]').setInputFiles(approvedFiles);
-  // const downloaded = page.waitForEvent('download'); ...
-  // await page.evaluate(...); await page.goto(nextApprovedUrl);
-  console.log(JSON.stringify({ phase: 'scenario_complete' }));
-} catch (error) {
-  console.log(JSON.stringify({ phase: 'authorization_failed', ...safeAuthorizationFailure(error) }));
-  // Не повторять вход и не выводить message/stack/URL. Сначала проверить
-  // exact status и состояние вызывающего сценария.
-} finally {
-  await login?.close();
-  await context.close();
-  await browser.close();
+const origin = 'https://service.example.org';
+await page.goto(origin);
+const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
+let login, observer, stopped = false;
+async function handle(command) {
+  if (stopped) return;
+  if (command.action === 'state') return emit(observer?.snapshot() ?? { phase: 'caller_ready' });
+  if (command.action === 'finish') {
+    stopped = true;
+    await login?.close();
+    await context.close();
+    await browser.close();
+    lines.close();
+    return emit({ phase: 'caller_closed' });
+  }
+  // Only inspected, authorized login controls on the public source page.
+  // Do not use this command to inspect/click auth fields or accept consent.
+  if (new URL(page.url()).origin !== origin) throw new Error('public_page_required');
+  if (command.action === 'authorize' && !login) {
+    login = await createEsiaAuthorization(page, {
+      ...client.options,
+      configHome: client.configHome,
+      origin,
+      confirm: true, // Разрешение пользователя уже проверено агентом.
+    });
+    observer = observeEsiaAuthorization(login);
+    login.request.then(request => emit({ phase: 'esia_authorization_required', request }),
+      error => emit({ phase: 'authorization_failed', ...safeAuthorizationFailure(error) }));
+    login.authenticated.then(() => emit(observer.snapshot()),
+      error => emit({ phase: 'authorization_failed', ...safeAuthorizationFailure(error) }));
+  } else if (command.action !== 'click_login' || !observer ||
+    !['esia_request_pending', 'esia_request_not_observed'].includes(observer.snapshot().phase)) {
+    throw new Error('login_step_not_available');
+  }
+  await page.locator(command.selector).click();
+  emit(observer.snapshot()); // Не await request: modal ещё может требовать click.
 }
+const lines = readline.createInterface({ input: process.stdin });
+let queue = Promise.resolve();
+lines.on('line', line => {
+  queue = queue.then(() => handle(JSON.parse(line))).catch(error =>
+    emit({ phase: 'caller_action_failed', ...safeAuthorizationFailure(error) }));
+});
+emit({ phase: 'caller_ready' });
+// After verified callback, add the site's business steps to handle() and check
+// its actual result. Only finish closes this caller's context/browser.
 ```
 
 На Windows выбирается установленный `msedge` либо Chrome; собственный
@@ -119,6 +142,22 @@ Playwright runner может иметь другой штатный способ
 Не заменяй прежнюю живую вкладку новой ради входа и не закрывай браузер после
 каждого промежуточного шага. Не открывай задачу в новом агенте ради этой схемы:
 два локальных процесса можно координировать в текущем разговоре.
+
+`observeEsiaAuthorization(login, { requestWaitMs: 15000 })` только наблюдает
+promises, не делает browser/credential actions. `snapshot()` синхронный:
+`esia_request_pending` → `esia_request_not_observed` при отсутствии request;
+поздний request той же попытки переводит его в `esia_authorization_required`.
+Диагностический бюджет допускает целые 1–60000 ms и не меняет native lease.
+После 15 секунд проверь доступность command channel и текущий промежуточный
+экран на публичном origin. Не снимай ЕСИА auth DOM/screenshot; распознанный
+challenge разбирается по штатному безопасному `status`. Обычная modal-кнопка
+сама по себе не означает CAPTCHA/SMS/consent и не требует передачи управления
+человеку. Совмещённая с отправкой кнопка требует права на конкретную подачу.
+`esia_callback_verified` содержит только optional `serviceResponse`, не Page/
+Context; `authorization_failed` сохраняет точный безопасный error и HTTP
+evidence. Verified callback проверяется ещё на сайте. Состояние копируется,
+его изменение не меняет handoff. Terminal failure сохраняется; поздний cleanup
+не отменяет verified callback. Observer не повторяет и не закрывает helper.
 
 ## Границы и ошибки
 

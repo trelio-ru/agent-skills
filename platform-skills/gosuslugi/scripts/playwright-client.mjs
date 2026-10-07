@@ -30,6 +30,56 @@ export function safeAuthorizationFailure(error) {
 }
 
 /**
+ * Observe the two authorization promises without occupying a caller's command
+ * queue. A site's first login click may only open an intermediate dialog: the
+ * next click must remain executable before an ESIA request can exist.
+ *
+ * The wait budget is advisory, measured with a monotonic clock. It never
+ * cancels, retries or extends the native authorization lease. Only the helper
+ * produces request arguments and callback proof; browser objects stay private.
+ */
+export function observeEsiaAuthorization(login, { requestWaitMs = 15000 } = {}) {
+  requireThat(Number.isInteger(requestWaitMs) && requestWaitMs >= 1 && requestWaitMs <= 60000,
+    'authorization_observation_wait_invalid');
+  requireThat(login?.request && typeof login.request.then === 'function' &&
+    login?.authenticated && typeof login.authenticated.then === 'function', 'authorization_observation_invalid');
+  const startedClock = performance.now();
+  let request, failure, returned = false, serviceResponse;
+  function failed(error) {
+    // A late cleanup rejection must not replace a verified callback. Before
+    // that proof, a failure is sticky even if the request settles afterwards.
+    if (!returned && !failure) failure = safeAuthorizationFailure(error);
+  }
+  login.request.then(value => {
+    if (!failure && !returned) request = {
+      sessionId: value.sessionId, requestId: value.requestId, origin: value.origin,
+      expiresAt: value.expiresAt, arguments: [...value.arguments],
+    };
+  }, failed).catch(failed);
+  login.authenticated.then(value => {
+    if (failure) return;
+    returned = true;
+    if (value.serviceResponse) serviceResponse = {
+      httpStatus: value.serviceResponse.httpStatus, httpOrigin: value.serviceResponse.httpOrigin,
+    };
+  }, failed).catch(failed);
+  return {
+    snapshot() {
+      // Return copies: accidental changes to a displayed snapshot cannot
+      // modify the original CLI handoff or the observer's settled evidence.
+      if (failure) return { phase: 'authorization_failed', ...failure };
+      if (returned) return { phase: 'esia_callback_verified',
+        ...(serviceResponse ? { serviceResponse: { ...serviceResponse } } : {}) };
+      if (request) return { phase: 'esia_authorization_required', request: {
+        ...request, arguments: [...request.arguments],
+      } };
+      return { phase: performance.now() - startedClock >= requestWaitMs
+        ? 'esia_request_not_observed' : 'esia_request_pending' };
+    },
+  };
+}
+
+/**
  * Attach ESIA authorization to an ordinary, caller-owned Playwright Page.
  * No browser, profile or context is created, imported, restricted or closed.
  * The returned context/page are exactly the original objects. The caller is
