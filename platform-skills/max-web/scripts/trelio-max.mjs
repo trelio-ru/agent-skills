@@ -1049,8 +1049,8 @@ const installMaxAssistGate = (configuration = {}) => {
     // Mirror the host semantic gate for the provider's exact home-search
     // action. The native event fence must allow this click before MAX's
     // handler, otherwise cold-contact recovery silently cancels its own lookup.
-    const phoneSearchAction = window.location.pathname === "/" && inLeftPane
-      && ["dialogs", "contacts", "profile", "read", "unread", "watch"].includes(fallbackFor)
+    const phoneSearchAction = ["dialogs", "contacts", "profile", "read", "unread", "watch"].includes(fallbackFor)
+      && window.location?.pathname === "/" && inLeftPane
       && value.tag === "button" && !value.href && !value.chatRow
       && /^(?:найти по номеру|find by phone)(?:\s+\+?[\d\s()-]{6,25})?$/iu.test(value.label);
     if (phoneSearchAction) return true;
