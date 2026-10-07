@@ -60,6 +60,13 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /Telegram Web fallback|Telegram Web/u);
   }
   assert.match(runtimeSource, /scheduled=True/u);
+  for (const source of [skillInstructions, connectionDocs]) {
+    assert.match(source, /--archive-scope/u);
+    assert.match(source, /verificationComplete/u);
+    assert.match(source, /attachmentsContentRead/u);
+    assert.match(source, /snapshotAtomic/u);
+  }
+  assert.match(runtimeSource, /MESSAGE_WORKFLOW_VERSION = "2\.5\.0"/u);
   assert.match(connectionDocs, /--context/u);
   assert.match(connectionDocs, /--approval-hash/u);
   assert.match(connectionDocs, /schedule-at/u);
@@ -67,9 +74,9 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
   assert.match(runtimeSource, /MIN_SCHEDULE_LEAD_SECONDS = 60/u);
   assert.match(runtimeSource, /"scheduled"/u);
   assert.match(runtimeSource, /"--schedule-at"/u);
-  assert.equal(releaseManifest.release.version, "2.4.0");
+  assert.equal(releaseManifest.release.version, "2.5.0");
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.4.0");
+  assert.equal(releaseManifest.runtime.version, "2.5.0");
   assert.equal(releaseManifest.runtime.minimumHostVersion, "1.11.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),

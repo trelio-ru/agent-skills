@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.4.0`
-публикует runtime `2.4.0`, требует Telethon `>=1.44,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.5.0`
+публикует runtime `2.5.0`, требует Telethon `>=1.44,<2` и сохраняет
 minimum host `1.11.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -89,7 +89,11 @@ Telegram не возвращает доказуемое общее число с
 incompleteReasons включает provider_search_not_exhaustive. Достижение лимита
 и неразрешённые own peers отмечаются отдельно. Пустой ответ не доказывает
 отсутствие чата; transport failure не превращается в пустую выдачу.
-`dialogs` без query сохраняет прежний bounded recent-list режим.
+`dialogs` без query возвращает страницу metadata-инвентаря по контракту ниже.
+В поиске `--archive-scope active|archived` фильтрует только exact own results
+после чтения метаданных; неизвестная принадлежность не допускается в выдачу.
+`--query` не совместим с inventory cursor; исчерпывающий обзор не строится
+через `contacts.search`.
 
 Если exact reference не разрешается локальной Telegram-сессией, runtime
 возвращает agent-visible code `TELEGRAM_CHAT_RESOLUTION_FAILED`, безопасный
@@ -101,6 +105,83 @@ incompleteReasons включает provider_search_not_exhaustive. Достиж�
 не выводят traceback либо raw RPC diagnostics. Timeout, reset и другие
 transport failures сохраняют отдельную семантику и не переименовываются в
 ошибку chat reference.
+
+## Инвентарь чатов и обзор периода
+
+`dialogs --archive-scope all|active|archived --limit 1..100` возвращает
+ограниченную страницу метаданных, без текста preview/history. `active` –
+все неархивированные облачные диалоги, независимо от прочитанности;
+`archived` – только архив, `all` (default) – оба списка. Custom folders не
+подставляются в native archive IDs. Каждая строка содержит marked `id`,
+безопасную entity, `chatType`, `unreadCount`, `archived`, `folderId`,
+`pinned`, `topMessageId` и `lastMessageAt`. Недоступные метаданные не
+превращаются в фиктивное отсутствие чата или доказанную принадлежность.
+
+Продолжение – exact `coverage.nextCursor` в `--cursor` с той же областью.
+Лимит ограничивает одну страницу, не весь аккаунт; больше 1000 диалогов
+можно пройти последовательностью вызовов. В каждом native запросе максимум
+100 ordinary dialogs. Закреплённые чаты перечисляются отдельно в каждом
+archive scope; их произвольный порядок не используется как date offset
+обычного списка. Native Slice не считается концом даже при короткой странице.
+
+Первый проход перечисляет чаты, второй независимо проверяет полный digest
+метаданных: peer, archive/pin state, latest message ID/date и порядок.
+Account update position проверяется до и после каждой страницы и между
+продолжениями. `coverage.enumerationComplete` описывает завершение первого
+прохода, `verificationComplete` – второго; только matching metadata passes
+без обнаруженных изменений дают `coverage.complete=true`. В verify phase
+`dialogs=[]`, но cursor нужно продолжать. `inventory_changed` сохраняет
+неполноту и требует нового обзора. Account position проверяется консервативно:
+даже посторонние изменения могут потребовать повторного обхода.
+`snapshotAtomic=false` всегда: API не предоставляет транзакционный снимок,
+и даже совпавшие наблюдения не восстанавливают удалённые/изменённые сообщения.
+
+`export` / `daily-export` используют тот же инвентарь для `--all-dialogs`;
+`--dialog-limit 1..1000` ограничивает batch одной страницы. Можно вместо
+этого выбрать exact чаты повторяемым `--chat` (до 1000 references).
+`--archive-scope active` применяется до history также для сохранённых ID:
+на каждой странице runtime заново читает exact live folder metadata.
+Неизвестные данные оставляют чат открытым, а перенесённый в архив чат
+исключается с `archive_scope_changed`, без чтения его истории.
+
+Период фиксируется как `since <= date < until` с IANA timezone. `--cursor`
+продолжает ту же selection, normalized UTC boundaries, archive/type filters,
+link/chronological mode, текущий аккаунт и connection. Бюджеты можно менять,
+чтобы увеличить размер следующей страницы. Token подписан локальным ключом
+в owner-only connection namespace, имеет абсолютный TTL 12 часов без
+продления и содержит только bounded offsets/digests/counters, без text,
+preview, credentials или access hashes. Другой device/account/scope,
+изменение token либо истечение TTL требуют начала заново; cursor не выдаёт
+доступа и не является постоянным индексом переписки.
+
+Каждый unfinished chat имеет exclusive message-ID offset, поэтому сообщения
+с одинаковым timestamp не пропадают. Offset продвигается только после
+возвращённой строки либо явно проверенного сообщения вне периода.
+Обрезка по bytes/total/per-chat/scan не закрывает участок; завершённые чаты
+удаляются из pending batch и не перечитываются при продолжении.
+`--scan-limit` ограничивает все history reads одного вызова, а не произведение
+per-chat ceilings. `--chronological` упорядочивает только текущую страницу;
+совокупность страниц анализируется с дедупликацией по marked peer ID + message
+ID и при необходимости общей сортировкой. Архив/read state не меняются.
+
+`coverage.inventory` отделяет список чатов от сообщений. Каждый чат содержит
+`coverage.complete`, `textComplete`, `nextBeforeId` и точный `unreadInterval` с before-ID;
+`incomplete_chats` перечисляет текущие незакрытые области и причины.
+`coverage.completedChats` / `returnedMessages` – cumulative counters;
+`coverage.nextCursor` описывает remaining batch либо очередную страницу
+scan/verify. Только финальное `coverage.complete=true` разрешает назвать
+обход выбранной доступной истории завершённым. Блокированные/недоступные
+чаты, ошибки и лимиты не выдаются за отсутствие сообщений. Если continuation
+не продвигается, агент сообщает конкретный blocker и прекращает повтор цикла.
+
+Export не dereference-ит replies: такие дополнительные reads могли бы выйти
+за период/чат либо попасть в архивный discussion. `replyContext=null`;
+exact reply/context читается отдельным явно scoped запросом при необходимости.
+Media возвращается как metadata. `attachments.returnedMetadata`, `contentRead=0`
+и `coverage.attachmentsContentRead=false` отдельно показывают, что файлы,
+голосовые и видео не прочитаны. `textTruncated` делает `textComplete=false`
+и сохраняет неполноту текста. Никаких receipts, отправок, реакций, переносов
+в архив, скачиваний или изменений настроек обзор не выполняет.
 
 ## Точное сообщение и ветка
 
@@ -319,6 +400,12 @@ message ID, exact history read и совпадение доставленног�
 Одно исчезновение записи из очереди не доказывает успешную отмену/отправку.
 
 ## Проверка
+
+`tests/test_inventory_workflows.py` проверяет >1000 peers, pinned/ordinary
+pagination, metadata-only archive scope, generation/list changes, cursor
+integrity/account/scope/expiry, equal timestamps, caps/resumption, closed-chat
+reuse, access/metadata failures, attachment distinction и отсутствие reply
+lookups/исходящих действий. Fixtures синтетические, без аккаунта и сети.
 
 `tests/test_search_workflows.py` проверяет multi-chat scope, aliases и независимые
 peer ID spaces, общий result/scan budget, автоматическое продолжение, cursor

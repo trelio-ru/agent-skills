@@ -9,7 +9,10 @@ keys сюда не добавляются. Перед правкой прочи�
 [windows-native-runtime.md](docs/windows-native-runtime.md). Общий статический
 gate обходит все provider-ы; native gate выполняется на реальной Windows.
 Для Telegram search, folder scope, cursor и context grouping читай полный
-[контракт сообщений](docs/telegram-mtproto-message-workflows.md).
+[контракт сообщений](docs/telegram-mtproto-message-workflows.md). Обзор всех чатов
+использует отдельные проходы закреплённых/обычных диалогов и проверку
+метаданных; export cursor продвигается только после возвращённого сообщения.
+Archive scope повторно проверяется до history, включая exact сохранённый ID.
 
 Канонический main остаётся чистым. Новая работа выполняется в отдельном
 физическом worktree и ветке codex/* от свежего origin/main. Перед правкой:

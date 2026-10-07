@@ -1,6 +1,6 @@
 ---
 name: telegram-mtproto
-description: Find Telegram messages across selected chats or folders with date and chat-type filters, bounded automatic pagination and merged context; read message links and threads, reply, transcribe voice messages, manage scheduled delivery, and safely communicate through a personal MTProto session and Trelio's signed runtime. Use for Telegram correspondence, files, audiences, bounded exports, login, and local send-policy setup when this catalog transport is selected.
+description: Find Telegram messages across selected chats or folders with date and chat-type filters, bounded automatic pagination and merged context; read message links and threads, reply, transcribe voice messages, manage scheduled delivery, and safely communicate through a personal MTProto session and Trelio's signed runtime. Use for Telegram correspondence, files, audiences, resumable archive-scoped period exports and dialog inventories, login, and local send-policy setup when this catalog transport is selected.
 ---
 
 # Telegram
@@ -171,7 +171,16 @@ sandbox и approval mode клиента не заменяют, не выдают
   запросом и равен `null`, если недоступен, а не фиктивному нулю.
   `coverage.complete=false` и `hasMore=null` означают, что Telegram не даёт
   доказательства исчерпывающего поиска: пустая выдача не доказывает отсутствие
-  чата. `dialogs` без `--query` остаётся bounded списком последних диалогов.
+  чата. Для полного обзора используй metadata-инвентарь
+  `dialogs --archive-scope active --limit 100`, затем продолжай exact
+  `coverage.nextCursor` через `--cursor`. На verify-страницах список пуст,
+  но требуется продолжение до `verificationComplete=true`. Только
+  `coverage.complete=true` подтверждает совпавшие проходы; при
+  `inventory_changed` обзор неполон. `snapshotAtomic=false` сохраняет
+  отсутствие транзакционного снимка. Строки показывают `archived`, `folderId`,
+  marked `id` и `lastMessageAt`; прочитанность не сужает обзор. Не подменяй
+  инвентарь поиском названий. Для поиска с ограничением архива также доступен
+  `--archive-scope active|archived`, но search не становится исчерпывающим.
 - Ошибка `TELEGRAM_CHAT_RESOLUTION_FAILED` не доказывает отсутствие чата или
   запрет доступа. Выполни её exact `nextAction`: найди чат через
   `dialogs --query` по видимому названию либо username, затем повтори исходную
@@ -339,21 +348,42 @@ sandbox и approval mode клиента не заменяют, не выдают
 
 ## Экспорт периода
 
-- Для полного чтения периода используй `export`; `daily-export` – совместимый
-  alias. Выбери exact чаты повторяемым `--chat ID_OR_USERNAME` либо bounded
-  `--all-dialogs`; при необходимости добавь
-  `--chat-type group|channel|user|bot`.
-- Всегда передавай `--since`, `--until` и явную `--timezone` (по умолчанию
-  `Europe/Moscow`). Период полуоткрытый: `since <= message.date < until`.
-- `--until` уже служит server-side history cursor. Runtime сканирует назад до
-  `since` или лимита. Не собирай период страницами через `read` и не обходи
-  runtime прямым MTProto/UI-доступом.
-- `--chronological` задаёт прямой порядок внутри чата. URL entities включаются
-  только через `--include-links`; вложения возвращаются bounded metadata и не
-  скачиваются.
-- Экспорт полон только когда `hit_dialog_limit`, `hit_per_chat_limit`,
-  `hit_scan_limit`, `hit_total_message_limit`, `hit_output_byte_limit` равны
-  `false`, а `incomplete_chats` пуст. Иначе назови неполный scope и причины.
-- CLI всегда возвращает JSON. Для крупных выгрузок используй его как временный
-  источник анализа и не сохраняй сырой экспорт в Agent Workspace, комментарии
-  или Git без отдельной необходимости и проверки доступа.
+- Для чтения всех неархивированных облачных чатов за период используй
+  `export --all-dialogs --archive-scope active --since YYYY-MM-DD
+  --until YYYY-MM-DD --timezone Europe/Moscow`. Exact выборка – повторяемый
+  `--chat ID_OR_USERNAME`; архивная область также проверяется до history
+  для сохранённого ID. `--archive-scope all|active|archived` по умолчанию all;
+  `--chat-type group|channel|user|bot` дополнительно сужает область.
+  `daily-export` – совместимый alias.
+- Период полуоткрытый: `since <= message.date < until`. Передавай явную
+  IANA timezone. Продолжай через `--cursor` из `coverage.nextCursor`, сохраняя
+  selection, период, archive/type и link/chronological mode. Лимиты действуют
+  на один вызов; инвентарь более 1000 чатов не имеет общего потолка.
+- `coverage.inventory` отдельно показывает scan/verify метаданных;
+  verification pages могут не содержать сообщений. Каждая история имеет
+  `coverage.complete`, `nextBeforeId`, `unreadInterval`. Открытые чаты и
+  причины перечислены в `incomplete_chats`. Только финальное
+  `coverage.complete=true` подтверждает завершённый обход. Старые flags
+  `hit_dialog_limit`, `hit_per_chat_limit`, `hit_scan_limit`,
+  `hit_total_message_limit`, `hit_output_byte_limit` описывают текущую страницу
+  и сами по себе не доказывают полноту совокупности.
+- Cursor защищён от изменения, привязан к device/connection/account и
+  запросу и живёт 12 часов без продления. Завершённые участки не перечитываются;
+  exclusive ID сохраняет сообщения с одинаковым временем. Дедуплицируй
+  накопленные страницы по marked peer ID + message ID. `--chronological`
+  упорядочивает текущую страницу, для общей хронологии сортируй совокупность.
+  Ошибка/истечение cursor требует нового обзора; повтор без продвижения –
+  конкретный blocker, а не повод бесконечно повторять запрос.
+- При `inventory_changed`, недоступном чате или metadata failure назови
+  неполную область. `snapshotAtomic=false`: не обещай снимок всего Telegram
+  на один момент и восстановление уже удалённых сообщений. При изменившемся
+  архиве не обходи исключение чтением по exact ID.
+- URL entities включаются через `--include-links`. Export не дочитывает
+  reply/context за пределами выбранной истории. Вложения возвращаются только
+  как metadata: `attachmentsContentRead=false`, `contentRead=0`. Отделяй
+  полноту сообщений от прочитанности файлов/аудио/видео; `textComplete=false`
+  означает обрезанный текст. Обзор не меняет read receipts, архив и настройки.
+- CLI всегда возвращает JSON. Не собирай период страницами через `read`
+  и не обходи runtime прямым MTProto/UI-доступом. Крупный экспорт используй
+  как временный источник анализа; сырой текст не сохраняй в Workspace,
+  комментарии или Git без отдельной необходимости и проверки аудитории.
