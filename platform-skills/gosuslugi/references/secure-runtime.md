@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.3.18 объявляет signed host browser-session class
+Runtime 3.4.1 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -455,6 +455,17 @@ page }`. Callback request немедленно прекращает auth input; 
 с пользовательскими полномочиями каждого действия. Неограниченный API сам по
 себе не разрешает отправку, подписание, оплату и принятие согласия.
 
+Один helper относится к одной transaction, а не ко всему caller/browser.
+После verified callback и оценки прежнего бизнес-результата его `close()`
+позволяет новой отдельно разрешённой процедуре создать другой helper в той же
+подготовленной Page, до нового login click. Форма, File objects и согласие
+не пересоздаются. Это не replay старого callback, не восстановление начатого
+окна и не обход failure/pending/неизвестной подачи. Долгоживущий caller использует
+разные одноразовые step IDs и явный предыдущий outcome; callbacks захватывают
+свой observer/step, чтобы поздний cleanup не подменял результат другой попытки.
+Наличие переменной `login` само по себе не запрещает следующий вход; самописный
+пожизненный guard исправляется в caller, а не передаёт поддерживаемый вход человеку.
+
 Completion/cancel/ошибка закрывают private authorization listener и descriptor.
 Отдельный auth-only worker очищает свой key и завершается; временный authorizer
 в уже готовом обычном worker очищает только transaction и сохраняет исходную
@@ -602,7 +613,10 @@ password/TOTP/SSO сценарии проверяют direct popup, собств
 сайта и сохранение текста/выбранного файла в исходной форме. Отдельный
 сценарий с двумя кнопками проверяет промежуточную modal, доступность state
 в последовательной очереди и появление ESIA popup только после второго click.
-Unit gate проверяет advisory wait, поздний request, failure/cleanup precedence
+Regression проверяет новый helper для отдельной процедуры в той же Page после
+завершённого callback, сохранение полей/files/consent и запрет перехода из pending,
+failure, неизвестной подачи или повторного step. Unit gate проверяет advisory
+wait, поздний request, failure/cleanup precedence
 и отсутствие Page/Context/raw errors в snapshot. Затем
 выполняются arbitrary JS, заполнение, upload, browser Blob download и переход
 к следующему сайту. HTTP скачивание реального provider этим fixture не моделируется. Tests не
