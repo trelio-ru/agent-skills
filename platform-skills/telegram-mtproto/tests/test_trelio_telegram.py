@@ -38,6 +38,15 @@ class TrelioTelegramTests(unittest.TestCase):
     def export_args(self, **overrides):
         """Build a complete export namespace while keeping each test focused."""
 
+        # Legacy period/output tests do not need a real session/account or
+        # archive metadata. The inventory suite exercises those native guards.
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(mock.patch.object(MODULE, "connection_root", return_value=pathlib.Path(directory)))
+        self.enterContext(mock.patch.object(MODULE, "overview_binding", new=mock.AsyncMock(return_value="synthetic-binding")))
+        self.enterContext(mock.patch.object(MODULE, "live_dialog_metadata", new=mock.AsyncMock(return_value={
+            "archived": False, "folderId": 0, "topMessageId": 1})))
+        self.enterContext(mock.patch.object(MODULE, "import_telethon_inventory", return_value=(
+            None, None, None, None, None, SimpleNamespace(get_peer_id=lambda entity: entity.id))))
         values = {
             "chat": ["work_chat"],
             "all_dialogs": False,
@@ -2661,7 +2670,8 @@ class TrelioTelegramTests(unittest.TestCase):
             client.iter_messages_kwargs["offset_date"].isoformat(),
             "2026-08-02T21:00:00+00:00",
         )
-        self.assertIsNone(client.iter_messages_kwargs["limit"])
+        self.assertEqual(client.iter_messages_kwargs["limit"], args.scan_limit + 1)
+        self.assertEqual(client.iter_messages_kwargs["offset_id"], 0)
         self.assertEqual([item["id"] for item in result["chats"][0]["messages"]], [2, 3])
         self.assertEqual(result["message_count"], 2)
         self.assertEqual(result["scanned_count"], 4)
@@ -2736,58 +2746,38 @@ class TrelioTelegramTests(unittest.TestCase):
 
         first = Channel(1, "Первый")
         second = Channel(2, "Второй")
-        large_messages = [
-            self.telegram_message(
-                message_id,
-                datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc),
-                "я" * MODULE.MAX_READ_TEXT_CHARS,
-            )
-            for message_id in range(1, 45)
-        ]
+        large_messages = [self.telegram_message(message_id,
+            datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc), "я" * MODULE.MAX_READ_TEXT_CHARS)
+            for message_id in range(44, 0, -1)]
 
         class FakeClient:
-            def __init__(self):
-                self.disconnect = mock.AsyncMock()
+            disconnect = mock.AsyncMock()
 
-            def iter_dialogs(self, **_kwargs):
-                async def iterate():
-                    yield SimpleNamespace(entity=first)
-                    yield SimpleNamespace(entity=second)
-
-                return iterate()
+            async def get_entity(self, reference):
+                return first if reference == "first" else second
 
             def iter_messages(self, entity, **_kwargs):
                 async def iterate():
                     for message in large_messages if entity is first else []:
                         yield message
-
                 return iterate()
 
-        client = FakeClient()
-        args = self.export_args(
-            chat=None,
-            all_dialogs=True,
-            total_message_limit=40,
-            max_output_bytes=1_048_576,
-        )
-        with mock.patch.object(MODULE, "build_client", return_value=client), mock.patch.object(
-            MODULE,
-            "ensure_authorized",
-            new=mock.AsyncMock(),
+        for limit, byte_cap, total_hit, byte_hit in (
+            (10, 16_777_216, True, False),
+            (40, 1_048_576, False, True),
         ):
-            result = asyncio.run(MODULE.command_export_async(args, self.identity()))
-
-        self.assertTrue(result["hit_output_byte_limit"])
-        self.assertTrue(result["hit_total_message_limit"])
-        self.assertIn("output_byte_limit_reached", result["warnings"])
-        self.assertIn("total_message_limit_reached", result["warnings"])
-        self.assertLess(result["message_count"], 40)
-        self.assertLessEqual(
-            MODULE.compact_json_bytes({"ok": True, **result}),
-            args.max_output_bytes,
-        )
-        self.assertNotIn("linkEntities", result["chats"][0]["messages"][0])
-        self.assertTrue(result["chats"][0]["incomplete"])
+            args = self.export_args(chat=["first", "second"], total_message_limit=limit,
+                                    max_output_bytes=byte_cap)
+            with mock.patch.object(MODULE, "build_client", return_value=FakeClient()), mock.patch.object(
+                MODULE, "ensure_authorized", new=mock.AsyncMock()):
+                result = asyncio.run(MODULE.command_export_async(args, self.identity()))
+            self.assertEqual(result["hit_total_message_limit"], total_hit)
+            self.assertEqual(result["hit_output_byte_limit"], byte_hit)
+            self.assertLessEqual(result["message_count"], limit)
+            self.assertLessEqual(MODULE.compact_json_bytes({"ok": True, **result}), byte_cap)
+            self.assertNotIn("linkEntities", result["chats"][0]["messages"][0])
+            self.assertTrue(result["coverage"]["nextCursor"])
+            self.assertFalse(result["coverage"]["complete"])
 
     def test_export_strips_only_structured_links_when_not_requested(self):
         payload = {

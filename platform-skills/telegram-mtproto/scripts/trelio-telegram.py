@@ -13,8 +13,10 @@ import argparse
 import asyncio
 import base64
 import contextlib
+import copy
 import getpass
 import hashlib
+import hmac
 import http.server
 import io
 import json
@@ -101,7 +103,13 @@ MIN_SCHEDULE_LEAD_SECONDS = 60
 MAX_SCHEDULE_AT_CHARS = 64
 DEFAULT_SCHEDULED_LIMIT = 20
 MAX_SCHEDULED_LIMIT = 100
-MESSAGE_WORKFLOW_VERSION = "2.4.0"
+MESSAGE_WORKFLOW_VERSION = "2.5.0"
+# Overview cursors contain metadata/offsets only. Authenticate them locally so a
+# modified token cannot add peers, skip an unfinished chat or forge completeness.
+# The key stays in the existing owner-only connection namespace, never in JSON.
+OVERVIEW_CURSOR_TTL = 12 * 60 * 60
+MAX_OVERVIEW_CURSOR_CHARS = 65_536
+ARCHIVE_SCOPES = ("all", "active", "archived")
 MAX_FILTERED_SEARCH_SCAN = 1_000
 MAX_FILTERED_SEARCH_PAGES = 10
 MAX_TRANSCRIPT_CHARS = 65_536
@@ -2952,251 +2960,502 @@ def rebuild_export_summary(result: dict[str, Any]) -> None:
     })
 
 
-def enforce_export_output_limit(result: dict[str, Any], max_output_bytes: int) -> None:
-    """Keep even unusually large chat metadata inside the promised byte cap.
+def import_telethon_inventory():
+    """Load the read-only dialog methods; custom-folder IDs do not belong here."""
 
-    The streaming budget already reserves space for metadata, so this is a
-    final fail-safe. It trims only the newest retained suffix of later chat
-    result arrays and records that loss explicitly.
+    try:
+        from telethon import utils
+        from telethon.tl.functions.messages import GetDialogsRequest, GetPinnedDialogsRequest, GetPeerDialogsRequest
+        from telethon.tl.types import InputPeerEmpty, InputDialogPeer
+    except ImportError as error:
+        raise TelegramRuntimeError("Telegram dialog inventory is unavailable. Run bootstrap.") from error
+    return GetDialogsRequest, GetPinnedDialogsRequest, GetPeerDialogsRequest, InputPeerEmpty, InputDialogPeer, utils
+
+
+def overview_scope(args: argparse.Namespace) -> str:
+    scope = getattr(args, "archive_scope", "all")
+    if scope not in ARCHIVE_SCOPES:
+        raise TelegramRuntimeError("Invalid --archive-scope.")
+    return scope
+
+
+def overview_digest(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+async def overview_binding(client: Any, identity: Identity, operation: str, scope: Any) -> str:
+    account = await client.get_me()
+    if not account or isinstance(account.id, bool) or not isinstance(account.id, int) or account.id <= 0:
+        raise TelegramRuntimeError("Cannot verify the Telegram account for this overview.")
+    return overview_digest([MESSAGE_WORKFLOW_VERSION, identity.company_id, identity.member_id,
+                            identity.connection_id, account.id, operation, scope])
+
+
+def overview_cursor_key(identity: Identity) -> bytes:
+    path = connection_root(identity) / "overview-cursor-key.json"
+    if not path.exists():
+        write_private_json(path, {"key": secrets.token_hex(32)})
+    ensure_private_file(path)
+    try:
+        if path.stat().st_size > 256:
+            raise ValueError()
+        key = bytes.fromhex(json.loads(path.read_text(encoding="utf-8"))["key"])
+        if len(key) != 32:
+            raise ValueError()
+        return key
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise TelegramRuntimeError("The local overview cursor key is unavailable; start a new overview after recovery.") from error
+
+
+def overview_cursor(identity: Identity, binding: str, *, state: dict | None = None,
+                    token: str | None = None) -> dict | str:
+    """Bind resumption to this device, account and normalized request.
+
+    This authenticates our own progress record, not Telegram data. It gives no
+    access: every continuation still resolves peers and checks live scope.
+    Tokens are metadata only and are never a durable index of correspondence.
     """
 
-    wrapped = {"ok": True, **result}
-    if compact_json_bytes(wrapped) <= max_output_bytes:
-        return
+    key = overview_cursor_key(identity)
+    if state is not None:
+        body = json.dumps({"v": 1, "binding": binding,
+                           "expires": state["expires"], "state": state},
+                          separators=(",", ":")).encode()
+        encoded = base64.urlsafe_b64encode(body).decode().rstrip("=")
+        result = encoded + "." + hmac.new(key, body, hashlib.sha256).hexdigest()
+        if len(result) > MAX_OVERVIEW_CURSOR_CHARS:
+            raise TelegramRuntimeError("Overview cursor is too large; reduce --dialog-limit.")
+        return result
+    try:
+        if not isinstance(token, str) or len(token) > MAX_OVERVIEW_CURSOR_CHARS:
+            raise ValueError()
+        encoded, signature = token.split(".")
+        body = base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
+        if not hmac.compare_digest(signature, hmac.new(key, body, hashlib.sha256).hexdigest()):
+            raise ValueError()
+        value = json.loads(body)
+        if (value["v"] != 1 or value["binding"] != binding
+                or not time.time() < value["expires"] <= time.time() + OVERVIEW_CURSOR_TTL
+                or value["state"]["expires"] != value["expires"]):
+            raise ValueError()
+        return value["state"]
+    except (ValueError, KeyError, TypeError) as error:
+        raise TelegramRuntimeError("Overview cursor is invalid, expired or belongs to another request/account. Start from the first page.") from error
 
-    result["hit_output_byte_limit"] = True
-    warning = "output_byte_limit_reached"
-    if warning not in result["warnings"]:
-        result["warnings"].append(warning)
 
-    for chat in reversed(result["chats"]):
-        messages = chat["messages"]
-        while messages and compact_json_bytes({"ok": True, **result}) > max_output_bytes:
-            # Removing in moderate chunks avoids repeatedly serializing a
-            # multi-megabyte object while still preserving most of the page.
-            remove_count = max(1, min(len(messages), len(messages) // 8))
-            del messages[-remove_count:]
-            mark_export_chat_incomplete(chat, "output_byte_limit")
-            chat["message_count"] = len(messages)
-            rebuild_export_summary(result)
-        if compact_json_bytes({"ok": True, **result}) <= max_output_bytes:
-            return
-
-    raise TelegramRuntimeError(
-        "Export metadata exceeds --max-output-bytes; narrow the dialog selection."
-    )
+def new_inventory_state() -> dict:
+    return {"phase": "scan", "folder": 0, "pinned": True, "pinOffset": 0,
+            "offset": None, "digest": "0" * 64, "count": 0, "expected": None,
+            "verified": False, "reasons": [], "generation": None}
 
 
-async def export_targets(
-    client: Any,
-    args: argparse.Namespace,
-) -> tuple[list[tuple[Any, str | None]], int, bool, list[str]]:
-    """Resolve exact chats or a bounded dialog page without raw peer dumps."""
+async def inventory_generation(client: Any) -> list[int]:
+    """Read Telegram's update position without acknowledging messages.
 
-    targets: list[tuple[Any, str | None]] = []
-    warnings: list[str] = []
-    seen: set[tuple[str, int | str | None]] = set()
-    dialogs_scanned = 0
-    hit_dialog_limit = False
+    Two matching lists alone miss a peer removed before the first pass reaches
+    it. The account update position additionally detects changes during/between
+    pages. This deliberately rejects unrelated account changes conservatively;
+    it still is not an atomic historical snapshot of Telegram.
+    """
 
-    if args.chat:
-        for reference in args.chat:
-            entity = await resolve_entity(client, reference)
-            entity_type = telegram_entity_type(entity)
-            if args.chat_type != "any" and entity_type != args.chat_type:
-                warnings.append(f"chat_type_mismatch:{reference}")
-                continue
-            public = public_entity(entity)
-            identity = (entity_type, public["id"] or public["username"] or public["title"])
-            if identity in seen:
-                continue
-            seen.add(identity)
-            targets.append((entity, reference))
-        return targets, dialogs_scanned, hit_dialog_limit, warnings
+    from telethon.tl.functions.updates import GetStateRequest
+    response = await client(GetStateRequest())
+    position = [nonnegative_integer(getattr(response, name, None)) for name in ("pts", "qts", "seq")]
+    if any(value is None for value in position):
+        raise TelegramRuntimeError("Telegram inventory update position is unavailable.")
+    return position
 
-    async for dialog in client.iter_dialogs(limit=args.dialog_limit + 1):
-        dialogs_scanned += 1
-        if dialogs_scanned > args.dialog_limit:
-            hit_dialog_limit = True
-            dialogs_scanned = args.dialog_limit
-            break
-        entity = dialog.entity
-        entity_type = telegram_entity_type(entity)
-        if args.chat_type != "any" and entity_type != args.chat_type:
+
+def inventory_coverage(state: dict) -> dict:
+    scanned = state["expected"]["count"] if state["expected"] else state["count"]
+    done = state["phase"] == "done"
+    return {"source": "messages.getDialogs", "phase": state["phase"],
+            "dialogsScanned": scanned, "enumerationComplete": state["expected"] is not None,
+            "verificationComplete": done, "complete": done and state["verified"] and not state["reasons"],
+            "hasMore": not done, "snapshotAtomic": False,
+            "consistency": "matching_metadata_passes" if state["verified"] else "unverified",
+            "incompleteReasons": list(state["reasons"])}
+
+
+def inventory_rows(response: Any, folder: int, pinned: bool, utils: Any) -> list[dict]:
+    """Project metadata without serializing any preview/message text or hashes."""
+
+    entities = {utils.get_peer_id(e): e for e in [*response.users, *response.chats]}
+    messages = {(utils.get_peer_id(m.peer_id), m.id): m for m in response.messages
+                if getattr(m, "peer_id", None) is not None}
+    rows = []
+    for dialog in response.dialogs:
+        # DialogFolder is the archive placeholder, not an extra readable chat.
+        if not hasattr(dialog, "peer"):
             continue
+        peer_id = utils.get_peer_id(dialog.peer)
+        entity = entities.get(peer_id)
+        if not hasattr(dialog, "folder_id"):
+            raise TelegramRuntimeError("Telegram inventory archive metadata is unavailable.")
+        folder_id = dialog.folder_id
+        folder_id = 0 if folder_id is None else folder_id
+        if entity is None or folder_id != folder:
+            raise TelegramRuntimeError("Telegram inventory metadata does not match the requested folder.")
+        top = nonnegative_integer(getattr(dialog, "top_message", None))
+        message = messages.get((peer_id, top))
+        date = getattr(message, "date", None)
+        if top is None or (top and not isinstance(date, datetime)):
+            raise TelegramRuntimeError("Telegram inventory cannot determine a safe pagination offset.")
         public = public_entity(entity)
-        identity = (entity_type, public["id"] or public["username"] or public["title"])
-        if identity in seen:
-            continue
-        seen.add(identity)
-        targets.append((entity, None))
+        if any(row["id"] == peer_id for row in rows):
+            raise TelegramRuntimeError("Telegram inventory returned duplicate peer metadata.")
+        rows.append({"id": peer_id, "title": public["title"], "entity": public,
+                     "chatType": telegram_entity_type(entity),
+                     "unreadCount": nonnegative_integer(getattr(dialog, "unread_count", None)),
+                     "archived": folder == 1, "folderId": folder, "pinned": pinned,
+                     "lastMessageAt": format_utc_datetime(date) if date else None,
+                     "topMessageId": top})
+    return rows
 
-    if hit_dialog_limit:
-        warnings.append("dialog_limit_reached")
-    return targets, dialogs_scanned, hit_dialog_limit, warnings
+
+async def inventory_page(client: Any, args: argparse.Namespace, state: dict, limit: int) -> list[dict]:
+    """Walk pins and ordinary dialogs separately, then verify the whole walk.
+
+    Pinned order is not chronological. A cursor derived from the last pin would
+    skip newer ordinary dialogs. Each folder therefore has its own pinned
+    stage, followed by getDialogs(exclude_pinned=True). An independent second
+    pass detects reorder/add/remove/archive changes instead of trusting count
+    or a short page as evidence of an immutable snapshot.
+    """
+
+    GetDialogs, GetPinned, _GetPeer, Empty, _InputDialog, utils = import_telethon_inventory()
+    folders = {"all": [0, 1], "active": [0], "archived": [1]}[overview_scope(args)]
+    rows = []
+    scanned = 0
+    phase = state["phase"]
+    generation = await inventory_generation(client)
+    if state["generation"] is None:
+        state["generation"] = generation
+    elif generation != state["generation"] and "inventory_changed" not in state["reasons"]:
+        state["reasons"].append("inventory_changed")
+    while scanned < limit and state["phase"] == phase and phase != "done":
+        if state["folder"] >= len(folders):
+            if phase == "scan":
+                state["expected"] = {"count": state["count"], "digest": state["digest"]}
+                state.update(phase="verify", folder=0, pinned=True, pinOffset=0,
+                             offset=None, count=0, digest="0" * 64)
+            else:
+                state["verified"] = state["expected"] == {"count": state["count"], "digest": state["digest"]}
+                if not state["verified"] and "inventory_changed" not in state["reasons"]:
+                    state["reasons"].append("inventory_changed")
+                state["phase"] = "done"
+            break
+        folder = folders[state["folder"]]
+        if state["pinned"]:
+            response = await client(GetPinned(folder_id=folder))
+            page = inventory_rows(response, folder, True, utils)
+            if len(page) > 1_000:
+                raise TelegramRuntimeError("Telegram pinned dialog inventory exceeds its safe bound.")
+            start = state["pinOffset"]
+            selected = page[start:start + limit - scanned]
+            state["pinOffset"] += len(selected)
+            finished = state["pinOffset"] >= len(page)
+        else:
+            offset = state["offset"]
+            offset_peer = await client.get_input_entity(offset[0]) if offset else Empty()
+            response = await client(GetDialogs(
+                exclude_pinned=True, folder_id=folder, offset_peer=offset_peer,
+                offset_id=offset[1] if offset else 0,
+                offset_date=datetime.fromisoformat(offset[2]) if offset and offset[2] else None,
+                limit=min(100, limit - scanned), hash=0))
+            selected = inventory_rows(response, folder, False, utils)
+            if len(selected) > min(100, limit - scanned):
+                raise TelegramRuntimeError("Telegram inventory returned more dialogs than requested.")
+            # A Slice is partial even when it contains fewer rows than requested.
+            # One terminal Dialogs response or an explicit empty page closes it.
+            finished = type(response).__name__ == "Dialogs" or not selected
+            if selected:
+                last = selected[-1]
+                next_offset = [last["id"], last["topMessageId"], last["lastMessageAt"]]
+                if next_offset == offset:
+                    raise TelegramRuntimeError("Telegram dialog inventory cursor did not advance.")
+                state["offset"] = next_offset
+        for row in selected:
+            state["digest"] = overview_digest([state["digest"], row["id"], row["folderId"],
+                                               row["pinned"], row["topMessageId"], row["lastMessageAt"]])
+            state["count"] += 1
+            scanned += 1
+            if phase == "scan" and getattr(args, "chat_type", "any") in ("any", row["chatType"]):
+                rows.append(row)
+        if finished:
+            if state["pinned"]:
+                state.update(pinned=False, pinOffset=0, offset=None)
+            else:
+                state.update(folder=state["folder"] + 1, pinned=True, pinOffset=0, offset=None)
+    if await inventory_generation(client) != state["generation"] and "inventory_changed" not in state["reasons"]:
+        state["reasons"].append("inventory_changed")
+    return rows
+
+
+async def live_dialog_metadata(client: Any, entity: Any) -> dict | None:
+    """Recheck an exact peer before history; missing folder metadata fails closed."""
+
+    _Dialogs, _Pinned, GetPeer, _Empty, InputDialog, utils = import_telethon_inventory()
+    peer_id = utils.get_peer_id(entity)
+    response = await client(GetPeer(peers=[InputDialog(await client.get_input_entity(entity))]))
+    matches = [d for d in response.dialogs if hasattr(d, "peer") and utils.get_peer_id(d.peer) == peer_id]
+    if len(matches) != 1:
+        return None
+    if not hasattr(matches[0], "folder_id"):
+        return None
+    folder = getattr(matches[0], "folder_id", None)
+    folder = 0 if folder is None else folder
+    if folder not in (0, 1):
+        return None
+    return {"archived": folder == 1, "folderId": folder,
+            "topMessageId": nonnegative_integer(getattr(matches[0], "top_message", None))}
+
+
+def new_export_chat(entity: Any, reference: str | None, before: int) -> dict:
+    return {"chat": public_entity(entity), "chat_type": telegram_entity_type(entity),
+            "reference": reference, "message_count": 0, "scanned_count": 0,
+            "hit_per_chat_limit": False, "hit_scan_limit": False,
+            "stopped_older_than_since": False, "history_exhausted": False,
+            "incomplete": False, "incomplete_reasons": [], "warnings": [],
+            "messages": [], "coverage": {"beforeId": before, "nextBeforeId": before or None,
+            "complete": False, "textComplete": True, "unreadInterval": None},
+            "attachments": {"returnedMetadata": 0, "contentRead": 0}}
 
 
 async def command_export_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
-    """Export a bounded, explicit half-open period from selected Telegram chats."""
+    """Return one resumable period page with independent inventory/history coverage.
+
+    Each invocation closes only the portions it actually returns. A cursor keeps
+    the unfinished batch and an exclusive message ID, not message text. Finished
+    chats are removed before the next invocation. Output truncation stops before
+    advancing that ID, including when chronological presentation is requested.
+    """
 
     zone, since, until = export_period(args)
+    scope = overview_scope(args)
+    references = list(dict.fromkeys(str(r).strip() for r in (args.chat or [])))
+    if len(references) > 1_000:
+        raise TelegramRuntimeError("Export accepts at most 1000 exact chat references per request.")
+    request_scope = {"chats": sorted(references), "all": args.all_dialogs,
+                     "archive": scope, "type": args.chat_type,
+                     "since": since.isoformat(), "until": until.isoformat(),
+                     "links": args.include_links, "chronological": args.chronological}
     client = build_client(args, identity)
-    await ensure_authorized(client)
     try:
-        targets, dialogs_scanned, hit_dialog_limit, warnings = await export_targets(
-            client,
-            args,
-        )
-        message_budget = max(
-            0,
-            args.max_output_bytes
-            - min(EXPORT_METADATA_RESERVE_BYTES, args.max_output_bytes // 2),
-        )
-        message_bytes = 0
-        retained_total = 0
-        hit_total_message_limit = False
-        hit_output_byte_limit = False
-        chats: list[dict[str, Any]] = []
-
-        for entity, reference in targets:
-            chat_result: dict[str, Any] = {
-                "chat": public_entity(entity),
-                "chat_type": telegram_entity_type(entity),
-                "reference": reference,
-                "message_count": 0,
-                "scanned_count": 0,
-                "hit_per_chat_limit": False,
-                "hit_scan_limit": False,
-                "stopped_older_than_since": False,
-                "history_exhausted": False,
-                "incomplete": False,
-                "incomplete_reasons": [],
-                "warnings": [],
-                "messages": [],
-            }
-            chats.append(chat_result)
-
-            if retained_total >= args.total_message_limit:
-                hit_total_message_limit = True
-                mark_export_chat_incomplete(chat_result, "total_message_limit")
-                continue
-            if message_bytes >= message_budget:
-                hit_output_byte_limit = True
-                mark_export_chat_incomplete(chat_result, "output_byte_limit")
-                continue
-
-            raw_messages: list[Any] = []
+        await ensure_authorized(client)
+        binding = await overview_binding(client, identity, "export", request_scope)
+        token = getattr(args, "cursor", None)
+        state = overview_cursor(identity, binding, token=token) if token else {
+            "expires": time.time() + OVERVIEW_CURSOR_TTL,
+            "inventory": new_inventory_state() if args.all_dialogs else None,
+            "pending": [{"reference": r, "before": 0} for r in references],
+            "completedChats": 0, "returnedMessages": 0, "gaps": []}
+        inventory = state["inventory"]
+        inventory_failed = False
+        if inventory and not state["pending"] and inventory["phase"] != "done":
+            previous_inventory = copy.deepcopy(inventory)
             try:
-                async for message in client.iter_messages(
-                    entity,
-                    limit=None,
-                    offset_date=until,
-                ):
-                    if chat_result["scanned_count"] >= args.scan_limit:
-                        chat_result["hit_scan_limit"] = True
-                        mark_export_chat_incomplete(chat_result, "scan_limit")
-                        break
-                    chat_result["scanned_count"] += 1
-
-                    message_date = getattr(message, "date", None)
-                    if not isinstance(message_date, datetime):
-                        if "message_without_date" not in chat_result["warnings"]:
-                            chat_result["warnings"].append("message_without_date")
-                        mark_export_chat_incomplete(chat_result, "message_without_date")
-                        continue
-                    if message_date.tzinfo is None:
-                        message_date = message_date.replace(tzinfo=timezone.utc)
-                    message_date = message_date.astimezone(timezone.utc)
-                    if message_date >= until:
-                        continue
-                    if message_date < since:
-                        chat_result["stopped_older_than_since"] = True
-                        break
-                    if len(raw_messages) >= args.per_chat_limit:
-                        chat_result["hit_per_chat_limit"] = True
-                        mark_export_chat_incomplete(chat_result, "per_chat_limit")
-                        break
-                    if retained_total + len(raw_messages) >= args.total_message_limit:
-                        hit_total_message_limit = True
-                        mark_export_chat_incomplete(chat_result, "total_message_limit")
-                        break
-                    raw_messages.append(message)
-                else:
-                    chat_result["history_exhausted"] = True
+                rows = await inventory_page(client, args, inventory, args.dialog_limit)
+                state["pending"] = [{"peer": r["id"], "before": 0} for r in rows]
             except Exception:
-                # A single inaccessible or transiently failing dialog should
-                # not discard the other bounded results or expose raw RPC
-                # diagnostics in the export artifact.
-                chat_result["warnings"].append("chat_read_failed")
-                mark_export_chat_incomplete(chat_result, "chat_read_failed")
-
-            safe_messages = await public_messages(raw_messages, entity)
-            if not args.include_links:
-                safe_messages = [
-                    export_message_without_links(message) for message in safe_messages
-                ]
-            if args.chronological:
-                safe_messages.reverse()
-
-            for safe_message in safe_messages:
-                candidate_bytes = compact_json_bytes(safe_message) + 1
-                if message_bytes + candidate_bytes > message_budget:
-                    hit_output_byte_limit = True
-                    mark_export_chat_incomplete(chat_result, "output_byte_limit")
-                    break
-                chat_result["messages"].append(safe_message)
-                message_bytes += candidate_bytes
-                retained_total += 1
-            if len(chat_result["messages"]) < len(safe_messages):
-                hit_output_byte_limit = True
-                mark_export_chat_incomplete(chat_result, "output_byte_limit")
-            chat_result["message_count"] = len(chat_result["messages"])
-
-        result: dict[str, Any] = {
-            "period": {
-                "since": since.astimezone(zone).isoformat(),
-                "until": until.astimezone(zone).isoformat(),
-                "since_utc": since.isoformat(),
-                "until_utc": until.isoformat(),
-                "timezone": args.timezone,
-                "semantics": "since <= message.date < until",
-            },
-            "read_at": datetime.now(timezone.utc).isoformat(),
-            "parameters": {
-                "selection": "exact_chats" if args.chat else "all_dialogs",
+                # Do not turn a metadata transport/protocol failure into an empty
+                # inventory. Retain the preceding offset and a retryable scope.
+                state["inventory"] = inventory = previous_inventory
+                inventory_failed = True
+        _Dialogs, _Pinned, _GetPeer, _Empty, _InputDialog, utils = import_telethon_inventory()
+        chats = []
+        remaining = []
+        retained = 0
+        used_bytes = 0
+        message_budget = args.max_output_bytes - min(EXPORT_METADATA_RESERVE_BYTES, args.max_output_bytes // 2)
+        total_hit = False
+        output_hit = False
+        scanned_total = 0
+        # A per-chat ceiling alone permits 1000 * 50000 reads. This second cap
+        # bounds one invocation across the whole batch, including failed reads.
+        scan_budget = args.scan_limit
+        seen_peers = set()
+        for pending in state["pending"]:
+            entity = None
+            complete = False
+            chat = None
+            try:
+                reference = pending.get("reference")
+                entity = await resolve_entity(client, str(pending.get("peer", reference)))
+                peer_id = utils.get_peer_id(entity)
+                if pending.get("peer") is not None and pending["peer"] != peer_id:
+                    raise TelegramRuntimeError("Export peer identity changed.")
+                pending["peer"] = peer_id
+                if peer_id in seen_peers:
+                    continue
+                seen_peers.add(peer_id)
+                if args.chat_type not in ("any", telegram_entity_type(entity)):
+                    continue
+                chat = new_export_chat(entity, reference, pending["before"])
+                chat["coverage"]["unreadInterval"] = {
+                    "since": since.isoformat(), "until": until.isoformat(),
+                    "beforeId": pending["before"] or None}
+                chat["chat"]["peerId"] = peer_id
+                chats.append(chat)
+                metadata = await live_dialog_metadata(client, entity)
+                if metadata is None:
+                    mark_export_chat_incomplete(chat, "archive_metadata_unavailable")
+                    remaining.append(pending)
+                    continue
+                chat.update(archived=metadata["archived"], folderId=metadata["folderId"])
+                if ((scope == "active" and metadata["archived"])
+                        or (scope == "archived" and not metadata["archived"])):
+                    # A previously saved ID never overrides today's archive rule.
+                    # This is excluded before history, and keeps global coverage
+                    # honest even for an exact selection without an inventory.
+                    mark_export_chat_incomplete(chat, "archive_scope_mismatch")
+                    if "archive_scope_changed" not in state["gaps"]:
+                        state["gaps"].append("archive_scope_changed")
+                    continue
+                if retained >= args.total_message_limit or used_bytes >= message_budget or scanned_total >= scan_budget:
+                    reason = ("total_message_limit" if retained >= args.total_message_limit else
+                              "output_byte_limit" if used_bytes >= message_budget else "scan_limit")
+                    mark_export_chat_incomplete(chat, reason)
+                    total_hit |= reason == "total_message_limit"
+                    output_hit |= reason == "output_byte_limit"
+                    chat["hit_scan_limit"] = reason == "scan_limit"
+                    remaining.append(pending)
+                    continue
+                before = pending["before"]
+                # Ceil a fractional upper boundary so Telegram's second-precision
+                # date offset cannot drop messages strictly below that boundary.
+                provider_until = datetime.fromtimestamp(math.ceil(until.timestamp()), timezone.utc)
+                async for message in client.iter_messages(entity, limit=scan_budget - scanned_total + 1,
+                                                          offset_date=provider_until, offset_id=before):
+                    message_id = nonnegative_integer(getattr(message, "id", None))
+                    if not message_id or (pending["before"] and message_id >= pending["before"]):
+                        mark_export_chat_incomplete(chat, "history_cursor_stalled")
+                        break
+                    message_peer = getattr(message, "peer_id", None)
+                    if message_peer is not None and utils.get_peer_id(message_peer) != peer_id:
+                        mark_export_chat_incomplete(chat, "foreign_history_peer")
+                        break
+                    if scanned_total >= scan_budget:
+                        chat["hit_scan_limit"] = True
+                        mark_export_chat_incomplete(chat, "scan_limit")
+                        break
+                    chat["scanned_count"] += 1
+                    scanned_total += 1
+                    date = getattr(message, "date", None)
+                    if not isinstance(date, datetime):
+                        mark_export_chat_incomplete(chat, "message_without_date")
+                        if "message_without_date" not in state["gaps"]:
+                            state["gaps"].append("message_without_date")
+                        pending["before"] = message_id
+                        continue
+                    date = date.replace(tzinfo=timezone.utc) if date.tzinfo is None else date.astimezone(timezone.utc)
+                    if date >= until:
+                        pending["before"] = message_id
+                        continue
+                    if date < since:
+                        chat["stopped_older_than_since"] = True
+                        complete = True
+                        break
+                    if len(chat["messages"]) >= args.per_chat_limit:
+                        chat["hit_per_chat_limit"] = True
+                        mark_export_chat_incomplete(chat, "per_chat_limit")
+                        break
+                    if retained >= args.total_message_limit:
+                        total_hit = True
+                        mark_export_chat_incomplete(chat, "total_message_limit")
+                        break
+                    # Export deliberately does not dereference replies. Those
+                    # additional reads could cross the selected period/peer or
+                    # fetch an archived discussion through a cross-chat reply.
+                    safe = public_message(message)
+                    safe["link"] = message_link(entity, message_id)
+                    if not args.include_links:
+                        export_message_without_links(safe)
+                    size = compact_json_bytes(safe) + 1
+                    if used_bytes + size > message_budget:
+                        output_hit = True
+                        mark_export_chat_incomplete(chat, "output_byte_limit")
+                        break
+                    chat["messages"].append(safe)
+                    used_bytes += size
+                    retained += 1
+                    pending["before"] = message_id
+                    if safe["hasMedia"]:
+                        chat["attachments"]["returnedMetadata"] += 1
+                    if safe["textTruncated"]:
+                        chat["coverage"]["textComplete"] = False
+                        mark_export_chat_incomplete(chat, "text_truncated")
+                        if "text_truncated" not in state["gaps"]:
+                            state["gaps"].append("text_truncated")
+                else:
+                    complete = True
+                    chat["history_exhausted"] = True
+            except Exception:
+                # Preserve known progress and the rest of the batch, never raw
+                # RPC text. Failed references remain open and can be resumed.
+                if chat is None:
+                    chat = new_export_chat(entity, pending.get("reference"), pending["before"])
+                    chats.append(chat)
+                mark_export_chat_incomplete(chat, "chat_read_failed")
+            if complete:
+                state["completedChats"] += 1
+            else:
+                remaining.append(pending)
+            if chat is not None:
+                chat["message_count"] = len(chat["messages"])
+                chat["coverage"].update(complete=complete and not chat["incomplete"],
+                                        nextBeforeId=None if complete else pending["before"] or None,
+                                        unreadInterval=None if complete else {
+                                            "since": since.isoformat(), "until": until.isoformat(),
+                                            "beforeId": pending["before"] or None})
+                if args.chronological:
+                    chat["messages"].reverse()
+        state["pending"] = remaining
+        state["returnedMessages"] += retained
+        inv_coverage = inventory_coverage(inventory) if inventory else {
+            "source": "exact_chats", "complete": True, "hasMore": False}
+        more = bool(remaining) or inv_coverage["hasMore"]
+        reasons = list(state["gaps"])
+        if inventory_failed:
+            reasons.append("inventory_read_failed")
+        if not inv_coverage["complete"]:
+            reasons += inv_coverage.get("incompleteReasons", []) or ["inventory_unfinished"]
+        if remaining:
+            reasons.append("history_unfinished")
+        result = {
+            "period": {"since": since.astimezone(zone).isoformat(), "until": until.astimezone(zone).isoformat(),
+                       "since_utc": since.isoformat(), "until_utc": until.isoformat(),
+                       "timezone": args.timezone, "semantics": "since <= message.date < until"},
+            "read_at": utc_now().isoformat(), "parameters": {**request_scope,
+                "selection": "all_dialogs" if args.all_dialogs else "exact_chats",
                 "chat_type": args.chat_type,
-                "dialog_limit": args.dialog_limit,
-                "per_chat_limit": args.per_chat_limit,
-                "scan_limit": args.scan_limit,
-                "total_message_limit": args.total_message_limit,
-                "max_output_bytes": args.max_output_bytes,
-                "chronological": args.chronological,
                 "include_links": args.include_links,
-            },
-            "totals": {
-                "dialogs_scanned": dialogs_scanned,
-                "chats_selected": len(chats),
-                "chats_completed": 0,
-                "messages": 0,
-                "scanned_messages": 0,
-            },
-            "chats": chats,
-            "message_count": 0,
-            "scanned_count": 0,
-            "hit_dialog_limit": hit_dialog_limit,
-            "hit_per_chat_limit": False,
-            "hit_scan_limit": False,
-            "hit_total_message_limit": hit_total_message_limit,
-            "hit_output_byte_limit": hit_output_byte_limit,
-            "incomplete_chats": [],
-            "warnings": warnings,
-        }
-        if hit_total_message_limit:
+                "dialog_limit": args.dialog_limit, "per_chat_limit": args.per_chat_limit,
+                "scan_limit": args.scan_limit, "total_message_limit": args.total_message_limit,
+                "max_output_bytes": args.max_output_bytes},
+            "chats": chats, "message_count": 0, "scanned_count": 0,
+            "hit_dialog_limit": bool(inventory and not inv_coverage["enumerationComplete"]),
+            "hit_per_chat_limit": False, "hit_scan_limit": False,
+            "hit_total_message_limit": total_hit, "hit_output_byte_limit": output_hit,
+            "incomplete_chats": [], "warnings": [],
+            "totals": {"dialogs_scanned": inv_coverage.get("dialogsScanned", 0)},
+            "coverage": {"complete": not more and inv_coverage["complete"] and not state["gaps"],
+                "inventory": inv_coverage, "hasMore": more,
+                "nextCursor": overview_cursor(identity, binding, state=state) if more else None,
+                "completedChats": state["completedChats"], "returnedMessages": state["returnedMessages"],
+                "incompleteReasons": reasons, "snapshotAtomic": False,
+                "attachmentsContentRead": False, "textComplete": "text_truncated" not in state["gaps"]},
+            "readState": {"readReceiptsSent": False, "archiveModified": False}}
+        if total_hit:
             result["warnings"].append("total_message_limit_reached")
-        if hit_output_byte_limit:
+        if output_hit:
             result["warnings"].append("output_byte_limit_reached")
         rebuild_export_summary(result)
-        enforce_export_output_limit(result, args.max_output_bytes)
+        # Never silently trim after cursor creation: doing so would advance past
+        # omitted messages. The reserve bounds ordinary metadata; unusual batches
+        # fail explicitly with no delivered page and can be retried more narrowly.
+        if compact_json_bytes({"ok": True, **result}) > args.max_output_bytes:
+            raise TelegramRuntimeError("Export metadata exceeds --max-output-bytes; reduce --dialog-limit or exact chats.")
         return result
     finally:
         await client.disconnect()
@@ -3204,25 +3463,27 @@ async def command_export_async(args: argparse.Namespace, identity: Identity) -> 
 
 async def command_dialogs_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
     if args.query is not None:
+        if getattr(args, "cursor", None):
+            raise TelegramRuntimeError("contacts.search does not support an inventory cursor.")
         return await command_dialog_search_async(args, identity)
     client = build_client(args, identity)
-    await ensure_authorized(client)
     try:
-        query = (args.query or "").casefold()
-        dialogs = []
-        async for dialog in client.iter_dialogs(limit=min(args.limit * 5, 500)):
-            title = str(dialog.name or "")
-            if query and query not in title.casefold():
-                continue
-            dialogs.append({
-                "id": dialog.id,
-                "title": title,
-                "unreadCount": dialog.unread_count,
-                "entity": public_entity(dialog.entity),
-            })
-            if len(dialogs) >= args.limit:
-                break
-        return {"dialogs": dialogs}
+        await ensure_authorized(client)
+        binding = await overview_binding(client, identity, "dialogs", {"archive": overview_scope(args)})
+        token = getattr(args, "cursor", None)
+        state = overview_cursor(identity, binding, token=token) if token else {
+            "expires": time.time() + OVERVIEW_CURSOR_TTL, "inventory": new_inventory_state()}
+        rows = await inventory_page(client, args, state["inventory"], args.limit)
+        coverage = inventory_coverage(state["inventory"])
+        coverage.update(nextCursor=overview_cursor(identity, binding, state=state) if coverage["hasMore"] else None,
+                        returned=len(rows), archiveScope=overview_scope(args),
+                        unreadFilterApplied=False)
+        return {"dialogs": rows, "coverage": coverage,
+                "readState": {"readReceiptsSent": False, "archiveModified": False}}
+    except TelegramRuntimeError:
+        raise
+    except Exception as error:
+        raise TelegramRuntimeError("Telegram dialog inventory failed; this is not an empty inventory.") from error
     finally:
         await client.disconnect()
 
@@ -3271,6 +3532,7 @@ async def command_dialog_search_async(args: argparse.Namespace, identity: Identi
                 selected.append((peer_id, entity))
 
         unread = {}
+        folders = {}
         unread_available = True
         if selected:
             try:
@@ -3279,12 +3541,27 @@ async def command_dialog_search_async(args: argparse.Namespace, identity: Identi
                 peers = [InputDialogPeer(await client.get_input_entity(e)) for _id, e in selected]
                 metadata = await client(GetPeerDialogsRequest(peers=peers))
                 unread = {utils.get_peer_id(d.peer): d.unread_count for d in metadata.dialogs}
+                # An absent TL field is unknown, whereas an explicit None in
+                # the optional field means the ordinary (non-archive) folder.
+                folders = {utils.get_peer_id(d.peer): (d.folder_id or 0)
+                           for d in metadata.dialogs
+                           if hasattr(d, "peer") and hasattr(d, "folder_id")
+                           and d.folder_id in (None, 0, 1)}
             except Exception:
                 unread_available = False
+        scope = overview_scope(args)
         dialogs = [{"id": peer_id, "title": public_entity(entity)["title"],
                     "unreadCount": unread.get(peer_id), "entity": public_entity(entity)}
-                   for peer_id, entity in selected]
+                   for peer_id, entity in selected
+                   if scope == "all" or folders.get(peer_id) == (0 if scope == "active" else 1)]
+        # Missing metadata never admits a peer to an archive-restricted result.
+        # Preserve the legacy all-scope result projection for search callers.
+        if scope != "all":
+            for row in dialogs:
+                row.update(archived=folders[row["id"]] == 1, folderId=folders[row["id"]])
         reasons = ["provider_search_not_exhaustive"]
+        if scope != "all" and any(i not in folders for i, _entity in selected):
+            reasons.append("archive_metadata_unavailable")
         limit_reached = len(own_peers) >= args.limit
         if limit_reached:
             reasons.append("result_limit_reached")
@@ -5393,6 +5670,9 @@ def add_export_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--since", required=True, help="Inclusive ISO 8601 boundary")
     parser.add_argument("--until", required=True, help="Exclusive ISO 8601 boundary")
     parser.add_argument("--timezone", default=DEFAULT_EXPORT_TIMEZONE)
+    parser.add_argument("--archive-scope", choices=ARCHIVE_SCOPES, default="all",
+                        help="active excludes archive before history; archived selects only archive")
+    parser.add_argument("--cursor", help="Resume the same period/selection using coverage.nextCursor")
     parser.add_argument(
         "--chat-type",
         choices=("any", "group", "channel", "user", "bot"),
@@ -5497,6 +5777,9 @@ def build_parser() -> argparse.ArgumentParser:
     dialogs = commands.add_parser("dialogs", help="List or narrowly search dialogs")
     dialogs.add_argument("--query")
     dialogs.add_argument("--limit", type=int, choices=range(1, 101), default=20, metavar="1..100")
+    dialogs.add_argument("--archive-scope", choices=ARCHIVE_SCOPES, default="all",
+                         help="Inventory all, active (outside archive), or archived dialogs")
+    dialogs.add_argument("--cursor", help="Resume metadata enumeration/verification with coverage.nextCursor")
     resolve_phone = commands.add_parser(
         "resolve-phone",
         help="Resolve one international phone number when Telegram privacy allows it",
