@@ -46,7 +46,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "44";
+const ADAPTER_VERSION = "45";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 // A cold worker must launch Chrome, hydrate home and then resolve the exact
@@ -913,6 +913,15 @@ const assistInteractionAllowed = ({
     && /^(?:контакты|contacts)$/iu.test(normalizedLabel) && !href;
   if (!inLeftPane && !profileHeader && !contactsTab) return false;
   if (!normalizedLabel) return false;
+  // Opening a contact through MAX's search action has no message effect. Cold
+  // direct links need this exact control even during read/profile preparation.
+  // Keep the exception on the home search surface; a bot button, generic
+  // Continue action or a similarly worded mutation must not gain authority.
+  const phoneSearchAction = pathname === "/" && inLeftPane
+    && ["dialogs", "contacts", "profile", "read", "unread", "watch"].includes(fallbackFor)
+    && normalizedTag === "button" && !href && !chatRow
+    && /^(?:найти по номеру|find by phone)(?:\s+\+?[\d\s()-]{6,25})?$/iu.test(normalizedLabel);
+  if (phoneSearchAction) return true;
   // A verified chat row includes its latest-message preview in the accessible
   // label. Words such as "Отправьте" there describe a received message; they
   // do not turn opening the row into a send action.
@@ -1037,6 +1046,14 @@ const installMaxAssistGate = (configuration = {}) => {
       && value.box.x >= 0 && value.box.x < 110 && value.box.y < 700
       && /^(?:контакты|contacts)$/iu.test(value.label) && !value.href;
     if ((!inLeftPane && !profileHeader && !contactsTab) || !value.label) return false;
+    // Mirror the host semantic gate for the provider's exact home-search
+    // action. The native event fence must allow this click before MAX's
+    // handler, otherwise cold-contact recovery silently cancels its own lookup.
+    const phoneSearchAction = window.location.pathname === "/" && inLeftPane
+      && ["dialogs", "contacts", "profile", "read", "unread", "watch"].includes(fallbackFor)
+      && value.tag === "button" && !value.href && !value.chatRow
+      && /^(?:найти по номеру|find by phone)(?:\s+\+?[\d\s()-]{6,25})?$/iu.test(value.label);
+    if (phoneSearchAction) return true;
     // The chat preview is part of the row label. Permit only a structurally
     // recognized row here, so a bot prompt cannot block navigation or grant
     // the surrounding composer and toolbar any new action.
@@ -2036,15 +2053,23 @@ const lookupContactByPhone = async (page, options, phone) => {
   const deadline = Date.now() + Math.min(options.timeoutMs, MAX_UI_READY_TIMEOUT_MS);
   let outcome = await inspectPhoneLookupOutcome(page);
   while (!outcome.chatReady && !outcome.notFoundOrPrivate && Date.now() < deadline) {
+    assertDocumentAvailable(page);
     await page.waitForTimeout(250);
     outcome = await inspectPhoneLookupOutcome(page);
   }
+  assertDocumentAvailable(page);
   if (!outcome.chatReady && outcome.notFoundOrPrivate) {
     return { query: phone, contacts: [], lookupState: "not_found_or_private",
       coverage: { complete: true, scope: "provider-phone-lookup" } };
   }
   if (!outcome.chatReady) {
-    throw new Error("MAX Find by number did not expose a verifiable contact or an explicit unavailable result. The runtime failed closed.");
+    // This is an inspected but unsupported provider surface, not proof that
+    // the number is absent. A read-only worker can keep its fenced search
+    // window open for inspection instead of crashing with a generic error.
+    // Transport/HTTP errors above retain their own classifications.
+    throw new MaxRuntimeError("MAX_UI_UNSUPPORTED",
+      "MAX Find by number did not expose a verifiable contact or an explicit unavailable result. The runtime failed closed.",
+      { reason: "phone-lookup-outcome-unverified", finalMutationActionStarted: false });
   }
   const url = normalizeChatUrl(page.url());
   rememberChatReference(options, { url, title: outcome.title, lookupPhone: phone });
