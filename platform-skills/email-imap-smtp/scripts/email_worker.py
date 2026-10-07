@@ -90,7 +90,7 @@ def main():
         payload = {"ok": True, **result}
         code = 0
     except (runtime.MailboxError, OSError, UnicodeError, ValueError, runtime.imaplib.IMAP4.error) as error:
-        payload = {"ok": False, "error": str(error)}
+        payload = runtime.error_payload(error)
     except Exception:
         # Unexpected native/worker exceptions never expose raw private state.
         payload = {"ok": False, "error": "native_email_worker_failed"}
