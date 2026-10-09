@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "t-bank",
-    "version": "2.3.6",
+    "version": "2.3.7",
     "summary": "Агент наблюдает завершение настройки и входа без обязательного сообщения «заполнил»."
   },
   "connection": null,
   "runtime": {
-    "version": "1.3.6",
+    "version": "1.3.7",
     "minimumHostVersion": "3.7.1",
     "entrypoint": { "path": "scripts/trelio-t-bank.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network"],

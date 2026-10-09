@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.2",
+    "version": "4.5.3",
     "summary": "Агент наблюдает завершение настройки и входа без обязательного сообщения «заполнил»."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.2",
+    "version": "3.5.3",
     "minimumHostVersion": "3.7.1",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",

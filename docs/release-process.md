@@ -12,6 +12,14 @@
 из `main`. Штатный `platform-skill-runtimes.yml` сохраняет единственный artifact.
 Production signing key отсутствует в GitHub и остаётся на backend Trelio.
 
+Каждый release tag отправляй отдельным `git push origin refs/tags/<exact-tag>`.
+GitHub не создаёт push/create events при отправке больше трёх tags одним push,
+поэтому наличие remote tag само по себе не подтверждает запуск сборки.
+Проверь exact workflow run каждого tag до production publication. Если событие
+не создано, immutable tag не удаляется и не переписывается: исправление получает
+новую skill/runtime version и повторный exact PR gate.
+Источник: [GitHub Actions events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#push).
+
 Каждая новая публикация signed runtime получает ещё не выпущенную для этого
 skill runtime version, в том числе когда меняются только инструкции. Backend
 отклоняет повторную версию с `AGENT_SKILL_RUNTIME_VERSION_EXISTS` даже при
