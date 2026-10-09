@@ -39,6 +39,7 @@ export function validatedAuthorizationRequest(request, identity, now = Date.now(
       !origin.port &&
       request.company === identity.company &&
       request.member === identity.member &&
+      (request.accountId ?? null) === (identity.account?.id ?? identity.accountId ?? null) &&
       Number.isInteger(request.startedAt) &&
       Number.isInteger(request.expiresAt) &&
       request.startedAt <= now &&

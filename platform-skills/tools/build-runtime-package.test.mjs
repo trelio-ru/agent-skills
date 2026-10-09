@@ -385,3 +385,21 @@ test("runtime sources cannot be symlinks", (context) => {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
+
+
+test("personal accounts need an enforcing host and cannot bind company secrets", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trelio-account-capability-"));
+  try {
+    const directory = writeFixture(root), file = path.join(directory, "release.json");
+    const definition = JSON.parse(fs.readFileSync(file, "utf8"));
+    definition.runtime.capabilities = ["local-session", "local-accounts-v1"];
+    fs.writeFileSync(file, JSON.stringify(definition));
+    assert.throws(() => buildRuntimePackage(directory), /host 3.7.0/);
+    definition.runtime.minimumHostVersion = "3.7.0";
+    fs.writeFileSync(file, JSON.stringify(definition));
+    assert.ok(buildRuntimePackage(directory).manifest.capabilities.includes("local-accounts-v1"));
+    definition.runtime.capabilities.push("secret-checkout");
+    fs.writeFileSync(file, JSON.stringify(definition));
+    assert.throws(() => buildRuntimePackage(directory));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

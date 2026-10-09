@@ -5,7 +5,7 @@ import os from 'node:os';
 
 export const LEASE_MS = 30 * 60 * 1000;
 export const SKILL = 'gosuslugi';
-export const RUNTIME_VERSION = '3.4.2';
+export const RUNTIME_VERSION = '3.5.0';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // HTTP failure evidence is deliberately smaller than a browser response: a
 // status and a canonical HTTPS origin cannot contain OAuth paths, queries,
@@ -65,9 +65,45 @@ export function identityFromEnv(env = process.env) {
     UUID.test(env.TRELIO_SKILL_MEMBER_ID || ''), 'host_identity_required');
   requireThat(!env.TRELIO_SKILL_CONNECTION_ID, 'unexpected_company_connection');
   return { skill: SKILL, company: env.TRELIO_SKILL_COMPANY_ID.toLowerCase(),
-    member: env.TRELIO_SKILL_MEMBER_ID.toLowerCase(), connection: 'browser' };
+    member: env.TRELIO_SKILL_MEMBER_ID.toLowerCase(), connection: 'browser', ...(env.TRELIO_SKILL_ACCOUNT_JSON ? { account: readAccountBinding(env) } : {}) };
 }
-export function identityKey(identity) { return digest(JSON.stringify(identity)); }
+// Personal storage identity is independent from the live company used by ACL,
+// ESIA caller binding and operation authorization. Preserve the original AAD
+// and OS-key locator on import; names/comments never enter that identity.
+export function readAccountBinding(env = process.env) {
+  if (!env.TRELIO_SKILL_ACCOUNT_JSON) return null;
+  let account;
+  try { account = JSON.parse(env.TRELIO_SKILL_ACCOUNT_JSON); } catch { throw new RuntimeError('account_binding_invalid'); }
+  requireThat(UUID.test(account?.id || '') && /^[a-f0-9]{64}$/.test(account.companyBinding || ''), 'account_binding_invalid');
+  if (account.providerRef !== null) {
+    let ref;
+    try { ref = JSON.parse(account.providerRef); } catch { throw new RuntimeError('account_reference_invalid'); }
+    requireThat(ref && Object.keys(ref).sort().join() === 'company,connection,member,skill' && ref.skill === SKILL &&
+      UUID.test(ref.company || '') && UUID.test(ref.member || '') &&
+      (UUID.test(ref.connection || '') || ref.connection === 'browser'), 'account_reference_invalid');
+  }
+  return { id: account.id, providerRef: account.providerRef, companyBinding: account.companyBinding };
+}
+export function accountStorageIdentity(identity) {
+  if (!identity.account) return identity;
+  return identity.account.providerRef === null ? { skill: SKILL, account: identity.account.id }
+    : JSON.parse(identity.account.providerRef);
+}
+export function identityKey(identity) { return digest(JSON.stringify(accountStorageIdentity(identity))); }
+
+// LEGACY: skill-personal-accounts-v1. Probe only exact storage metadata. Provider
+// credentials remain at their existing protected location; the host imports a
+// value-free reference and records completion atomically, including empty results.
+export async function importExistingAccounts(env = process.env) {
+  const identity = identityFromEnv(env), root = configRoot(env);
+  requireThat(!identity.account, 'account_import_context_invalid');
+  let exists = false;
+  try { const stat = await fs.lstat(storageDirectory(root, identity));
+    requireThat(stat.isDirectory() && !stat.isSymbolicLink(), 'unsafe_storage'); exists = true; }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  return { schemaVersion: 1, accounts: exists ? [{ sourceKey: identity.connection, scope: 'company',
+    name: 'Основной аккаунт', comment: '', providerRef: JSON.stringify(identity) }] : [] };
+}
 export function configRoot(env = process.env, platform = process.platform) {
   requireThat(platform === 'darwin' || platform === 'win32', 'unsupported_platform');
   const root = env.TRELIO_CONFIG_HOME || (platform === 'win32'
@@ -77,7 +113,9 @@ export function configRoot(env = process.env, platform = process.platform) {
   return root;
 }
 export function storageDirectory(root, identity) {
-  return path.join(root, 'integrations', SKILL, identity.company, identity.member, identity.connection);
+  if (identity.account?.providerRef === null) return path.join(root, 'integrations', SKILL, 'accounts', identity.account.id);
+  const owner = accountStorageIdentity(identity);
+  return path.join(root, 'integrations', SKILL, owner.company, owner.member, owner.connection);
 }
 
 // Authentication data has exactly one on-disk representation: AEAD ciphertext.

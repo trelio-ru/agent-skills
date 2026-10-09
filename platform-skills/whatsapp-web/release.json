@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "whatsapp-web",
-    "version": "2.1.1",
-    "summary": "HTTP-код ошибки основной страницы сохраняется в безопасной диагностике и не маскируется под необходимость нового входа."
+    "version": "2.2.0",
+    "summary": "Несколько личных аккаунтов с названиями и комментариями, выбором для каждой компании и сохранением существующих подключений."
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,8 +17,8 @@
     ]
   },
   "runtime": {
-    "version": "2.1.1",
-    "minimumHostVersion": "3.4.0",
+    "version": "2.2.0",
+    "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "scripts/trelio-whatsapp.mjs",
       "interpreter": "node"
@@ -26,7 +26,8 @@
     "capabilities": [
       "browser",
       "local-session",
-      "network"
+      "network",
+      "local-accounts-v1"
     ],
     "files": [
       {

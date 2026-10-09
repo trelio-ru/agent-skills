@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.5.2",
-    "summary": "Чтение сообщений Telegram возвращает реакции: эмодзи, количество, собственный выбор и доступные сведения о последних участниках. Реакции сохраняются в точных сообщениях, поиске, ветках, контексте и экспорте."
+    "version": "2.6.0",
+    "summary": "Несколько личных аккаунтов с названиями и комментариями, выбором для каждой компании и сохранением существующих подключений."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,15 +18,16 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.5.2",
-    "minimumHostVersion": "1.11.0",
+    "version": "2.6.0",
+    "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
       "interpreter": "python"
     },
     "capabilities": [
       "local-session",
-      "network"
+      "network",
+      "local-accounts-v1"
     ],
     "files": [
       {

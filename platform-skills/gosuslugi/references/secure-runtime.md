@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.4.2 объявляет signed host browser-session class
+Runtime 3.5.0 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -11,7 +11,9 @@ continuous-clock barrier и fresh OS unlock. Plain Chromium profile остаёт
 
 `vault.json` – единственный persistent credential/session record: JSON envelope
 с AES-256-GCM ciphertext, случайным 96-bit nonce, 128-bit tag и AAD для exact
-skill/company/member/connection identity. Версии runtime и задачи не меняют
+storage identity аккаунта: UUID нового аккаунта либо прежний
+company/member/connection из импортированного providerRef. Живая company identity
+остаётся отдельной для caller/approval. Полный [контракт аккаунтов](../../../docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов). Версии runtime и задачи не меняют
 namespace. В plaintext не записываются телефон, пароль, TOTP seed, текущий
 код, cookies, localStorage или IndexedDB. Новый record атомарно заменяет старый
 после fsync; повреждённый/чужой envelope не запускает повторный setup.

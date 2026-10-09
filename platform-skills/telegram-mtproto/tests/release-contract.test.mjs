@@ -79,17 +79,17 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
   assert.match(runtimeSource, /MIN_SCHEDULE_LEAD_SECONDS = 60/u);
   assert.match(runtimeSource, /"scheduled"/u);
   assert.match(runtimeSource, /"--schedule-at"/u);
-  assert.equal(releaseManifest.release.version, "2.5.2");
+  assert.equal(releaseManifest.release.version, "2.6.0");
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.5.2");
-  assert.equal(releaseManifest.runtime.minimumHostVersion, "1.11.0");
+  assert.equal(releaseManifest.runtime.version, "2.6.0");
+  assert.equal(releaseManifest.runtime.minimumHostVersion, "3.7.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),
     [],
   );
   assert.deepEqual(releaseManifest.connection.deprecatedConfigKeys, ["apiId", "allowAutonomous"]);
   assert.deepEqual(releaseManifest.connection.secretFields, []);
-  assert.deepEqual(releaseManifest.runtime.capabilities, ["local-session", "network"]);
+  assert.deepEqual(releaseManifest.runtime.capabilities, ["local-session", "network", "local-accounts-v1"]);
   assert.deepEqual(releaseManifest.runtime.files[1], {
     sourceEnvironment: "TRELIO_TELEGRAM_APP_CREDENTIAL_JSON",
     releaseInputExposure: "package-recipient",
@@ -146,5 +146,5 @@ test("Telegram package embeds only the declared distributable release input", ()
     distributableInput,
   );
   assert.equal(runtimePackage.files.length, 2);
-  assert.deepEqual(runtimePackage.capabilities, ["local-session", "network"]);
+  assert.deepEqual(runtimePackage.capabilities, ["local-session", "network", "local-accounts-v1"]);
 });
