@@ -40,7 +40,12 @@ confirmation. Обычный start password dialog login Keychain не вызы�
 
 Каждый новый `start`/`authorize`/`configure`/`forget` сначала читает точное
 название текущего чата по `CODEX_THREAD_ID` из локального Codex App Server и
-проверяет ID ответа. Bounded `requestTitle` остаётся запасной темой от
+проверяет ID ответа. CLI выбирается по проверенному абсолютному пути: только
+absolute entries текущего PATH и фиксированные macOS bundle locations ChatGPT
+или Codex. Ограниченный host PATH не расширяется; shell wrappers, plugin cache
+и файлы других чатов не используются. Поиск CLI и metadata ограничен общими
+тремя секундами; поздний результат поиска не запускает дочерний процесс.
+Bounded `requestTitle` остаётся запасной темой от
 вызывающего клиента, если exact чтение недоступно или это Claude Code. На macOS и Windows выбранный текст передаётся native
 процессам только bounded JSON через stdin. Отдельный macOS key helper использует
 его в `localizedReason` Touch ID/пароль prompt, а Windows – в message CredUI: `Чат «…» запрашивает

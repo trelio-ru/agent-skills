@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "t-bank",
-    "version": "2.3.3",
-    "summary": "HTTP-код ошибки кабинета и T-ID сохраняется через браузерный помощник, авторизацию и статус сессии."
+    "version": "2.3.4",
+    "summary": "Название запрашивающего чата показывается в системном окне доступа и при ограниченном PATH Codex Desktop."
   },
   "connection": null,
   "runtime": {
-    "version": "1.3.3",
+    "version": "1.3.4",
     "minimumHostVersion": "3.4.0",
     "entrypoint": { "path": "scripts/trelio-t-bank.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network"],

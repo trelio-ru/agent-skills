@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.4.1 объявляет signed host browser-session class
+Runtime 3.4.2 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -68,7 +68,12 @@ macOS: 256-bit key хранится в file-based login Keychain, access ACL д�
 `LAContext.deviceOwnerAuthentication` с reuse interval 0. Исполняемый файл
 macOS называется `Trelio`, чтобы системное окно показывало имя приложения.
 Runtime сначала читает точное название текущего чата из локального Codex App
-Server по `CODEX_THREAD_ID` и сверяет возвращённый ID. Для Codex значение
+Server по `CODEX_THREAD_ID` и сверяет возвращённый ID. CLI
+`codex` разрешается в проверенный absolute executable только из absolute PATH
+entries и фиксированных macOS bundle locations ChatGPT/Codex. Host PATH не
+расширяется, shell wrappers, plugin cache и private chat files не сканируются.
+CLI discovery и exact metadata read используют один трёхсекундный deadline;
+истёкший discovery не запускает поздний child. Для Codex значение
 `--request-title` не переопределяет этот результат; при недоступном exact чтении
 runtime может использовать короткую тему, переданную вызывающим клиентом.
 Без обоих значений native prompt остаётся нейтральным. Title-aware key helper получает выбранный текст через

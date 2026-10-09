@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.4.1",
-    "summary": "Вход в подготовленной форме продолжается автоматически: завершённый helper не блокирует новую разрешённую процедуру в той же вкладке. Форма, файлы и принятое согласие сохраняются."
+    "version": "4.4.2",
+    "summary": "Название запрашивающего чата показывается в системном окне доступа и при ограниченном PATH Codex Desktop."
   },
   "connection": null,
   "runtime": {
-    "version": "3.4.1",
+    "version": "3.4.2",
     "minimumHostVersion": "3.0.22",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",
