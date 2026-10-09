@@ -8,7 +8,7 @@
   "connection": null,
   "runtime": {
     "version": "1.3.5",
-    "minimumHostVersion": "3.6.3",
+    "minimumHostVersion": "3.7.1",
     "entrypoint": { "path": "scripts/trelio-t-bank.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network"],
     "files": [

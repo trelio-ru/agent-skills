@@ -29,7 +29,7 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 тест должен пройти executable discovery и реальный subprocess protocol, а не
 только получить подставленный заголовок. Сохраняй exact thread ID, общий deadline
 и frozen native helper identity; путь CLI разрешается без расширения PATH.
-Для session-bound запуска ID чата задаёт текущая hook-сессия host >=3.6.3,
+Для session-bound запуска ID чата задаёт текущая hook-сессия host >=3.7.1,
 не окружение persistent MCP. Provider minimum фиксирует эту зависимость,
 чтобы старый bridge обновился штатным recovery до запуска пакета.
 Для MAX чтение пустого личного диалога следует разделу «Пассивное чтение»
