@@ -27,7 +27,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 MAX_PNG = 8 * 1024 * 1024
 MAX_BUNDLE = MAX_PNG * 2
 MAX_DOCX = 64 * 1024 * 1024
@@ -70,6 +70,33 @@ def width_mm(value):
         raise Failure("invalid_width") from None
     require(math.isfinite(result) and 10 <= result <= 100, "invalid_width")
     return result
+
+
+def comment_text(value):
+    """Match host catalogue text bounds; never store a second comment copy."""
+    require(isinstance(value, str), "invalid_comment")
+    result = value.replace("\r\n", "\n").replace("\r", "\n").strip()
+    require(len(result) <= 2000 and not re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", result), "invalid_comment")
+    return result
+
+
+def current_comment():
+    # Verified host already supplied the selected account. Its comment is
+    # metadata, not a credential or permission to sign a document.
+    try:
+        return comment_text(json.loads(os.environ["TRELIO_SKILL_ACCOUNT_JSON"]).get("comment", ""))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise Failure("account_required") from None
+
+
+def comment_update(previous, requested):
+    requested = comment_text(requested)
+    if previous == requested:
+        return {}
+    # The host remains the only catalogue writer. A successful configure
+    # carries the user's exact Save intent to an ordinary account update,
+    # including the old value for conflict detection before fresh revision CAS.
+    return {"accountCommentUpdate": {"previousComment": previous, "comment": requested}}
 
 
 def account():
@@ -345,6 +372,34 @@ def authorized_bundle(root, author, authorized):
     return bundle
 
 
+def configure_from_file(root, image_path, owner, width, expected_revision):
+    """Read an explicitly selected local PNG without a browser or byte output."""
+    require(type(expected_revision) is int and expected_revision >= 0, "invalid_revision")
+    owner = full_name(owner)
+    width = width_mm(width)
+    source = Path(image_path).expanduser().absolute()
+    no_links(source)
+    # Source folders need not have our storage permissions: an already selected
+    # local attachment may live in Downloads. Never repair them or copy a path
+    # into the bundle. Descriptor checks bound reads and reject special files;
+    # non-blocking open prevents a swapped FIFO from hanging the signed worker.
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    with os.fdopen(os.open(source, flags), "rb") as input_file:
+        before = os.fstat(input_file.fileno())
+        require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1
+                and not (getattr(before, "st_file_attributes", 0) & 0x400), "unsafe_source")
+        require(0 < before.st_size <= MAX_PNG, "invalid_png")
+        png = input_file.read(MAX_PNG + 1)
+        after = os.fstat(input_file.fileno())
+        # A concurrent change is not a verified setup. Preserve the prior
+        # account and require a fresh read instead of publishing a mixed file.
+        identity = lambda info: (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        require(identity(before) == identity(after) and len(png) == before.st_size, "source_changed")
+    # Both setup routes share PNG normalization, owner-only atomic storage and
+    # revision CAS. Selecting a source file never grants document-signing rights.
+    return save_bundle(root, owner, png, width, expected_revision)
+
+
 def write_new(path, data):
     path = Path(path).expanduser().absolute()
     no_links(path)
@@ -515,7 +570,9 @@ def insert_docx(source, bundle):
 
 
 def local_form(root, timeout=110, open_browser=True, ready=None):
-    baseline = safe_metadata(read_bundle(root))
+    baseline_bundle = read_bundle(root)
+    baseline = safe_metadata(baseline_bundle)
+    baseline_comment = current_comment()
     token, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     state = {"result": None, "failure": None}
     # Secrets/images stay on loopback. Host/Origin, a per-operation token and
@@ -539,21 +596,24 @@ def local_form(root, timeout=110, open_browser=True, ready=None):
             if self.path != "/" + token or self.headers.get("Host") != authority:
                 self.respond(404, b'{}')
                 return
-            initial = json.dumps({"owner": baseline.get("ownerFullName", ""), "width": baseline.get("widthMm", 34)}, ensure_ascii=True).replace("<", "\\u003c")
+            initial = json.dumps({"owner": baseline.get("ownerFullName", ""), "width": baseline.get("widthMm", 34), "comment": baseline_comment, "configured": baseline["state"] == "configured"}, ensure_ascii=True).replace("<", "\\u003c")
             html = '''<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Настройка факсимиле</title>
-            <style nonce="NONCE">body{font:16px system-ui;max-width:580px;margin:48px auto;padding:24px}label{display:block;margin:20px 0}input{display:block;margin-top:8px;padding:8px;min-height:44px;font:inherit;max-width:100%;box-sizing:border-box}input[type=text]{width:100%}button{min-height:44px;padding:10px 18px;margin-right:12px;font:inherit}p{line-height:1.5}</style>
-            <h1>Настройка факсимиле</h1><p>PNG и ФИО сохранятся только на этом устройстве. Название и условия использования меняются в комментарии аккаунта навыка.</p>
+            <style nonce="NONCE">body{font:16px system-ui;max-width:580px;margin:48px auto;padding:24px}label{display:block;margin:20px 0}input,textarea{display:block;margin-top:8px;padding:8px;min-height:44px;font:inherit;max-width:100%;box-sizing:border-box}input[type=text],textarea{width:100%}button{min-height:44px;padding:10px 18px;margin-right:12px;font:inherit}p{line-height:1.5}</style>
+            <h1>Настройка факсимиле</h1><p>PNG и ФИО сохранятся только на этом устройстве. В комментарии можно указать, когда и для каких документов использовать эту подпись.</p>
             <form id="form"><label>ФИО владельца подписи<input id="owner" type="text" maxlength="240" required autocomplete="off"></label>
             <label>Подпись – PNG с прозрачным фоном<input id="file" type="file" accept="image/png" required></label>
             <label>Ширина в документе, мм<input id="width" type="number" min="10" max="100" step="0.1" required></label>
+            <label>Комментарий<textarea id="comment" rows="4" maxlength="2000" aria-describedby="comment-help"></textarea></label><p id="comment-help">Свободный текст: условия использования, нужные документы и ваши примечания</p>
             <button id="save" type="submit">Сохранить</button><button id="cancel" type="button">Отмена</button></form><p id="status" role="alert" tabindex="-1"></p>
-            <script nonce="NONCE">const initial=INITIAL;const form=document.getElementById('form'),owner=document.getElementById('owner'),width=document.getElementById('width'),file=document.getElementById('file'),save=document.getElementById('save'),cancel=document.getElementById('cancel'),status=document.getElementById('status');owner.value=initial.owner;width.value=initial.width;
-            const messages={invalid_full_name:'Укажите полные имя и фамилию; отчество, если есть',full_name_required:'Укажите ФИО владельца',invalid_width:'Ширина должна быть от 10 до 100 мм',invalid_png:'Не удалось прочитать PNG. Выберите корректный файл',unsupported_png:'Нужен обычный 8-bit PNG с прозрачным фоном без анимации',transparent_png_required:'В PNG должны быть видимые и прозрачные пиксели',revision_conflict:'Настройка уже изменилась. Закройте окно и откройте настройку заново',storage_busy:'Настройка занята другим процессом. Проверьте статус навыка'};
+            <script nonce="NONCE">const initial=INITIAL;const form=document.getElementById('form'),owner=document.getElementById('owner'),width=document.getElementById('width'),comment=document.getElementById('comment'),file=document.getElementById('file'),save=document.getElementById('save'),cancel=document.getElementById('cancel'),status=document.getElementById('status');owner.value=initial.owner;width.value=initial.width;comment.value=initial.comment;file.required=!initial.configured;
+            const messages={invalid_full_name:'Укажите полные имя и фамилию; отчество, если есть',full_name_required:'Укажите ФИО владельца',invalid_comment:'Комментарий должен быть не длиннее 2000 символов',invalid_width:'Ширина должна быть от 10 до 100 мм',invalid_png:'Не удалось прочитать PNG. Выберите корректный файл',unsupported_png:'Нужен обычный 8-bit PNG с прозрачным фоном без анимации',transparent_png_required:'В PNG должны быть видимые и прозрачные пиксели',revision_conflict:'Настройка уже изменилась. Закройте окно и откройте настройку заново',storage_busy:'Настройка занята другим процессом. Проверьте статус навыка'};
             function feedback(message){status.textContent=message;status.focus()}
             async function send(body){const response=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json','X-Facsimile-Nonce':'NONCE'},body:JSON.stringify(body)});return response.json()}
-            form.onsubmit=async(event)=>{event.preventDefault();save.disabled=true;feedback('Сохраняем…');try{const f=file.files[0];if(!f||f.size>8388608){feedback('Выберите PNG размером до 8 МБ');save.disabled=false;file.focus();return}const bytes=new Uint8Array(await f.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));const result=await send({ownerFullName:owner.value,widthMm:width.value,pngBase64:btoa(binary)});feedback(result.ok?'Сохранено. Можно закрыть окно':(messages[result.code]||'Не удалось сохранить. Проверьте статус навыка'));if(result.ok)form.hidden=true;else{save.disabled=false;if(['invalid_full_name','full_name_required'].includes(result.code))owner.focus();if(result.code==='invalid_width')width.focus();if(['invalid_png','unsupported_png','transparent_png_required'].includes(result.code))file.focus();}}catch{feedback('Не удалось подтвердить сохранение. Проверьте статус навыка');save.disabled=false;}};
+            form.onsubmit=async(event)=>{event.preventDefault();save.disabled=true;feedback('Сохраняем…');try{const f=file.files[0];if((!f&&!initial.configured)||(f&&f.size>8388608)){feedback('Выберите PNG размером до 8 МБ');save.disabled=false;file.focus();return}let pngBase64=null;if(f){const bytes=new Uint8Array(await f.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));pngBase64=btoa(binary)}const result=await send({ownerFullName:owner.value,widthMm:width.value,pngBase64,comment:comment.value});feedback(result.ok?'Данные приняты. Агент завершает настройку, окно можно закрыть':(messages[result.code]||'Не удалось сохранить. Проверьте статус навыка'));if(result.ok)form.hidden=true;else{save.disabled=false;if(['invalid_full_name','full_name_required'].includes(result.code))owner.focus();if(result.code==='invalid_width')width.focus();if(['invalid_png','unsupported_png','transparent_png_required'].includes(result.code))file.focus();}}catch{feedback('Не удалось подтвердить сохранение. Проверьте статус навыка');save.disabled=false;}};
             cancel.onclick=async()=>{cancel.disabled=true;try{const result=await send({cancel:true});if(!result.ok)throw Error();form.hidden=true;feedback('Настройка отменена')}catch{feedback('Окно настройки уже недоступно. Проверьте статус навыка');cancel.disabled=false}};</script></html>'''
-            html = html.replace("INITIAL", initial).replace("NONCE", nonce)
+            # Replace template markers before inserting user metadata. Literal
+            # NONCE inside a free comment must remain text, not be rewritten.
+            html = html.replace("NONCE", nonce).replace("INITIAL", initial)
             self.respond(200, html.encode("utf-8"), "text/html")
 
         def do_POST(self):
@@ -574,9 +634,17 @@ def local_form(root, timeout=110, open_browser=True, ready=None):
                 if request == {"cancel": True}:
                     state["result"] = {"state": "cancelled"}
                 else:
-                    require(set(request) == {"ownerFullName", "widthMm", "pngBase64"}, "invalid_form_request")
-                    png = base64.b64decode(request["pngBase64"], validate=True)
-                    state["result"] = save_bundle(root, request["ownerFullName"], png, request["widthMm"], baseline["revision"])
+                    require(set(request) in ({"ownerFullName", "widthMm", "pngBase64"}, {"ownerFullName", "widthMm", "pngBase64", "comment"}), "invalid_form_request")
+                    metadata_update = comment_update(baseline_comment, request.get("comment", baseline_comment))
+                    if request["pngBase64"] is None:
+                        # Existing PNG stays private in this process; editing
+                        # metadata must not require another upload or reveal
+                        # image bytes in HTML. The original revision still CASes.
+                        require(baseline["state"] == "configured", "transparent_png_required")
+                        png = base64.b64decode(baseline_bundle["pngBase64"], validate=True)
+                    else:
+                        png = base64.b64decode(request["pngBase64"], validate=True)
+                    state["result"] = {**save_bundle(root, request["ownerFullName"], png, request["widthMm"], baseline["revision"]), **metadata_update}
                 self.respond(200, b'{"ok":true}')
             except Failure as error:
                 self.respond(400, json.dumps({"ok": False, "code": str(error)}).encode("utf-8"))
@@ -634,7 +702,12 @@ def main(argv=None):
     commands.add_parser("__trelio_accounts_import")
     commands.add_parser("doctor")
     commands.add_parser("show")
-    commands.add_parser("configure")
+    child = commands.add_parser("configure")
+    child.add_argument("--image")
+    child.add_argument("--owner-full-name")
+    child.add_argument("--width-mm")
+    child.add_argument("--comment")
+    child.add_argument("--expected-revision", type=int)
     for command in ("image", "insert-docx"):
         child = commands.add_parser(command)
         child.add_argument("--author", required=True)
@@ -655,7 +728,17 @@ def main(argv=None):
     if args.command in ("doctor", "show"):
         result = safe_metadata(read_bundle(root))
     elif args.command == "configure":
-        result = local_form(root)
+        if any(value is not None for value in (args.image, args.owner_full_name, args.width_mm, args.expected_revision, args.comment)):
+            # Partial automation input must not unexpectedly launch a form or
+            # overwrite a newer signature; only complete exact setup may save.
+            require(args.image is not None and args.owner_full_name is not None
+                    and args.expected_revision is not None, "configuration_fields_required")
+            metadata_update = comment_update(current_comment(), args.comment) if args.comment is not None else {}
+            result = configure_from_file(root, args.image, args.owner_full_name,
+                                         args.width_mm if args.width_mm is not None else 34, args.expected_revision)
+            result.update(metadata_update)
+        else:
+            result = local_form(root)
     elif args.command == "clear":
         require(args.confirm, "clear_confirmation_required")
         with storage_lock(root):
