@@ -349,10 +349,16 @@ class FacsimileTests(unittest.TestCase):
     def test_windows_restricted_parent_filtered_policy_and_persistent_readback(self):
         executable = str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
         def policy():
+            # Hosted CI starts from PowerShell Core and can inherit its module
+            # search path into Windows PowerShell. The read-only test probe
+            # loads the security module from this executable's own fixed
+            # vendor directory; production ACL checks require no module.
+            command = ("Import-Module ($PSHOME + '\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop; "
+                       "[Console]::Out.WriteLine(((Get-ExecutionPolicy -List | ForEach-Object { "
+                       "$_.Scope.ToString() + ':' + $_.ExecutionPolicy.ToString() }) -join ','))")
             result = subprocess.run([executable, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                                     "-Command", "Get-ExecutionPolicy -List | ConvertTo-Json -Compress"],
-                                    capture_output=True, check=True)
-            return json.loads(result.stdout)
+                                     "-Command", command], capture_output=True, check=True, timeout=15)
+            return result.stdout.decode("ascii").strip()
         before = policy()
         # This is process-only Restricted in the parent. The actual signed
         # helper must still bootstrap through its explicit child Bypass argv.
