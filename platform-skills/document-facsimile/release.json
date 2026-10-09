@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "document-facsimile",
-    "version": "1.0.0",
-    "summary": "Локальные факсимиле с обязательным ФИО, отдельными аккаунтами и вставкой подписи в DOCX."
+    "version": "1.0.1",
+    "summary": "Настройка факсимиле агентом из локального PNG без веб-формы и свободный комментарий в ручной форме."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.0",
+    "version": "1.0.1",
     "minimumHostVersion": "3.7.0",
     "entrypoint": { "path": "scripts/trelio-facsimile.py", "interpreter": "python" },
     "capabilities": ["local-session", "local-accounts-v1", "network"],

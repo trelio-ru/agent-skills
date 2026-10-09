@@ -154,6 +154,59 @@ class FacsimileTests(unittest.TestCase):
         self.save(name=OTHER, revision=1)
         self.assertEqual(runtime.read_bundle(self.root)["revision"], 2)
 
+    def test_agent_setup_reads_local_png_without_browser_and_preserves_source(self):
+        source = self.home / "selected-local.png"
+        original = synthetic_png(ancillary=True)
+        source.write_bytes(original)
+        result = self.cli("configure", "--image", str(source), "--owner-full-name", NAME,
+                          "--expected-revision", "0", "--width-mm", "38", "--comment", "Для тестовых документов")
+        self.assertEqual((result["state"], result["revision"], result["widthMm"]), ("configured", 1, 38))
+        self.assertEqual(result["accountCommentUpdate"], {"previousComment": "Only fixture documents", "comment": "Для тестовых документов"})
+        self.assertEqual(source.read_bytes(), original)
+        private = (self.root / "facsimile.json").read_bytes()
+        self.assertNotIn(b"MustDisappear", base64.b64decode(json.loads(private)["pngBase64"]))
+        self.assertNotIn(b"comment", private)
+        self.assertNotIn(str(source), json.dumps(result))
+        self.assertNotIn("pngBase64", result)
+        self.assertEqual(self.cli("configure", "--image", str(source), "--owner-full-name", OTHER,
+                                 "--expected-revision", "0", expected=2)["code"], "revision_conflict")
+        self.assertEqual(runtime.read_bundle(self.root)["ownerFullName"], NAME)
+
+    def test_agent_setup_rejects_partial_or_invalid_input_without_saving(self):
+        source = self.home / "selected-local.png"
+        source.write_bytes(synthetic_png())
+        self.assertEqual(self.cli("configure", "--image", str(source), expected=2)["code"], "configuration_fields_required")
+        for flags, code in ((["--owner-full-name", NAME, "--expected-revision", "-1"], "invalid_revision"),
+                            (["--owner-full-name", "Unknown", "--expected-revision", "0"], "invalid_full_name"),
+                            (["--owner-full-name", NAME, "--expected-revision", "0", "--comment", "x" * 2001], "invalid_comment")):
+            self.assertEqual(self.cli("configure", "--image", str(source), *flags, expected=2)["code"], code)
+        source.write_bytes(b"not a PNG")
+        self.assertEqual(self.cli("configure", "--image", str(source), "--owner-full-name", NAME,
+                                 "--expected-revision", "0", expected=2)["code"], "invalid_png")
+        self.assertIsNone(runtime.read_bundle(self.root))
+
+    def test_agent_setup_rejects_special_and_linked_sources(self):
+        source = self.home / "selected-local.png"
+        source.write_bytes(synthetic_png())
+        linked = self.home / "linked.png"
+        os.link(source, linked)
+        self.failure("unsafe_source", lambda: runtime.configure_from_file(self.root, linked, NAME, 34, 0))
+        linked.unlink()
+        if os.name != "nt":
+            fifo = self.home / "fifo"
+            os.mkfifo(fifo)
+            self.failure("unsafe_source", lambda: runtime.configure_from_file(self.root, fifo, NAME, 34, 0))
+            link = self.home / "symlink.png"
+            link.symlink_to(source)
+            self.failure("unsafe_path", lambda: runtime.configure_from_file(self.root, link, NAME, 34, 0))
+        self.assertIsNone(runtime.read_bundle(self.root))
+
+    def test_comment_update_is_metadata_only_and_unchanged_comment_has_no_second_write(self):
+        self.assertEqual(runtime.comment_update("Existing", " Existing\r\n"), {})
+        self.assertEqual(runtime.comment_update("Existing", ""), {"accountCommentUpdate": {"previousComment": "Existing", "comment": ""}})
+        for value in (None, "x" * 2001, "bad\x00comment"):
+            self.failure("invalid_comment", lambda: runtime.comment_text(value))
+
     def test_lock_does_not_reuse_or_remove_another_mutation_lock(self):
         with runtime.storage_lock(self.root):
             self.failure("storage_busy", lambda: self.save())
@@ -344,6 +397,24 @@ class FacsimileTests(unittest.TestCase):
     def test_form_startup_does_not_require_dns(self):
         with patch("socket.getfqdn", side_effect=AssertionError("loopback DNS must not be used")):
             self.failure("setup_timeout", lambda: runtime.local_form(self.root, timeout=0.01, open_browser=False))
+
+    def test_form_comment_edit_reuses_existing_image_and_returns_host_update_intent(self):
+        saved = self.save()
+        data, thread, done = self.start_form()
+        _, html, _ = self.request(data)
+        self.assertIn(b'<textarea id="comment"', html)
+        self.assertIn(b'Only fixture documents', html)
+        self.assertNotIn(base64.b64encode(synthetic_png()), html)
+        body = {"ownerFullName": NAME, "widthMm": 34, "pngBase64": None, "comment": "Для согласованных тестовых писем"}
+        self.assertEqual(self.request(data, {**body, "comment": "x" * 2001})[0], 400)
+        self.assertEqual(runtime.read_bundle(self.root)["revision"], 1)
+        self.assertEqual(self.request(data, body)[0], 200)
+        self.assertTrue(done.wait(30))
+        thread.join()
+        result = data["result"]
+        self.assertEqual(result["sha256"], saved["sha256"])
+        self.assertEqual(result["accountCommentUpdate"], {"previousComment": "Only fixture documents", "comment": body["comment"]})
+        self.assertNotIn("comment", runtime.read_bundle(self.root))
 
     @unittest.skipUnless(os.name == "nt", "native Windows contract")
     def test_windows_restricted_parent_filtered_policy_and_persistent_readback(self):
