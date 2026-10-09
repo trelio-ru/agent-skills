@@ -15,6 +15,7 @@ PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 TELEGRAM_MTPROTO_TEST_APP_CREDENTIAL_JSON='{"api_id":"12345","api_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 
 FULL_SKILL_SET=(
+  document-facsimile
   email-imap-smtp
   1c-edo
   iphone-mirroring
@@ -34,7 +35,7 @@ print_usage() {
 
 is_supported_skill() {
   case "$1" in
-    email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|russian-post-registered-mail)
+    document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|russian-post-registered-mail)
       return 0
       ;;
     *)
@@ -114,7 +115,7 @@ node --test \
 # is tested. Instruction-only and Remote MCP providers have no package here.
 for skill in "${SELECTED_SKILLS[@]}"; do
   case "${skill}" in
-    email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|gas-pravosudie|max-web|whatsapp-web|telegram-mtproto|telegram-web)
+    document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|gas-pravosudie|max-web|whatsapp-web|telegram-mtproto|telegram-web)
       ;;
     *)
       continue
@@ -136,6 +137,7 @@ done
 # Python providers use only their public test entrypoints. Selection happens
 # before invocation, so a MAX-only patch never starts these suites.
 for skill in \
+  document-facsimile \
   1c-edo \
   email-imap-smtp \
   telegram-mtproto

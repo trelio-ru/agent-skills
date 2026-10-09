@@ -17,6 +17,9 @@ Native DialogFolder исключается по constructor до чтения pe
 сводная строка архива не является чатовой принадлежностью либо history target.
 
 Для нескольких личных аккаунтов читай [общий контракт](docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов): каталог и company bindings принадлежат host, protected storage и вход – provider-у.
+Для факсимиле читай [контракт](platform-skills/document-facsimile/references/workflow.md):
+один account на вариант подписи, обязательное ФИО, локальный PNG, atomic CAS,
+отдельное основание применения и визуальная проверка итогового документа.
 
 Канонический main остаётся чистым. Новая работа выполняется в отдельном
 физическом worktree и ветке codex/* от свежего origin/main. Перед правкой:

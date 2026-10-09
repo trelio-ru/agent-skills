@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "document-facsimile",
+    "version": "1.0.0",
+    "summary": "Локальные факсимиле с обязательным ФИО, отдельными аккаунтами и вставкой подписи в DOCX."
+  },
+  "connection": null,
+  "runtime": {
+    "version": "1.0.0",
+    "minimumHostVersion": "3.7.0",
+    "entrypoint": { "path": "scripts/trelio-facsimile.py", "interpreter": "python" },
+    "capabilities": ["local-session", "local-accounts-v1", "network"],
+    "files": [
+      { "source": "scripts/trelio-facsimile.py", "path": "scripts/trelio-facsimile.py", "mode": 493 },
+      { "source": "scripts/private-storage.ps1", "path": "scripts/private-storage.ps1", "mode": 420 },
+      { "source": "references/workflow.md", "path": "references/workflow.md", "mode": 420 }
+    ]
+  }
+}
