@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { validateWaitOptions, waitForSessionChange, withSessionContinuation, finishedReceiptPhase } from './session-wait.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
@@ -11,17 +12,17 @@ import { bootstrap as bootstrapBrowser, dependencies as loadPlaywright } from '.
 import { validateRequest } from './client.mjs';
 import { browserStorage } from './profile.mjs';
 
-const COMMANDS = ['help', 'doctor', 'bootstrap', 'start', 'status', 'request', 'stop', 'forget'];
+const COMMANDS = ['help', 'doctor', 'bootstrap', 'start', 'wait', 'status', 'request', 'stop', 'forget'];
 export function parseArguments(args) {
   const [command = 'doctor', ...rest] = args;
   requireThat(COMMANDS.includes(command), 'unknown_command');
   const options = {};
   while (rest.length) {
     const flag = rest.shift();
-    requireThat(['--session', '--channel', '--confirm', '--input', '--mode','--headless'].includes(flag) && !Object.hasOwn(options, flag), 'unsupported_option');
+    requireThat(['--after-phase', '--timeout-seconds', '--session', '--channel', '--confirm', '--input', '--mode','--headless'].includes(flag) && !Object.hasOwn(options, flag), 'unsupported_option');
     options[flag] = ['--confirm','--headless'].includes(flag) ? true : rest.shift();
   }
-  const allowed = ['status', 'request', 'stop'].includes(command) ? ['--session', ...(command === 'request' ? ['--input'] : [])]
+  const allowed = command === 'wait' ? ['--session', '--after-phase', '--timeout-seconds'] : ['status', 'request', 'stop'].includes(command) ? ['--session', ...(command === 'request' ? ['--input'] : [])]
     : ['forget'].includes(command) ? ['--confirm', '--channel', '--mode'] : command === 'start' ? ['--channel', '--mode','--headless']
       : ['doctor', 'bootstrap'].includes(command) ? ['--mode'] : [];
   requireThat(Object.keys(options).every(key => allowed.includes(key)), 'unsupported_option');
@@ -30,6 +31,7 @@ export function parseArguments(args) {
   requireThat(!options['--headless']||options['--mode']==='browser','headless_requires_browser_mode');
   if (options['--session']) requireThat(/^[a-f0-9-]{36}$/.test(options['--session']), 'session_invalid');
   if (['forget'].includes(command)) requireThat(options['--confirm'], 'explicit_confirmation_required');
+  if (command === 'wait') validateWaitOptions(options);
   return { command, options };
 }
 export async function readPrivateJson(file, helper) {
@@ -39,12 +41,12 @@ export async function readPrivateJson(file, helper) {
 async function optionalJson(file, helper) {
   try { return await readPrivateJson(file, helper); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
-export function requestControl(control, packet) {
+export function requestControl(control, packet, timeoutMs = 30000) {
   requireThat(Number.isInteger(control.port) && control.port > 0 && control.port <= 65535 &&
     /^[a-f0-9]{64}$/.test(control.token), 'local_control_invalid');
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(packet);
-    const req = http.request({ hostname: '127.0.0.1', port: control.port, path: '/', method: 'POST', timeout: 30000,
+    const req = http.request({ hostname: '127.0.0.1', port: control.port, path: '/', method: 'POST', timeout: timeoutMs,
       headers: { Authorization: `Bearer ${control.token}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, res => {
       let text = ''; res.setEncoding('utf8');
       let bytes = 0;
@@ -106,9 +108,11 @@ async function doctor(directory, helper, root, mode = 'protocol') {
       ? 'Восстановите доступ к связке login средствами macOS; повторный Touch ID не исправляет отказ Keychain.'
       : !runtimeReady ? 'bootstrap' : !configured ? 'start: QR-вход в локальном окне' : 'start: повторное использование сохранённой сессии WhatsApp' };
 }
-export async function run(args) {
+export async function run(args, statusTimeoutMs = 30000) {
   if (args.length === 1 && args[0] === "__trelio_accounts_import") return importExistingAccounts();
   const { command, options } = parseArguments(args);
+  if (command === 'wait') return waitForSessionChange(remaining =>
+    run(['status', '--session', options['--session']], remaining), options);
   // The signed package includes its request schema reference; catalog agents
   // need no private source checkout to discover command arguments.
   if (command === 'help') return { instructions: await fs.readFile(path.join(SOURCE, '../references/commands.md'), 'utf8') };
@@ -144,8 +148,8 @@ export async function run(args) {
       requireThat((lease.transport||'protocol')===transport, 'stop_other_transport_first');
       requireThat(Boolean(lease.headless)===Boolean(options['--headless']),'stop_other_browser_mode_first');
       requireThat(lease.expiresAt > Date.now(), 'expired_guard_still_running');
-      if (control && control.leaseId === lease.leaseId) return requestControl(control, { command: 'status', sessionId: lease.leaseId });
-      return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };
+      if (control && control.leaseId === lease.leaseId) return withSessionContinuation(await requestControl(control, { command: 'status', sessionId: lease.leaseId }));
+      return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt });
     }
     // A dead supervisor permits recovery of only these exact disposable control
     // records. Ciphertext and native OS keys are never removed as crash cleanup.
@@ -180,7 +184,7 @@ export async function run(args) {
       child.stdin.end(`${JSON.stringify({ ...lease, identity, root, directory, helper, mode: command, channel: options['--channel'] })}\n`);
       child.unref();
     } catch (error) { child.stdin.destroy(); throw error; }
-    return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt, requiredAction: options['--headless'] ? 'Дождитесь ready; состояние загрузки не означает потерю привязки.' : 'При первой настройке отсканируйте QR-код в локальном окне WhatsApp.' };
+    return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt, requiredAction: options['--headless'] ? 'Дождитесь ready; состояние загрузки не означает потерю привязки.' : 'При первой настройке отсканируйте QR-код в локальном окне WhatsApp.' });
   }
   if (['status', 'stop'].includes(command) && lease && !await leaseAlive(lease)) {
     requireThat(options['--session'] === lease.leaseId, 'exact_session_required');
@@ -190,13 +194,16 @@ export async function run(args) {
     // its loopback port may already belong to another process. Never send the
     // old control bearer there, and never remove ciphertext as crash cleanup.
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
-    return { sessionId: lease.leaseId, phase: 'closed', expiresAt: lease.expiresAt, requiredAction: null,
+    return { sessionId: lease.leaseId, phase: command === 'status' ? finishedReceiptPhase(last, lease.leaseId) : 'closed', expiresAt: lease.expiresAt, requiredAction: null,
       ...(last?.sessionId === lease.leaseId && last.error ? { error: last.error, ...serviceHttpFailure(last) } : {}) };
   }
   if (command === 'status' && (!lease || !control)) {
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
+    if (lease && !control && options['--session'] === lease.leaseId &&
+      last?.sessionId !== lease.leaseId && await leaseAlive(lease))
+      return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };
     requireThat(last && options['--session'] === last.sessionId, 'no_active_session');
-    return last;
+    return { ...last, phase: finishedReceiptPhase(last, last.sessionId), requiredAction: null };
   }
   requireThat(lease && control && lease.leaseId === control.leaseId, 'no_active_session');
   requireThat(['status', 'stop'].includes(command) || lease.runtimeVersion === RUNTIME_VERSION, 'stop_previous_runtime_session_first');
@@ -212,7 +219,7 @@ export async function run(args) {
     try { extra = JSON.parse(await fs.readFile(options['--input'], 'utf8')); } catch { throw new RuntimeError('request_invalid'); }
     validateRequest(extra);
   }
-  const result = await requestControl(control, { ...extra, command: command === 'request' ? extra.command : command, sessionId: lease.leaseId });
+  const result = await requestControl(control, { ...extra, command: command === 'request' ? extra.command : command, sessionId: lease.leaseId }, statusTimeoutMs);
   if (command === 'stop') {
     // Confirm actual process shutdown, not merely acceptance of the stop request.
     for (let attempt = 0; attempt < (lease.transport==='browser'?150:30); attempt++) {

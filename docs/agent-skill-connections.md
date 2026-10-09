@@ -69,3 +69,24 @@ references остаются полноценным новым форматом, 
 Synthetic contract tests: `platform-skills/tools/local-accounts.test.mjs`,
 Python mailbox/Telegram tests и ESIA authorization tests. Реальные credentials
 в migration fixtures не используются; OS/browser gates остаются обязательными.
+
+
+<a id="human-input-completion"></a>
+
+## Продолжение после ввода
+
+Platform и company-private skills возвращают безопасный проверенный результат
+protected form, OS unlock, OAuth, QR и ручного входа. Уже разрешённая работа
+продолжается без обязательного сообщения «заполнил»/«готово». Закрытие окна само
+по себе не доказывает успех; cancel/error/process loss различаются. Предпочтителен
+ожидающий вызов; detached runtime выдаёт exact operation/session, phase,
+requiredAction и готовый read-only wait/status continuation. Один wait ограничен
+30 секундами; смена шага возвращается сразу, timeout сохраняет pending. Исходные
+account/scope и lease не меняются, receipt сохраняется после cleanup. Wait не
+читает secret fields/QR/callback, не делает submit/resume/login и replay.
+Configured требует отдельной provider readiness/business проверки. Новый consent,
+роль, отправка, платёж, подпись и восстановление сохраняют самостоятельные основания.
+Нельзя обещать wakeup законченного чата без поддерживаемого host event. Недоступное
+наблюдение обозначается явно; chat acknowledgement может возобновить ход, но успех
+устанавливает safe read-back. Авторы приватных навыков получают правило и behavioral
+checklist через backend-managed MCP authoring contract.

@@ -802,10 +802,60 @@ test('orphaned receipts use current closed projection after normal cleanup and r
   }
   assert.equal(requests, 0);
 });
+test('a submitted local form returns configured through wait after cleanup, without chat acknowledgement', { skip: !supported }, async t => {
+  const env = { TRELIO_CONFIG_HOME: nativeRoot, TRELIO_SKILL_ID: 'gosuslugi',
+    TRELIO_SKILL_COMPANY_ID: identity.company, TRELIO_SKILL_MEMBER_ID: identity.member };
+  const original = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]])); Object.assign(process.env, env);
+  t.after(() => { for (const [key, value] of Object.entries(original)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  } });
+  const directory = storageDirectory(nativeRoot, identity); await ensurePrivateDirectory(directory, helper);
+  const now = Date.now(), sessionId = crypto.randomUUID();
+  const lease = { leaseId: sessionId, runtimeVersion: RUNTIME_VERSION, guardPid: process.pid,
+    startedAt: now, expiresAt: now + LEASE_MS };
+  let phase = 'credentials_required', packets = [];
+  const control = http.createServer((req, res) => {
+    let text = ''; req.on('data', chunk => { text += chunk; }); req.on('end', () => {
+      packets.push(JSON.parse(text)); res.end(JSON.stringify({ sessionId, phase, expiresAt: lease.expiresAt }));
+    });
+  });
+  await new Promise(resolve => control.listen(0, '127.0.0.1', resolve));
+  t.after(() => { control.closeAllConnections(); control.close(); });
+  await atomicWrite(path.join(directory, 'lease.json'), JSON.stringify(lease), helper);
+  await atomicWrite(path.join(directory, 'control.json'), JSON.stringify({ leaseId: sessionId,
+    port: control.address().port, token: crypto.randomBytes(32).toString('hex') }), helper);
+  let url;
+  const prompt = await createPrompt({ open: async value => { url = value; await request(url, { headers: navigation }); } });
+  t.after(() => prompt.close());
+  const persisted = prompt.ask('credentials').then(async values => {
+    assert.deepEqual(values, synthetic);
+    // Exercise the worker's durable ordering with synthetic encrypted storage:
+    // saving succeeds, the receipt is written, then disposable controls disappear. No chat signal participates.
+    const key = crypto.randomBytes(32);
+    const vault = path.join(directory, 'vault.json');
+    await atomicWrite(vault, encryptRecord(key, identity, { credentials: values }), helper);
+    assert.deepEqual(decryptRecord(key, identity, await fs.readFile(vault, 'utf8')), { credentials: synthetic });
+    phase = 'configured';
+    await atomicWrite(path.join(directory, 'status.json'), JSON.stringify({ sessionId, phase,
+      expiresAt: lease.expiresAt, raw: 'synthetic-private-content' }), helper);
+    await fs.rm(path.join(directory, 'lease.json')); await fs.rm(path.join(directory, 'control.json'));
+    prompt.close();
+  });
+  const waiting = run(['wait', '--session', sessionId, '--after-phase', 'credentials_required', '--timeout-seconds', '5']);
+  const state = JSON.parse((await request(`${url}/state`, { headers: sameOrigin })).text);
+  await request(`${url}/submit`, { method: 'POST', headers: { ...sameOrigin, Origin: new URL(url).origin,
+    'Content-Type': 'application/json' }, body: { revision: state.revision, action: 'submit', values: synthetic } });
+  await persisted;
+  const result = await waiting;
+  assert.equal(result.phase, 'configured'); assert.equal(result.sessionId, sessionId);
+  assert.equal(result.expiresAt, lease.expiresAt); assert.equal(result.continuation, undefined);
+  assert.doesNotMatch(JSON.stringify(result), /synthetic-private|password|totp/);
+  assert.ok(packets.every(packet => packet.command === 'status'), 'wait never submits, resumes or restarts login');
+});
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
   assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.7.1');
-  assert.equal(release.release.version, '4.5.1');
+  assert.equal(release.release.version, '4.5.2');
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: 'protected-snapshot',

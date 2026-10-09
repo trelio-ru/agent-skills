@@ -710,3 +710,17 @@ OAuth code/state, headers, сетевое тело и auth DOM не входят
 503 означает недоступность сервиса на указанном origin, а не отказ credentials.
 Причина технических работ этим кодом не доказана. Ошибка не разрешает reset
 хранилища, повтор setup, автоматический новый вход или повтор отправки.
+
+
+## Наблюдение завершения ввода
+
+`wait --session ID --after-phase PHASE --timeout-seconds N` (N=1..30, default 30)
+читает только штатный status exact сессии. Возвращает смену phase, terminal receipt
+либо bounded pending с continuation.arguments. Исходная lease, account/company
+binding и authenticated control path сохраняются. Timeout не означает отказ.
+Status после cleanup сохраняет configured/forgotten/authorized как результат
+завершённой операции, а бывшую live phase считает closed.
+Ожидание не вызывает resume, не продлевает lease, не открывает окно и не читает
+credential fields. Отдельные human decisions и запрет replay сохраняются.
+Regression: submit без chat input, pending, новый challenge, ошибка/expiry,
+exact session и доставка wait module в signed package.

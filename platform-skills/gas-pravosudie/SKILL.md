@@ -157,3 +157,6 @@ cloud-only завершаются fail-closed. Одна сессия живёт 
 `start`; команды и сон не продлевают срок. Native guardian закрывает owned
 browser/worker при expiry, crash или hang. Подробности –
 [контракт runtime](references/secure-runtime.md).
+
+После pending выполняй `continuation.arguments` того же localAction: wait
+наблюдает результат без сообщения «заполнил». Правила – в references.

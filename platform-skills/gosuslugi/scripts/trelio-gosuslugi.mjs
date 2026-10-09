@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { validateWaitOptions, waitForSessionChange, withSessionContinuation, finishedReceiptPhase } from './session-wait.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
@@ -13,18 +14,18 @@ import { bootstrapBrowser, loadPlaywright, loginRole } from './browser.mjs';
 import { readAuthorization } from './transport.mjs';
 import { resolveRequestTitle } from './chat-title.mjs';
 
-const COMMANDS = ['client', 'doctor', 'bootstrap', 'authorize', 'start', 'status', 'resume', 'roles', 'choose-role', 'snapshot', 'page', 'stop', 'configure', 'forget'];
+const COMMANDS = ['client', 'doctor', 'bootstrap', 'authorize', 'start', 'wait', 'status', 'resume', 'roles', 'choose-role', 'snapshot', 'page', 'stop', 'configure', 'forget'];
 export function parseArguments(args) {
   const [command = 'doctor', ...rest] = args;
   requireThat(COMMANDS.includes(command), 'unknown_command');
   const options = {};
   while (rest.length) {
     const flag = rest.shift();
-    requireThat(['--session', '--channel', '--confirm', '--account-recovered', '--role', '--ref', '--browser-session', '--request', '--origin', '--navigate', '--click', '--input-file', '--request-title'].includes(flag) && !Object.hasOwn(options, flag), 'unsupported_option');
+    requireThat(['--after-phase', '--timeout-seconds', '--session', '--channel', '--confirm', '--account-recovered', '--role', '--ref', '--browser-session', '--request', '--origin', '--navigate', '--click', '--input-file', '--request-title'].includes(flag) && !Object.hasOwn(options, flag), 'unsupported_option');
     options[flag] = ['--confirm', '--account-recovered'].includes(flag) ? true : rest.shift();
     requireThat(options[flag] !== undefined, 'option_value_required');
   }
-  const allowed = ['status', 'roles', 'snapshot', 'stop'].includes(command) ? ['--session']
+  const allowed = command === 'wait' ? ['--session', '--after-phase', '--timeout-seconds'] : ['status', 'roles', 'snapshot', 'stop'].includes(command) ? ['--session']
     : command === 'resume' ? ['--session', '--account-recovered', '--confirm']
     : command === 'page' ? ['--session', '--navigate', '--click', '--input-file']
     : command === 'choose-role' ? ['--session', '--ref', '--confirm']
@@ -54,6 +55,7 @@ export function parseArguments(args) {
   }
   if (command === 'choose-role') requireThat(options['--confirm'] === true && /^role:\d+:\d+$/.test(options['--ref'] || ''), 'explicit_role_choice_required');
   if (['configure', 'forget'].includes(command)) requireThat(options['--confirm'], 'explicit_confirmation_required');
+  if (command === 'wait') validateWaitOptions(options);
   return { command, options };
 }
 // An MCP transport that cannot supply stdin must receive a bounded, explicit
@@ -91,12 +93,12 @@ export async function readPrivateJson(file, helper) {
 async function optionalJson(file, helper) {
   try { return await readPrivateJson(file, helper); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
-export function requestControl(control, packet) {
+export function requestControl(control, packet, timeoutMs = 30000) {
   requireThat(Number.isInteger(control.port) && control.port > 0 && control.port <= 65535 &&
     /^[a-f0-9]{64}$/.test(control.token), 'local_control_invalid');
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(packet);
-    const req = http.request({ hostname: '127.0.0.1', port: control.port, path: '/', method: 'POST', timeout: 30000,
+    const req = http.request({ hostname: '127.0.0.1', port: control.port, path: '/', method: 'POST', timeout: timeoutMs,
       headers: { Authorization: `Bearer ${control.token}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, res => {
       let text = ''; res.setEncoding('utf8');
       res.on('data', chunk => { text += chunk; if (text.length > 65536) req.destroy(); });
@@ -128,9 +130,11 @@ async function doctor(directory, helper, root) {
       ? 'Восстановите доступ к связке login средствами macOS; повторный Touch ID не исправляет отказ Keychain.'
       : !runtimeReady ? 'bootstrap' : !configured ? 'start: первичная локальная настройка' : 'start: системная разблокировка без повторного ввода Госуслуг' };
 }
-export async function run(args) {
+export async function run(args, statusTimeoutMs = 30000) {
   if (args.length === 1 && args[0] === "__trelio_accounts_import") return importExistingAccounts();
   const { command, options } = parseArguments(args);
+  if (command === 'wait') return waitForSessionChange(remaining =>
+    run(['status', '--session', options['--session']], remaining), options);
   // Parse and authorization-shape errors stay side-effect free and are
   // reported before host access. Every valid command then binds itself to the
   // signed protected-snapshot policy and its absolute outer deadline.
@@ -167,9 +171,9 @@ export async function run(args) {
       // unlock and preserves the user's ordinary Госуслуги page and form state.
       if (command === 'authorize' && authorization && !lease.authorizationRequest) {
         requireThat(control && control.leaseId === lease.leaseId, 'session_unreachable');
-        return requestControl(control, { command: 'authorize', sessionId: lease.leaseId,
+        return withSessionContinuation(await requestControl(control, { command: 'authorize', sessionId: lease.leaseId,
           authorization, loginRole: loginRole(options['--role']),
-          ...(options['--account-recovered'] ? { accountRecovered: true } : {}) });
+          ...(options['--account-recovered'] ? { accountRecovered: true } : {}) }));
       }
       requireThat(sameAuthorization, 'stop_existing_authorization_first');
       requireThat(!options['--account-recovered'], 'account_recovery_requires_resume');
@@ -178,9 +182,9 @@ export async function run(args) {
       if (control && control.leaseId === lease.leaseId) {
         const current = await requestControl(control, { command: 'status', sessionId: lease.leaseId });
         if (options['--role']) requireThat(current.loginRole === options['--role'], 'stop_existing_role_session_first');
-        return current;
+        return withSessionContinuation(current);
       }
-      return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };
+      return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt });
     }
     // A dead supervisor permits recovery of only these exact disposable control
     // records. Ciphertext and native OS keys are never removed as crash cleanup.
@@ -212,7 +216,7 @@ export async function run(args) {
         requestTitle: requestTitle || null })}\n`);
       child.unref();
     } catch (error) { child.stdin.destroy(); throw error; }
-    return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt, requiredAction: 'Подтвердите системную разблокировку; при первой настройке введите данные на локальной странице.' };
+    return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt, requiredAction: 'Подтвердите системную разблокировку; при первой настройке введите данные на локальной странице.' });
   }
   if (['status', 'stop'].includes(command) && lease && !await leaseAlive(lease)) {
     requireThat(options['--session'] === lease.leaseId, 'exact_session_required');
@@ -221,17 +225,20 @@ export async function run(args) {
     // another process. Proven guardian exit means this lease is closed; its
     // encrypted vault remains untouched.
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
-    return { sessionId: lease.leaseId, phase: 'closed', expiresAt: lease.expiresAt, requiredAction: null,
+    return { sessionId: lease.leaseId, phase: command === 'status' ? finishedReceiptPhase(last, lease.leaseId) : 'closed', expiresAt: lease.expiresAt, requiredAction: null,
       ...(last?.sessionId === lease.leaseId ? closedDiagnostics(last) : {}) };
   }
   if (command === 'status' && (!lease || !control)) {
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
+    if (lease && !control && options['--session'] === lease.leaseId &&
+      last?.sessionId !== lease.leaseId && await leaseAlive(lease))
+      return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };
     requireThat(last && options['--session'] === last.sessionId, 'no_active_session');
     // Normal cleanup can remove both control files while leaving the receipt.
     // Treat that branch like guardian exit: an old runtime's JSON is evidence,
     // never a live session or a trusted recovery URL/private payload. Project
     // the bounded receipt with this runtime so upgrades also add current help.
-    return { sessionId: last.sessionId, phase: 'closed', requiredAction: null,
+    return { sessionId: last.sessionId, phase: finishedReceiptPhase(last, last.sessionId), requiredAction: null,
       ...(Number.isSafeInteger(last.expiresAt) && last.expiresAt > 0 ? { expiresAt: last.expiresAt } : {}),
       ...closedDiagnostics(last) };
   }
@@ -251,7 +258,7 @@ export async function run(args) {
       : options['--input-file'] !== undefined ? validatedPagePacket(await readPrivateJson(options['--input-file'], helper))
       : await readPagePacket();
   }
-  const result = await requestControl(control, { ...extra, command, sessionId: lease.leaseId });
+  const result = await requestControl(control, { ...extra, command, sessionId: lease.leaseId }, statusTimeoutMs);
   if (command === 'stop') {
     // Confirm actual process shutdown, not merely acceptance of the stop request.
     for (let attempt = 0; attempt < 30; attempt++) {

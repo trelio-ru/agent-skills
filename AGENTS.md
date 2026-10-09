@@ -63,6 +63,9 @@ Advisory wait без запроса требует осмотра промежу
 разрешённая процедура может подключить новый helper к той же подготовленной Page
 после verified callback и оценки прежнего бизнес-результата. Pending/failure либо
 неизвестная подача не превращаются в replay; файлы/consent не пересоздаются.
+Для protected input обязателен [контракт продолжения](docs/agent-skill-connections.md#human-input-completion):
+безопасный result/continuation без обязательного chat acknowledgement, с исходной
+lease и отдельной mutation authority; тестируется submit и cleanup.
 Тесты Markdown-контрактов сравнивают смысл после нормализации LF/CRLF:
 переводы строк checkout не меняют инструкции и не должны ломать Windows gate.
 При правке Python CLI проверяй кодировку настоящих stdout/stderr pipes:
