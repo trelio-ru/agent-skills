@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.4.2 объявляет signed host browser-session class
+Runtime 3.4.3 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -67,6 +67,12 @@ macOS: 256-bit key хранится в file-based login Keychain, access ACL д�
 создавшему helper-у; каждое обычное чтение/create/delete требует отдельного
 `LAContext.deviceOwnerAuthentication` с reuse interval 0. Исполняемый файл
 macOS называется `Trelio`, чтобы системное окно показывало имя приложения.
+Для текущего Codex-чата требуется host >=3.6.3: он передаёт UUID из exact
+hook-сессии, включая повторный запуск с кешированным допуском. Окружение
+долгоживущего MCP не определяет запрашивающий чат. Signed minimum host задаёт
+эту зависимость; старый bridge до запуска пакета использует штатное обновление
+проверенного host runtime. Global plugin minimum не меняется.
+
 Runtime сначала читает точное название текущего чата из локального Codex App
 Server по `CODEX_THREAD_ID` и сверяет возвращённый ID. CLI
 `codex` разрешается в проверенный absolute executable только из absolute PATH

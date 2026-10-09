@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.4.2",
-    "summary": "Название запрашивающего чата показывается в системном окне доступа и при ограниченном PATH Codex Desktop."
+    "version": "4.4.3",
+    "summary": "Системное окно получает название текущего чата через его hook-сессию даже при долгоживущем MCP."
   },
   "connection": null,
   "runtime": {
-    "version": "3.4.2",
-    "minimumHostVersion": "3.0.22",
+    "version": "3.4.3",
+    "minimumHostVersion": "3.6.3",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",
       "interpreter": "node"
