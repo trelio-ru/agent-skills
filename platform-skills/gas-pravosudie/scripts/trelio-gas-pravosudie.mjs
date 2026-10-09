@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { validateWaitOptions, waitForSessionChange, withSessionContinuation, finishedReceiptPhase } from './session-wait.mjs';
 
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -38,7 +39,7 @@ import { AUTHORIZATION_FAILURE_ACTION } from './sign-in.mjs';
 
 const COMMANDS = [
   'bootstrap', 'doctor', 'forget', 'page', 'prepare-sign-in', 'resume',
-  'script', 'show', 'snapshot', 'start', 'status', 'stop',
+  'script', 'show', 'snapshot', 'start', 'wait', 'status', 'stop',
 ];
 
 export function parseArguments(args) {
@@ -49,12 +50,12 @@ export function parseArguments(args) {
     const flag = rest.shift();
     requireThat([
       '--channel', '--click', '--confirm', '--dry-run', '--input-file', '--navigate',
-      '--request-title', '--session',
+      '--request-title', '--after-phase', '--timeout-seconds', '--session',
     ].includes(flag) && !Object.hasOwn(options, flag), 'unsupported_option');
     options[flag] = ['--confirm', '--dry-run'].includes(flag) ? true : rest.shift();
     requireThat(options[flag] !== undefined, 'option_value_required');
   }
-  const allowed = ['status', 'resume', 'snapshot', 'show', 'stop'].includes(command)
+  const allowed = command === 'wait' ? ['--session', '--after-phase', '--timeout-seconds'] : ['status', 'resume', 'snapshot', 'show', 'stop'].includes(command)
     ? ['--session']
     : command === 'page'
       ? ['--session', '--confirm', '--dry-run', '--navigate', '--click', '--input-file']
@@ -92,6 +93,7 @@ export function parseArguments(args) {
       /code|state|token|password|secret|authorization|credential|otp|session/i.test(key)),
     'private_url_requires_input_file');
   }
+  if (command === 'wait') validateWaitOptions(options);
   return { command, options };
 }
 
@@ -239,8 +241,10 @@ async function doctor(directory, helper) {
   };
 }
 
-export async function run(args) {
+export async function run(args, statusTimeoutMs = 30000) {
   const { command, options } = parseArguments(args);
+  if (command === 'wait') return waitForSessionChange(remaining =>
+    run(['status', '--session', options['--session']], remaining), options);
   await browserSessionRuntime();
   const browserSessionModuleUrl = String(process.env.TRELIO_BROWSER_SESSION_MODULE_URL || '');
   const identity = identityFromEnv();
@@ -270,9 +274,9 @@ export async function run(args) {
       requireThat(lease.runtimeVersion === RUNTIME_VERSION, 'stop_previous_runtime_session_first');
       requireThat(lease.expiresAt > Date.now(), 'expired_guard_still_running');
       if (control && control.leaseId === lease.leaseId) {
-        return requestControl(control, { command: 'status', sessionId: lease.leaseId });
+        return withSessionContinuation(await requestControl(control, { command: 'status', sessionId: lease.leaseId }));
       }
-      return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };
+      return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt });
     }
     if (lease) {
       await fs.rm(path.join(directory, 'lease.json'), { force: true });
@@ -328,12 +332,12 @@ export async function run(args) {
       child.stdin.destroy();
       throw error;
     }
-    return {
+    return withSessionContinuation({
       phase: 'starting',
       sessionId: lease.leaseId,
       expiresAt: lease.expiresAt,
       requiredAction: 'Дождитесь ready; браузер откроется без активации окна.',
-    };
+    });
   }
 
   if (['status', 'stop'].includes(command) && lease && !await leaseAlive(lease)) {
@@ -349,8 +353,11 @@ export async function run(args) {
   }
   if (command === 'status' && (!lease || !control)) {
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
+    if (lease && !control && options['--session'] === lease.leaseId &&
+      last?.sessionId !== lease.leaseId && await leaseAlive(lease))
+      return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };
     requireThat(last && options['--session'] === last.sessionId, 'no_active_session');
-    return last;
+    return { ...last, phase: finishedReceiptPhase(last, last.sessionId), requiredAction: null };
   }
   requireThat(lease && control && lease.leaseId === control.leaseId, 'no_active_session');
   requireThat(['status', 'stop'].includes(command) || lease.runtimeVersion === RUNTIME_VERSION,
@@ -378,7 +385,7 @@ export async function run(args) {
   const result = await requestControl(
     control,
     { ...extra, command, sessionId: lease.leaseId },
-    command === 'script' ? Math.max(1, Math.min(LEASE_MS, lease.expiresAt - Date.now())) : 30000,
+    command === 'script' ? Math.max(1, Math.min(LEASE_MS, lease.expiresAt - Date.now())) : statusTimeoutMs,
   );
   if (command === 'stop') {
     for (let attempt = 0; attempt < 30; attempt += 1) {

@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "t-bank",
-    "version": "2.3.5",
-    "summary": "Системное окно получает название текущего чата через его hook-сессию даже при долгоживущем MCP."
+    "version": "2.3.6",
+    "summary": "Агент наблюдает завершение настройки и входа без обязательного сообщения «заполнил»."
   },
   "connection": null,
   "runtime": {
-    "version": "1.3.5",
+    "version": "1.3.6",
     "minimumHostVersion": "3.7.1",
     "entrypoint": { "path": "scripts/trelio-t-bank.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network"],
@@ -36,7 +36,8 @@
       { "source": "scripts/authorization.mjs", "path": "scripts/authorization.mjs", "mode": 420 },
       { "source": "scripts/auth-rpc.mjs", "path": "scripts/auth-rpc.mjs", "mode": 420 },
       { "source": "scripts/t-id-flow.mjs", "path": "scripts/t-id-flow.mjs", "mode": 420 },
-      { "source": "references/playwright-client.md", "path": "references/playwright-client.md", "mode": 420 }
+      { "source": "references/playwright-client.md", "path": "references/playwright-client.md", "mode": 420 },
+      { "source": "scripts/session-wait.mjs", "path": "scripts/session-wait.mjs", "mode": 420 }
     ]
   }
 }

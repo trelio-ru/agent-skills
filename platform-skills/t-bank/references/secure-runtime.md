@@ -513,3 +513,17 @@ macOS/Windows через возвращённый signed runtime. До этих 
 объявлять интеграцию проверенной на реальных аккаунтах. Источник и release
 manifest сами по себе не меняют live current catalog. Не выполнять реальный
 вход, импорт или системное подтверждение без участия пользователя.
+
+
+## Наблюдение завершения ввода
+
+`wait --session ID --after-phase PHASE --timeout-seconds N` (N=1..30, default 30)
+читает только штатный status exact сессии. Возвращает смену phase, terminal receipt
+либо bounded pending с continuation.arguments. Исходная lease, account/company
+binding и authenticated control path сохраняются. Timeout не означает отказ.
+Status после cleanup сохраняет configured/forgotten/authorized как результат
+завершённой операции, а бывшую live phase считает closed.
+Ожидание не вызывает resume, не продлевает lease, не открывает окно и не читает
+credential fields. Отдельные human decisions и запрет replay сохраняются.
+Regression: submit без chat input, pending, новый challenge, ошибка/expiry,
+exact session и доставка wait module в signed package.

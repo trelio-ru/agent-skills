@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "whatsapp-web",
-    "version": "2.2.0",
-    "summary": "Несколько личных аккаунтов с названиями и комментариями, выбором для каждой компании и сохранением существующих подключений."
+    "version": "2.2.1",
+    "summary": "Агент наблюдает завершение настройки и входа без обязательного сообщения «заполнил»."
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,7 +17,7 @@
     ]
   },
   "runtime": {
-    "version": "2.2.0",
+    "version": "2.2.1",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "scripts/trelio-whatsapp.mjs",
@@ -114,7 +114,8 @@
         "source": "scripts/private-directory.ps1",
         "path": "scripts/private-directory.ps1",
         "mode": 420
-      }
+      },
+      { "source": "scripts/session-wait.mjs", "path": "scripts/session-wait.mjs", "mode": 420 }
     ]
   }
 }

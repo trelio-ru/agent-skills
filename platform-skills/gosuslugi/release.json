@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.1",
-    "summary": "Системное окно получает название текущего чата через его hook-сессию даже при долгоживущем MCP. Каталог личных аккаунтов сохраняется."
+    "version": "4.5.2",
+    "summary": "Агент наблюдает завершение настройки и входа без обязательного сообщения «заполнил»."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.1",
+    "version": "3.5.2",
     "minimumHostVersion": "3.7.1",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",
@@ -145,7 +145,8 @@
         "source": "references/playwright-client.md",
         "path": "references/playwright-client.md",
         "mode": 420
-      }
+      },
+      { "source": "scripts/session-wait.mjs", "path": "scripts/session-wait.mjs", "mode": 420 }
     ]
   }
 }

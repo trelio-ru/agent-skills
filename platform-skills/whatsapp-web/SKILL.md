@@ -203,3 +203,6 @@ QR сканирует владелец; protocol credentials и browser profile 
 encrypted хранилище, protocol session и provider device binding не удаляются.
 
 При HTTP-ошибке основной страницы сохраняй numeric `httpStatus` и разрешённый origin из runtime. HTTP 5xx не доказывает logout, не разрешает сброс доступа, новый вход, смену транспорта или повтор неизвестной mutation. Timeout/DNS/reset не имеют HTTP-кода; ошибки ресурсов и iframe не определяют состояние портала.
+
+После pending выполняй `continuation.arguments` того же localAction: wait
+наблюдает результат без сообщения «заполнил». Правила – в references.

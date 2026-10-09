@@ -158,3 +158,18 @@ goto заново проверяет HTTP/status и auth boundary назначе
 сохраняет обычные snapshot/confirm gates. Ошибка не вызывает автоматический
 переход, новый вход, повтор подачи или focus. После успешного перехода ordinary
 script/snapshot снова доступен. 404 не доказывает удаления дела или отсутствия акта.
+
+
+## Наблюдение завершения ввода
+
+`wait --session ID --after-phase PHASE --timeout-seconds N` (N=1..30, default 30)
+читает только штатный status exact сессии. Возвращает смену phase, terminal receipt
+либо bounded pending с continuation.arguments. Исходная lease, account/company
+binding и authenticated control path сохраняются. Timeout не означает отказ.
+После cleanup бывшая live phase считается closed. Для ЕСИА caller выполняет
+штатный resume той же ГАС сессии по verified результату helper-а, без повторного
+согласования обычного входа.
+Ожидание не вызывает resume, не продлевает lease, не открывает окно и не читает
+credential fields. Отдельные human decisions и запрет replay сохраняются.
+Regression: submit без chat input, pending, новый challenge, ошибка/expiry,
+exact session и доставка wait module в signed package.

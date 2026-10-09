@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { validateWaitOptions, waitForSessionChange, withSessionContinuation, finishedReceiptPhase } from './session-wait.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
@@ -14,18 +15,18 @@ import { compileScenario, MAX_SCRIPT_BYTES } from './scenario.mjs';
 import { readAuthorization } from './transport.mjs';
 import { resolveRequestTitle } from './chat-title.mjs';
 
-const COMMANDS = ['client', 'doctor', 'bootstrap', 'authorize', 'start', 'status', 'resume', 'snapshot', 'page', 'script', 'show', 'stop', 'configure', 'forget'];
+const COMMANDS = ['client', 'doctor', 'bootstrap', 'authorize', 'start', 'wait', 'status', 'resume', 'snapshot', 'page', 'script', 'show', 'stop', 'configure', 'forget'];
 export function parseArguments(args) {
   const [command = 'doctor', ...rest] = args;
   requireThat(COMMANDS.includes(command), 'unknown_command');
   const options = {};
   while (rest.length) {
     const flag = rest.shift();
-    requireThat(['--session', '--channel', '--confirm', '--dry-run', '--browser-session', '--request', '--origin', '--navigate', '--click', '--input-file', '--request-title'].includes(flag) && !Object.hasOwn(options, flag), 'unsupported_option');
+    requireThat(['--after-phase', '--timeout-seconds', '--session', '--channel', '--confirm', '--dry-run', '--browser-session', '--request', '--origin', '--navigate', '--click', '--input-file', '--request-title'].includes(flag) && !Object.hasOwn(options, flag), 'unsupported_option');
     options[flag] = ['--confirm', '--dry-run'].includes(flag) ? true : rest.shift();
     requireThat(options[flag] !== undefined, 'option_value_required');
   }
-  const allowed = ['status', 'resume', 'snapshot', 'show', 'stop'].includes(command) ? ['--session']
+  const allowed = command === 'wait' ? ['--session', '--after-phase', '--timeout-seconds'] : ['status', 'resume', 'snapshot', 'show', 'stop'].includes(command) ? ['--session']
     : command === 'page' ? ['--session', '--confirm', '--dry-run', '--navigate', '--click', '--input-file']
     : command === 'script' ? ['--session', '--input-file']
     : command === 'authorize' ? ['--browser-session', '--request', '--origin', '--confirm', '--request-title']
@@ -55,6 +56,7 @@ export function parseArguments(args) {
     requireThat(!url.hash && ![...url.searchParams.keys()].some(key => /code|state|token|password|secret|authorization|credential|otp|session/i.test(key)), 'private_url_requires_input_file');
   }
   if (['configure', 'forget'].includes(command)) requireThat(options['--confirm'], 'explicit_confirmation_required');
+  if (command === 'wait') validateWaitOptions(options);
   return { command, options };
 }
 export async function readPagePacket(input = process.stdin, timeoutMs = 5000) {
@@ -133,8 +135,10 @@ async function doctor(directory, helper, root) {
       ? 'Восстановите доступ к связке login средствами macOS; повторный Touch ID не исправляет отказ Keychain.'
       : !runtimeReady ? 'bootstrap' : !configured ? 'start: первичная локальная настройка' : 'start: системная разблокировка без повторного ввода Т‑Банка' };
 }
-export async function run(args) {
+export async function run(args, statusTimeoutMs = 30000) {
   const { command, options } = parseArguments(args);
+  if (command === 'wait') return waitForSessionChange(remaining =>
+    run(['status', '--session', options['--session']], remaining), options);
   const identity = identityFromEnv(), root = configRoot();
   if (command === 'client') return {
     modulePath: path.join(SOURCE, 'playwright-client.mjs'),
@@ -164,8 +168,8 @@ export async function run(args) {
       // party/request attached to a running native guardian.
       requireThat((lease.authorizationRequest || null) === (authorization?.requestId || null),
         'stop_existing_authorization_first');
-      if (control && control.leaseId === lease.leaseId) return requestControl(control, { command: 'status', sessionId: lease.leaseId });
-      return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };
+      if (control && control.leaseId === lease.leaseId) return withSessionContinuation(await requestControl(control, { command: 'status', sessionId: lease.leaseId }));
+      return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt });
     }
     // A dead supervisor permits recovery of only these exact disposable control
     // records. Ciphertext and native OS keys are never removed as crash cleanup.
@@ -209,7 +213,7 @@ export async function run(args) {
         requestTitle: requestTitle || null })}\n`);
       child.unref();
     } catch (error) { child.stdin.destroy(); throw error; }
-    return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt, requiredAction: 'Подтвердите системную разблокировку; при первой настройке введите данные на локальной странице.' };
+    return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt, requiredAction: 'Подтвердите системную разблокировку; при первой настройке введите данные на локальной странице.' });
   }
   if (['status', 'stop'].includes(command) && lease && !await leaseAlive(lease)) {
     requireThat(options['--session'] === lease.leaseId, 'exact_session_required');
@@ -218,13 +222,16 @@ export async function run(args) {
     // its loopback port may already belong to another process. Never send the
     // old control bearer there, and never remove ciphertext as crash cleanup.
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
-    return { sessionId: lease.leaseId, phase: 'closed', expiresAt: lease.expiresAt, requiredAction: null,
+    return { sessionId: lease.leaseId, phase: command === 'status' ? finishedReceiptPhase(last, lease.leaseId) : 'closed', expiresAt: lease.expiresAt, requiredAction: null,
       ...(last?.sessionId === lease.leaseId && last.error ? { error: last.error, ...serviceHttpFailure(last) } : {}) };
   }
   if (command === 'status' && (!lease || !control)) {
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
+    if (lease && !control && options['--session'] === lease.leaseId &&
+      last?.sessionId !== lease.leaseId && await leaseAlive(lease))
+      return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };
     requireThat(last && options['--session'] === last.sessionId, 'no_active_session');
-    return last;
+    return { ...last, phase: finishedReceiptPhase(last, last.sessionId), requiredAction: null };
   }
   requireThat(lease && control && lease.leaseId === control.leaseId, 'no_active_session');
   requireThat(['status', 'stop'].includes(command) || lease.runtimeVersion === RUNTIME_VERSION, 'stop_previous_runtime_session_first');
@@ -245,7 +252,7 @@ export async function run(args) {
   // A scenario may await a download or a human verification. Its original
   // native lease remains the upper bound; a CLI invocation adds no new TTL.
   const result = await requestControl(control, { ...extra, command, sessionId: lease.leaseId },
-    command === 'script' ? Math.max(1, Math.min(LEASE_MS, lease.expiresAt - Date.now())) : 30000);
+    command === 'script' ? Math.max(1, Math.min(LEASE_MS, lease.expiresAt - Date.now())) : statusTimeoutMs);
   if (command === 'stop') {
     // Confirm actual process shutdown, not merely acceptance of the stop request.
     for (let attempt = 0; attempt < 30; attempt++) {
