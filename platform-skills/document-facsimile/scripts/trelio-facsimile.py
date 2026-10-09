@@ -114,7 +114,11 @@ def windows_acl(path, create=False, protect_file=False):
         args.append("-ProtectNewFile")
     result = subprocess.run([str(executable), *args], capture_output=True, timeout=20,
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False)
-    require(result.returncode == 0, "private_storage_acl")
+    if result.returncode != 0:
+        diagnostic = result.stderr.decode("utf-8", "replace").strip()
+        if re.fullmatch(r"facsimile_acl_(identity|directory_create|acl_read|file_protect|acl_verify):[A-Za-z]+", diagnostic):
+            raise Failure(diagnostic)
+        raise Failure("private_storage_acl")
 
 
 def private_check(path, directory=False):

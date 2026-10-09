@@ -285,7 +285,7 @@ class FacsimileTests(unittest.TestCase):
                 done.set()
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
-        self.assertTrue(ready.wait(30))
+        self.assertTrue(ready.wait(30), repr(data.get("error")))
         return data, thread, done
 
     def request(self, data, body=None, origin=True, nonce=True, host=None):

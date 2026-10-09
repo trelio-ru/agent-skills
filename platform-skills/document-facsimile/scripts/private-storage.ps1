@@ -4,12 +4,15 @@ param(
   [switch]$ProtectNewFile
 )
 $ErrorActionPreference = 'Stop'
+$stage = 'identity'
+try {
 
 # The signed helper accepts paths only as data. A new private directory gets
 # its DACL before publication; existing unsafe storage is never repaired into
 # looking trusted. MachinePolicy/UserPolicy retain their normal precedence.
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 if ($CreateDirectory) {
+  $stage = 'directory_create'
   if (Test-Path -LiteralPath $Target) { throw 'already_exists' }
   $parent = Split-Path -Parent $Target
   if (!(Test-Path -LiteralPath $parent -PathType Container)) { throw 'missing_parent' }
@@ -23,6 +26,7 @@ if ($CreateDirectory) {
   [System.IO.Directory]::CreateDirectory($Target, $acl) | Out-Null
 }
 $item = Get-Item -LiteralPath $Target -Force
+$stage = 'acl_read'
 if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'reparse_point' }
 $security = Get-Acl -LiteralPath $Target
 $owner = $security.GetOwner([System.Security.Principal.SecurityIdentifier])
@@ -34,6 +38,7 @@ if ($owner.Value -ne $sid.Value) {
   if (!$ProtectNewFile -or $owner.Value -ne $tokenOwner.Value) { throw 'unexpected_owner' }
 }
 if ($ProtectNewFile) {
+  $stage = 'file_protect'
   # Python has just created this exact regular file with exclusive-create.
   # Removing inherited grants is safe only on that newly owned output; the
   # check-only path never changes previously existing private material.
@@ -46,6 +51,7 @@ if ($ProtectNewFile) {
   $security = Get-Acl -LiteralPath $Target
 }
 $rules = $security.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+$stage = 'acl_verify'
 $allow = $false
 foreach ($rule in $rules) {
   if ($rule.AccessControlType -eq 'Allow') {
@@ -54,3 +60,9 @@ foreach ($rule in $rules) {
   }
 }
 if (!$allow) { throw 'missing_owner_access' }
+} catch {
+  # Closed diagnostic fields support native CI without publishing a path,
+  # account, ACL principal or raw OS error. Python accepts only this grammar.
+  [Console]::Error.WriteLine('facsimile_acl_' + $stage + ':' + $_.Exception.GetType().Name)
+  exit 2
+}
