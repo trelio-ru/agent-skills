@@ -611,7 +611,9 @@ def local_form(root, timeout=110, open_browser=True, ready=None):
             async function send(body){const response=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json','X-Facsimile-Nonce':'NONCE'},body:JSON.stringify(body)});return response.json()}
             form.onsubmit=async(event)=>{event.preventDefault();save.disabled=true;feedback('Сохраняем…');try{const f=file.files[0];if((!f&&!initial.configured)||(f&&f.size>8388608)){feedback('Выберите PNG размером до 8 МБ');save.disabled=false;file.focus();return}let pngBase64=null;if(f){const bytes=new Uint8Array(await f.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));pngBase64=btoa(binary)}const result=await send({ownerFullName:owner.value,widthMm:width.value,pngBase64,comment:comment.value});feedback(result.ok?'Данные приняты. Агент завершает настройку, окно можно закрыть':(messages[result.code]||'Не удалось сохранить. Проверьте статус навыка'));if(result.ok)form.hidden=true;else{save.disabled=false;if(['invalid_full_name','full_name_required'].includes(result.code))owner.focus();if(result.code==='invalid_width')width.focus();if(['invalid_png','unsupported_png','transparent_png_required'].includes(result.code))file.focus();}}catch{feedback('Не удалось подтвердить сохранение. Проверьте статус навыка');save.disabled=false;}};
             cancel.onclick=async()=>{cancel.disabled=true;try{const result=await send({cancel:true});if(!result.ok)throw Error();form.hidden=true;feedback('Настройка отменена')}catch{feedback('Окно настройки уже недоступно. Проверьте статус навыка');cancel.disabled=false}};</script></html>'''
-            html = html.replace("INITIAL", initial).replace("NONCE", nonce)
+            # Replace template markers before inserting user metadata. Literal
+            # NONCE inside a free comment must remain text, not be rewritten.
+            html = html.replace("NONCE", nonce).replace("INITIAL", initial)
             self.respond(200, html.encode("utf-8"), "text/html")
 
         def do_POST(self):

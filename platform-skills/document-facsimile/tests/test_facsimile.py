@@ -416,6 +416,19 @@ class FacsimileTests(unittest.TestCase):
         self.assertEqual(result["accountCommentUpdate"], {"previousComment": "Only fixture documents", "comment": body["comment"]})
         self.assertNotIn("comment", runtime.read_bundle(self.root))
 
+    def test_form_comment_is_safe_literal_data_not_a_template_marker(self):
+        data = json.loads(os.environ["TRELIO_SKILL_ACCOUNT_JSON"])
+        comment = 'NONCE </script><script>literal text</script>'
+        data["comment"] = comment
+        with patch.dict(os.environ, {"TRELIO_SKILL_ACCOUNT_JSON": json.dumps(data)}):
+            form, thread, done = self.start_form()
+            _, html, _ = self.request(form)
+            self.assertIn(b'NONCE \\u003c/script>', html)
+            self.assertNotIn(comment.encode(), html)
+            self.request(form, {"cancel": True})
+            self.assertTrue(done.wait(15))
+            thread.join()
+
     @unittest.skipUnless(os.name == "nt", "native Windows contract")
     def test_windows_restricted_parent_filtered_policy_and_persistent_readback(self):
         executable = str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
