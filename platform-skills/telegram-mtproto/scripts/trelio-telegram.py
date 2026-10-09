@@ -79,6 +79,11 @@ MAX_ENTITY_TITLE_CHARS = 256
 MAX_ENTITY_USERNAME_CHARS = 64
 MAX_CHAT_REFERENCE_CHARS = 256
 MAX_FILE_NAME_CHARS = 512
+# Reaction metadata travels with every normalized message, including period
+# exports. Bound it here rather than adding unbounded per-message RPC lookups.
+MAX_REACTION_TYPES = 64
+MAX_RECENT_REACTIONS = 32
+MAX_REACTION_EMOJI_CHARS = 64
 MAX_MEMBER_QUERY_CHARS = 128
 MAX_SEARCH_QUERY_CHARS = 256
 # Context expansion intentionally has a tighter result ceiling than snippet-only
@@ -103,7 +108,7 @@ MIN_SCHEDULE_LEAD_SECONDS = 60
 MAX_SCHEDULE_AT_CHARS = 64
 DEFAULT_SCHEDULED_LIMIT = 20
 MAX_SCHEDULED_LIMIT = 100
-MESSAGE_WORKFLOW_VERSION = "2.5.1"
+MESSAGE_WORKFLOW_VERSION = "2.5.2"
 # Overview cursors contain metadata/offsets only. Authenticate them locally so a
 # modified token cannot add peers, skip an unfinished chat or forge completeness.
 # The key stays in the existing owner-only connection namespace, never in JSON.
@@ -2271,6 +2276,122 @@ async def public_reply_context(
     }
 
 
+def public_reaction(reaction: Any) -> dict[str, Any] | None:
+    """Project only known reaction identities, never raw TL dictionaries.
+
+    Custom emoji document IDs are public identities, not file references; use
+    decimal strings so JavaScript consumers do not round Telegram's int64 IDs.
+    Unknown future constructors remain unavailable instead of being mistaken
+    for an empty emoji or leaking newly introduced fields.
+    """
+
+    kind = type(reaction).__name__
+    if kind == "ReactionEmoji":
+        emoji = getattr(reaction, "emoticon", None)
+        if isinstance(emoji, str) and 0 < len(emoji) <= MAX_REACTION_EMOJI_CHARS:
+            return {"type": "emoji", "emoji": emoji}
+    elif kind == "ReactionCustomEmoji":
+        document_id = nonnegative_integer(getattr(reaction, "document_id", None))
+        if document_id is not None and 0 < document_id < 2**63:
+            return {"type": "custom_emoji", "documentId": str(document_id)}
+    elif kind == "ReactionPaid":
+        return {"type": "paid"}
+    return None
+
+
+def public_reaction_peer(peer: Any, message: Any) -> dict[str, Any] | None:
+    """Expose a typed marked peer ID and only already-loaded public names.
+
+    The recent list can contain users, chats or channels. Never guess its type
+    from a bare numeric ID, fetch an unrelated profile, or dump access hashes.
+    Telethon hydrates response entities into the message's local dictionary;
+    names absent from that snapshot stay null without extra network calls.
+    """
+
+    peer_kind = {
+        "PeerUser": ("user", "user_id"),
+        "PeerChat": ("chat", "chat_id"),
+        "PeerChannel": ("channel", "channel_id"),
+    }.get(type(peer).__name__)
+    if peer_kind is None:
+        return None
+    kind, id_field = peer_kind
+    peer_id = nonnegative_integer(getattr(peer, id_field, None))
+    if peer_id is None or not 0 < peer_id < 2**63:
+        return None
+    marked_id = peer_id if kind == "user" else (
+        -peer_id if kind == "chat" else -(1_000_000_000_000 + peer_id)
+    )
+    entities = getattr(message, "_entities", None)
+    entity = entities.get(marked_id) if isinstance(entities, dict) else None
+    identity = public_entity(entity) if entity is not None else {}
+    return {"id": marked_id, "type": kind,
+            "title": identity.get("title"), "username": identity.get("username")}
+
+
+def public_message_reactions(message: Any) -> dict[str, Any] | None:
+    """Preserve Telegram's reaction snapshot through every message read path.
+
+    ``min`` snapshots contain aggregate counts but omit our own selection.
+    ``recent_reactions`` is only a provider sample, even when every returned row
+    fits our cap; can_see_list is a permission, not proof of list completeness.
+    Malformed/unsupported rows make coverage partial rather than proving that
+    nobody reacted. This projection performs no reads, receipts or mutations.
+    """
+
+    snapshot = getattr(message, "reactions", None)
+    if snapshot is None:
+        # Telegram omitted this metadata. Preserve that distinction from an
+        # explicit empty MessageReactions.results snapshot.
+        return None
+    raw_results = getattr(snapshot, "results", None)
+    results_available = isinstance(raw_results, (list, tuple))
+    raw_results = raw_results if results_available else ()
+    complete = results_available and len(raw_results) <= MAX_REACTION_TYPES
+    is_min = bool(getattr(snapshot, "min", False))
+    results = []
+    for row in raw_results[:MAX_REACTION_TYPES]:
+        reaction = public_reaction(getattr(row, "reaction", None))
+        count = nonnegative_integer(getattr(row, "count", None))
+        if reaction is None or count is None or count >= 2**31:
+            complete = False
+            continue
+        raw_chosen_order = getattr(row, "chosen_order", None)
+        chosen_order = nonnegative_integer(raw_chosen_order)
+        if chosen_order is not None and chosen_order >= 2**31:
+            chosen_order = None
+        # chosen_order=0 is a valid selection, so truthiness would lose the
+        # first reaction. Missing selection in min data must remain unknown.
+        selection_unknown = is_min or (raw_chosen_order is not None and chosen_order is None)
+        results.append({**reaction, "count": count,
+                        "chosen": None if selection_unknown else (chosen_order is not None),
+                        "chosenOrder": None if is_min else chosen_order})
+
+    raw_recent = getattr(snapshot, "recent_reactions", None)
+    recent_available = isinstance(raw_recent, (list, tuple))
+    recent_truncated = recent_available and len(raw_recent) > MAX_RECENT_REACTIONS
+    raw_recent = raw_recent if recent_available else ()
+    recent = []
+    for row in raw_recent[:MAX_RECENT_REACTIONS]:
+        reaction = public_reaction(getattr(row, "reaction", None))
+        peer = public_reaction_peer(getattr(row, "peer_id", None), message)
+        if reaction is None or peer is None:
+            recent_truncated = True
+            continue
+        date = getattr(row, "date", None)
+        recent.append({"peer": peer, "reaction": reaction,
+                       "date": date.isoformat() if isinstance(date, datetime) else None,
+                       "my": bool(getattr(row, "my", False)),
+                       "unread": bool(getattr(row, "unread", False))})
+    return {"results": results,
+            "totalCount": sum(row["count"] for row in results) if complete else None,
+            "complete": complete, "min": is_min,
+            "canSeeList": bool(getattr(snapshot, "can_see_list", False)),
+            "asTags": bool(getattr(snapshot, "reactions_as_tags", False)),
+            "recent": recent, "recentComplete": False,
+            "recentTruncated": recent_truncated}
+
+
 def public_message(
     message: Any,
     *,
@@ -2311,6 +2432,7 @@ def public_message(
         "linkEntities": link_entities,
         "linkEntitiesTruncated": link_entities_truncated,
         "replyContext": reply_context,
+        "reactions": public_message_reactions(message),
     }
 
 

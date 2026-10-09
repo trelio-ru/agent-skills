@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.5.1`
-публикует runtime `2.5.1`, требует Telethon `>=1.44,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.5.2`
+публикует runtime `2.5.2`, требует Telethon `>=1.44,<2` и сохраняет
 minimum host `1.11.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -218,6 +218,42 @@ page не считается концом ветки. Любая чужая thre
 `public_message` дополнительно возвращает mediaType и threadId;
 `public_messages` – nullable message link. User dialogs не получают
 выдуманную t.me/username/message ссылку.
+
+## Чтение реакций
+
+Общий `public_message` возвращает `reactions` во всех путях: recent/exact read,
+thread root/replies, search hits/context, scheduled queue и period export.
+Проекция читает уже полученный `Message.reactions`, не вызывает дополнительные
+RPC, не отправляет read receipts и не меняет реакции либо их unread state.
+
+`reactions=null` отличает metadata, которую Telegram не вернул, от явного
+пустого `results=[]` с `totalCount=0`, `complete=true`. Нельзя объявлять отсутствие
+реакций по null. `results` содержит `type=emoji` с `emoji`, `custom_emoji` с
+decimal-string `documentId` либо `paid`; у каждой записи есть `count`, nullable
+`chosen` и `chosenOrder`. Нулевой chosen order является собственной реакцией.
+Provider `min=true` сохраняет aggregate counts, но оставляет собственный выбор
+неизвестным. `asTags` сохраняет отличие tags в Избранном.
+
+Не более 64 reaction types и 32 recent rows на сообщение. Неизвестный constructor,
+invalid count или превышенный aggregate bound дают `complete=false`,
+`totalCount=null`, сохраняя доступные записи. Emoji identity не обрезается;
+custom emoji int64 остаётся строкой без потери точности JavaScript.
+
+`recent` содержит reaction identity, date, `my` / `unread` и typed marked peer
+`id`, `type`, nullable `title` / `username` только из уже загруженных entities.
+Телефоны, access hashes, raw TL и file references не сериализуются. Recent sample
+всегда имеет `recentComplete=false`; локальное ограничение/пропуск отмечает
+`recentTruncated=true`. `canSeeList` – provider permission, а не доказательство
+полного списка. Новый profile/list read автоматически не запускается.
+
+`tests/test_reactions.py` проверяет Unicode/custom/paid reactions, chosen order 0,
+min/empty/missing/hidden snapshots, caps и safe identity, а также реальные пути
+exact/recent/context/thread/search/export через synthetic provider без сети.
+API: [messageReactions](https://core.telegram.org/constructor/messageReactions),
+[reactionCount](https://core.telegram.org/constructor/reactionCount),
+[messagePeerReaction](https://core.telegram.org/constructor/messagePeerReaction).
+
+## Ответ на сообщение
 
 `reply --link URL --message TEXT` либо exact chat/message сохраняет исходный
 reply ID и topic. При reply на channel post runtime отправляет комментарий в
