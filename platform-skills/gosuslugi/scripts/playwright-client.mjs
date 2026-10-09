@@ -106,7 +106,8 @@ export async function createEsiaAuthorization(page, options = {}) {
   const root = options.configHome ?? configRoot();
   requireThat(typeof root === 'string' && path.isAbsolute(root), 'config_home_absolute_required');
   const helper = await nativeHelper(root);
-  const sessionId = crypto.randomUUID(), identity = { company, member };
+  requireThat(options.accountId === undefined || UUID.test(options.accountId), 'account_binding_invalid');
+  const sessionId = crypto.randomUUID(), identity = { company, member, ...(options.accountId ? { accountId: options.accountId } : {}) };
   const directory = browserSessionDirectory(root, identity, sessionId);
   await ensurePrivateDirectory(directory, helper);
   const startedAt = Date.now(), expiresAt = startedAt + LEASE_MS, startedClock = performance.now();

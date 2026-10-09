@@ -34,7 +34,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from email.header import decode_header
 from email.message import EmailMessage, Message
 from email.policy import default
@@ -422,6 +422,11 @@ def load_account(name: str) -> Account:
         raise MailboxError(f'Account "{normalized_name}" has empty required fields.')
     if account.smtp_security not in {"ssl", "starttls"}:
         raise MailboxError("smtp_security must be ssl or starttls.")
+    binding = selected_local_account()
+    if binding:
+        if normalized_name != binding["mailbox_name"]:
+            raise MailboxError("Mailbox differs from the selected local account.")
+        account = replace(account, description=normalize_account_description(binding.get("comment", "")))
     return account
 
 
@@ -507,7 +512,7 @@ def browser_password_page(
             field("username", "Логин IMAP/SMTP (если отличается от адреса)", account.username, extra='maxlength="1024"'),
             field("display_name", "Имя отправителя (необязательно)", account.display_name, extra='maxlength="256"'),
             f'<label>Описание ящика (необязательно, без секретов)<textarea name="description" '
-            f'maxlength="{MAX_ACCOUNT_DESCRIPTION_CHARS}" rows="3">{html.escape(account.description)}</textarea></label>',
+            f'maxlength="{MAX_ACCOUNT_DESCRIPTION_CHARS}" rows="3" {"readonly" if selected_local_account() else ""}>{html.escape(account.description)}</textarea></label>',
             field("imap_host", "Сервер IMAP", account.imap_host, extra='maxlength="253" required'),
             field("imap_port", "Порт IMAP TLS", account.imap_port, "number", 'min="1" max="65535" required'),
             field("smtp_host", "Сервер SMTP", account.smtp_host, extra='maxlength="253" required'),
@@ -1311,6 +1316,11 @@ def prompt_configuration_terminal(args: argparse.Namespace, name: str, existing:
 
 
 def command_configure(args: argparse.Namespace) -> dict[str, Any]:
+    binding = selected_local_account()
+    if binding:
+        if args.description is not None and args.description != binding["comment"]:
+            raise MailboxError("Use account update --comment to change the common account description.")
+        args.description = binding["comment"]
     name = normalize_account_name(args.account)
     existing = load_raw_config().get("accounts", {}).get(name, {})
     requested_password_mode = "terminal" if args.terminal_prompts else args.password_input
@@ -1321,6 +1331,8 @@ def command_configure(args: argparse.Namespace) -> dict[str, Any]:
         candidate, raw_password = prompt_configuration_browser(name, existing, args.description)
     else:
         candidate, raw_password = prompt_configuration_terminal(args, name, existing)
+    if binding:
+        candidate = replace(candidate, description=binding["comment"])
     password = normalize_password_for_account(candidate, raw_password)
     backup_path = None
     if existing and existing.get("credential_store", "file") == "file":
@@ -2271,6 +2283,11 @@ def command_description(args: argparse.Namespace) -> dict[str, Any]:
     sender identity, or touch that account's separate sending policy.
     """
 
+    binding = selected_local_account()
+    if binding:
+        if args.description_command != "show":
+            raise MailboxError("Use account update --comment to change the common account description.")
+        return {"account": binding["id"], "description": binding["comment"]}
     name = normalize_account_name(args.account)
     data = load_raw_config()
     account = data.get("accounts", {}).get(name)
@@ -2387,9 +2404,51 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def selected_local_account() -> dict[str, Any] | None:
+    raw = os.environ.get("TRELIO_SKILL_ACCOUNT_JSON")
+    if not raw:
+        return None
+    value = json.loads(raw)
+    if not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value.get("id", "")):
+        raise MailboxError("Invalid host account binding.")
+    if not re.fullmatch(r"[a-f0-9]{64}", value.get("companyBinding", "")):
+        raise MailboxError("Invalid host company binding.")
+    # Existing mailbox names also address Keychain/DPAPI. Keep that internal
+    # locator unchanged even when the user renames the common catalogue entry.
+    value["mailbox_name"] = normalize_account_name(value["providerRef"] or value["id"])
+    return value
+
+
+def import_existing_accounts() -> dict[str, Any]:
+    # LEGACY: skill-personal-accounts-v1. Read bounded public mailbox metadata,
+    # never load a password or probe IMAP/SMTP merely to migrate the catalogue.
+    if CONFIG_PATH.exists() and CONFIG_PATH.stat().st_size > 1024 * 1024:
+        raise MailboxError("Mailbox configuration exceeds the migration limit.")
+    accounts = load_raw_config()["accounts"]
+    return {"schemaVersion": 1, "accounts": [{"sourceKey": normalize_account_name(name), "scope": "device",
+        "name": name, "comment": normalize_account_description(item.get("description", "")),
+        "providerRef": name} for name, item in accounts.items()]}
+
+
 def main(*, _owned: bool = False) -> int:
+    if sys.argv[1:] == ["__trelio_accounts_import"]:
+        print(json.dumps(import_existing_accounts(), ensure_ascii=False))
+        return 0
+    binding = selected_local_account()
+    argv = sys.argv[1:]
+    if binding:
+        if any(arg.startswith("--account=") for arg in argv):
+            raise MailboxError("Use the host --local-account selector.")
+        # The host selector owns account selection; a retained legacy flag may
+        # only name that exact mailbox. This prevents bypassing company bindings.
+        if "--account" in argv:
+            index = argv.index("--account")
+            if index + 1 >= len(argv) or argv[index + 1] != binding["mailbox_name"] or argv.count("--account") != 1:
+                raise MailboxError("Mailbox differs from the selected local account.")
+        elif argv and argv[0] != "accounts":
+            argv = [*argv, "--account", binding["mailbox_name"]]
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         if not _owned and args.command not in {"accounts", "description", "policy"}:
             terminal = args.command == "configure" and (
@@ -2397,7 +2456,7 @@ def main(*, _owned: bool = False) -> int:
             if terminal and (not sys.stdin.isatty() or not sys.stderr.isatty()):
                 raise ProtectedPromptUnavailable("Terminal setup requires explicit mode and visible stdin/stderr TTY.")
             try:
-                return native_runtime().supervise(CONFIG_DIR, sys.argv[1:], terminal=terminal,
+                return native_runtime().supervise(CONFIG_DIR, argv, terminal=terminal,
                                                   started_at=int(time.time() * 1000), opener=open_browser_url)
             except native_runtime().NativeError as error:
                 raise MailboxError(str(error)) from None

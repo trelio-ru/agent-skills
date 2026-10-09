@@ -224,6 +224,7 @@ const parseArguments = (argv, environment = process.env) => {
     companyId: identity.companyId,
     memberId: identity.memberId,
     connectionId: identity.connectionId,
+    account: readAccountBinding(environment),
     sendMode: "",
     // Browser discovery is shared by the host runtime. This field is set only
     // when the caller explicitly chooses an exact executable with --chrome.
@@ -506,18 +507,46 @@ Structural commands: show the unchanged --dry-run output, then repeat the exact
 command with --confirm --approval-hash HASH instead of --dry-run.
 `.trim();
 
-const connectionRoot = (options) => path.join(
-  configHome(),
-  "integrations",
-  SKILL_ID,
-  options.companyId,
-  options.memberId,
-  options.connectionId,
-);
+// A host-selected personal account changes storage only. Live company/member
+// identity remains in options for operation and confirmation binding. Imported
+// references retain the exact old profile path; no cookie copying is needed.
+const readAccountBinding = (environment = process.env) => {
+  const text = environment.TRELIO_SKILL_ACCOUNT_JSON;
+  if (!text) return null;
+  const account = JSON.parse(text);
+  if (!UUID_PATTERN.test(account.id || "") ||
+      !/^[a-f0-9]{64}$/.test(account.companyBinding || "")) throw new Error("Invalid host account binding.");
+  if (account.providerRef !== null) {
+    const ref = JSON.parse(account.providerRef);
+    if (Object.keys(ref).sort().join() !== "companyId,connectionId,memberId" ||
+        ![ref.companyId, ref.memberId, ref.connectionId].every(v => UUID_PATTERN.test(v || "")))
+      throw new Error("Invalid account storage reference.");
+  }
+  return account;
+};
+const connectionRoot = (options) => {
+  if (options.account?.providerRef === null) return path.join(configHome(), "integrations", SKILL_ID, "accounts", options.account.id);
+  const owner = options.account ? JSON.parse(options.account.providerRef) : options;
+  return path.join(configHome(), "integrations", SKILL_ID, owner.companyId, owner.memberId, owner.connectionId);
+};
 
+// LEGACY: skill-personal-accounts-v1. This probe reads only directory metadata,
+// never a cookie, credential or message. An inaccessible path is not “no account”.
+const importExistingAccount = () => {
+  const identity = requireRuntimeIdentity();
+  const root = connectionRoot(identity);
+  let exists = false;
+  try { const stat = fs.lstatSync(root); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Unsafe account directory."); exists = true; }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  return { schemaVersion: 1, accounts: exists ? [{ sourceKey: identity.connectionId, scope: "company",
+    name: "Основной аккаунт", comment: "", providerRef: JSON.stringify({ companyId: identity.companyId,
+      memberId: identity.memberId, connectionId: identity.connectionId }) }] : [] };
+};
 const policyPath = (options) => path.join(connectionRoot(options), "config", "policy.json");
 const profilePath = (options) => path.join(connectionRoot(options), "state", "chrome-profile");
-const downloadsPath = (options) => path.join(
+const downloadsPath = (options) => options.account
+  ? path.join(cacheHome(), "integrations", SKILL_ID, "accounts", options.account.id, "downloads")
+  : path.join(
   cacheHome(),
   "integrations",
   SKILL_ID,
@@ -588,6 +617,16 @@ const readAssistSession = (options) => {
       "TELEGRAM_ASSIST_SESSION_INVALID",
       "The local Telegram Web assisted-browser session record is invalid.",
     );
+  }
+  if (options.account) {
+    const original = options.account.providerRef ? JSON.parse(options.account.providerRef) : null;
+    const legacyOwner = !record.companyBinding && original?.companyId === options.companyId
+      && original?.memberId === options.memberId;
+    if (record.companyBinding !== options.account.companyBinding && !legacyOwner) {
+      if (processIsAlive(record.pid)) throw new TelegramWebRuntimeError(
+        "ACCOUNT_SESSION_SCOPE_CONFLICT", "The selected account has an active session in another company. Close that session first.");
+      return null;
+    }
   }
   return record;
 };
@@ -1102,6 +1141,7 @@ const validateCommandOptions = (options) => {
 const mutationApprovalPayload = (options) => {
   const { message } = validateCommandOptions(options);
   return {
+    ...(options.account ? { accountId: options.account.id, companyBinding: options.account.companyBinding } : {}),
     command: options.command,
     chat: options.chat || null,
     contact: options.contact || null,
@@ -1186,6 +1226,7 @@ const prepareAssistAuthorization = (options) => {
     ensureOutputParentDirectory(outputParent);
   }
   const payload = {
+    ...(options.account ? { accountId: options.account.id, companyBinding: options.account.companyBinding } : {}),
     command: operation.command,
     query: operation.query || null,
     globalSearch: operation.globalSearch,
@@ -2815,6 +2856,7 @@ const startAssistSession = async (options) => withAssistStartLock(options, async
     browserSession.deadlineAt,
   );
   const initial = {
+    companyBinding: options.account?.companyBinding ?? null,
     schemaVersion: 1,
     sessionId,
     phase: "starting",
@@ -3172,6 +3214,7 @@ const assertAssistActionAllowed = ({ config, snapshot, packet, fingerprint, now 
 const runAssistWorker = async () => {
   const config = readAssistWorkerConfig();
   const options = {
+    account: readAccountBinding(),
     companyId: config.companyId,
     memberId: config.memberId,
     connectionId: config.connectionId,
@@ -3502,6 +3545,7 @@ const runAssistWorker = async () => {
         server.listen(0, "127.0.0.1", resolve);
       });
       writePrivateJson(file, {
+        companyBinding: options.account?.companyBinding ?? null,
         schemaVersion: 1,
         sessionId: config.sessionId,
         phase: "ready",
@@ -3541,6 +3585,7 @@ const runAssistWorker = async () => {
   } finally {
     if (publicFailure) {
       writePrivateJson(file, {
+        companyBinding: options.account?.companyBinding ?? null,
         schemaVersion: 1,
         sessionId: config.sessionId,
         phase: "failed",
@@ -4300,6 +4345,7 @@ const runBrowserCommand = async (options) => {
 };
 
 const main = async () => {
+  if (process.argv[2] === "__trelio_accounts_import") { output(importExistingAccount()); return; }
   const options = parseArguments(process.argv.slice(2));
   if (options.command === "help") {
     process.stdout.write(`${usage()}\n`);
@@ -4371,6 +4417,7 @@ export {
   installTelegramAssistGate,
   prepareAssistAuthorization,
   requestAssistControl,
+  readAssistSession,
   validateAssistControlPacket,
   assertSendAllowed,
   buildGlobalSearchCoverage,

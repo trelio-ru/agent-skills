@@ -19,6 +19,7 @@ const COMPANY_PRIVATE_SKILL_ID = /^(company-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f
 const ALLOWED_CAPABILITIES = new Set([
   "browser",
   "local-session",
+  "local-accounts-v1",
   "network",
   "secret-checkout",
 ]);
@@ -435,6 +436,14 @@ const readReleaseDefinition = (skillDirectory) => {
   });
   if (new Set(capabilities).size !== capabilities.length) {
     throw new Error("runtime.capabilities must not contain duplicates.");
+  }
+  if (capabilities.includes("local-accounts-v1")) {
+    const [major, minor] = runtime.minimumHostVersion.split('.').map(Number);
+    if (major < 3 || major === 3 && minor < 7) throw new Error("Personal accounts require host 3.7.0 or newer.");
+  }
+  if (capabilities.includes("local-accounts-v1") &&
+      (!capabilities.includes("local-session") || capabilities.includes("secret-checkout"))) {
+    throw new Error("Personal accounts require local-session without secret-checkout.");
   }
   const browserSession = validateBrowserSessionDefinition(
     runtime.browserSession,
