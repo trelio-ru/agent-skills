@@ -341,6 +341,10 @@ class FacsimileTests(unittest.TestCase):
         self.assertTrue(done.wait(15))
         thread.join()
 
+    def test_form_startup_does_not_require_dns(self):
+        with patch("socket.getfqdn", side_effect=AssertionError("loopback DNS must not be used")):
+            self.failure("setup_timeout", lambda: runtime.local_form(self.root, timeout=0.01, open_browser=False))
+
     @unittest.skipUnless(os.name == "nt", "native Windows contract")
     def test_windows_restricted_parent_filtered_policy_and_persistent_readback(self):
         executable = str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
@@ -355,7 +359,7 @@ class FacsimileTests(unittest.TestCase):
         root = self.home / "restricted-first-start"
         root.mkdir()
         env = {**self.env, "TRELIO_CONFIG_HOME": str(root), "FACSIMILE_TEST_PYTHON": sys.executable,
-               "FACSIMILE_TEST_SCRIPT": str(SCRIPT)}
+               "FACSIMILE_TEST_SCRIPT": str(SCRIPT), "PSModulePath": str(root / "absent-modules")}
         env.pop("PSExecutionPolicyPreference", None)
         result = subprocess.run([executable, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Restricted",
                                  "-Command", "& $env:FACSIMILE_TEST_PYTHON -I $env:FACSIMILE_TEST_SCRIPT doctor; exit $LASTEXITCODE"],

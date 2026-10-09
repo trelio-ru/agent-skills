@@ -25,10 +25,18 @@ if ($CreateDirectory) {
   $acl.AddAccessRule($rule)
   [System.IO.Directory]::CreateDirectory($Target, $acl) | Out-Null
 }
-$item = Get-Item -LiteralPath $Target -Force
 $stage = 'acl_read'
-if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'reparse_point' }
-$security = Get-Acl -LiteralPath $Target
+$attributes = [System.IO.File]::GetAttributes($Target)
+if ($attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'reparse_point' }
+$isDirectory = ($attributes -band [System.IO.FileAttributes]::Directory) -ne 0
+# The verified process environment may carry PowerShell Core's PSModulePath.
+# Framework ACL APIs avoid importing Get-Acl/Set-Acl from a different edition
+# or widening module search paths just to read the native security descriptor.
+if ($isDirectory) {
+  $security = [System.IO.Directory]::GetAccessControl($Target)
+} else {
+  $security = [System.IO.File]::GetAccessControl($Target)
+}
 $owner = $security.GetOwner([System.Security.Principal.SecurityIdentifier])
 if ($owner.Value -ne $sid.Value) {
   # Elevated Windows processes can initially assign their token's Owner group
@@ -42,13 +50,13 @@ if ($ProtectNewFile) {
   # Python has just created this exact regular file with exclusive-create.
   # Removing inherited grants is safe only on that newly owned output; the
   # check-only path never changes previously existing private material.
-  if ($item.PSIsContainer) { throw 'expected_file' }
+  if ($isDirectory) { throw 'expected_file' }
   $security = New-Object System.Security.AccessControl.FileSecurity
   $security.SetOwner($sid)
   $security.SetAccessRuleProtection($true, $false)
   $security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')))
-  Set-Acl -LiteralPath $Target -AclObject $security
-  $security = Get-Acl -LiteralPath $Target
+  [System.IO.File]::SetAccessControl($Target, $security)
+  $security = [System.IO.File]::GetAccessControl($Target)
 }
 $rules = $security.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
 $stage = 'acl_verify'

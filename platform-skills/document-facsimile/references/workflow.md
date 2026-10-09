@@ -30,6 +30,8 @@ POSIX: owner-only directory 0700, file 0600, правильный uid, без sy
 Windows: fixed signed PowerShell helper, абсолютный системный executable,
 `-NoProfile -NonInteractive -ExecutionPolicy Bypass`, current-user owner и DACL,
 без reparse points. Постоянные policy не меняются; GPO failure блокирует работу.
+ACL читается Framework API без поиска PowerShell modules; наследованный
+PSModulePath другой PowerShell edition не меняет этот маршрут.
 Runtime создаёт только собственные provider descendants, не исправляет чужие
 права. New output получает owner-only ACL, исходные файлы не перезаписываются.
 
@@ -48,6 +50,7 @@ tombstone: старая configure форма не может воскресит�
 ФИО и PNG вводятся человеком в локальную форму, не через чат/MCP payload.
 
 Форма проверяет Host, Origin, одноразовые path/nonce, content type и размер.
+Запуск не вызывает DNS даже для loopback адреса.
 Нет CORS, внешних ресурсов, access log, traceback или credential output.
 CSP запрещает iframe и сторонние script/connect; cache и referrer отключены.
 Неверный запрос не сохраняет данные. CAS отказ оставляет прежний bundle.

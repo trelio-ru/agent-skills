@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import socketserver
 import stat
 import struct
 import subprocess
@@ -585,6 +586,14 @@ def local_form(root, timeout=110, open_browser=True, ready=None):
                 self.respond(500, b'{"ok":false,"code":"local_operation_failed"}')
 
     class Server(http.server.HTTPServer):
+        def server_bind(self):
+            # HTTPServer's default asks getfqdn(127.0.0.1), which can block on
+            # external DNS in managed OS environments. This loopback-only form
+            # has a fixed identity and must never need a resolver or network.
+            socketserver.TCPServer.server_bind(self)
+            self.server_name = "127.0.0.1"
+            self.server_port = self.server_address[1]
+
         def get_request(self):
             connection, address = super().get_request()
             connection.settimeout(5)
