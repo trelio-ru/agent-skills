@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.0",
-    "summary": "Несколько личных аккаунтов с названиями и комментариями, выбором для каждой компании и сохранением существующих подключений."
+    "version": "4.5.1",
+    "summary": "Системное окно получает название текущего чата через его hook-сессию даже при долгоживущем MCP. Каталог личных аккаунтов сохраняется."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.0",
-    "minimumHostVersion": "3.7.0",
+    "version": "3.5.1",
+    "minimumHostVersion": "3.7.1",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",
       "interpreter": "node"

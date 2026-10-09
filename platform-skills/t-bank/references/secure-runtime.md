@@ -38,6 +38,12 @@ owner confirmation читает exact v1 key, а новый helper импорт�
 удаляет оба item и после миграции может показать два последовательных owner
 confirmation. Обычный start password dialog login Keychain не вызывает.
 
+Для текущего Codex-чата требуется host >=3.7.1: он передаёт UUID из exact
+hook-сессии, включая повторный запуск с кешированным допуском. Окружение
+долгоживущего MCP не определяет запрашивающий чат. Signed minimum host задаёт
+эту зависимость; старый bridge до запуска пакета использует штатное обновление
+проверенного host runtime. Global plugin minimum не меняется.
+
 Каждый новый `start`/`authorize`/`configure`/`forget` сначала читает точное
 название текущего чата по `CODEX_THREAD_ID` из локального Codex App Server и
 проверяет ID ответа. CLI выбирается по проверенному абсолютному пути: только
