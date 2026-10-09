@@ -12,6 +12,7 @@ import { pathToFileURL } from "node:url";
  */
 const PROVIDERS = Object.freeze({
   "1c-edo": { owner: "general", matrix: { language: "python" } },
+  "document-facsimile": { owner: "general", matrix: { language: "python" } },
   "consultant-plus": { owner: "general", matrix: null },
   "dodostats-drinkitstats": { owner: "general", matrix: null },
   "gas-pravosudie": {
@@ -66,6 +67,7 @@ const HOSTED_OPERATING_SYSTEMS = Object.freeze([
 
 // Preserve the former full self-hosted gate for shared infrastructure changes.
 const FULL_SELF_HOSTED_SKILLS = Object.freeze([
+  "document-facsimile",
   "email-imap-smtp",
   "1c-edo",
   "iphone-mirroring",
@@ -80,6 +82,7 @@ const FULL_SELF_HOSTED_SKILLS = Object.freeze([
 ]);
 
 const FULL_HOSTED_MATRIX_SKILLS = Object.freeze([
+  "document-facsimile",
   "email-imap-smtp",
   "1c-edo",
   "iphone-mirroring",

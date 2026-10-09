@@ -1,0 +1,76 @@
+param(
+  [Parameter(Mandatory=$true)][string]$Target,
+  [switch]$CreateDirectory,
+  [switch]$ProtectNewFile
+)
+$ErrorActionPreference = 'Stop'
+$stage = 'identity'
+try {
+
+# The signed helper accepts paths only as data. A new private directory gets
+# its DACL before publication; existing unsafe storage is never repaired into
+# looking trusted. MachinePolicy/UserPolicy retain their normal precedence.
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+if ($CreateDirectory) {
+  $stage = 'directory_create'
+  if (Test-Path -LiteralPath $Target) { throw 'already_exists' }
+  $parent = Split-Path -Parent $Target
+  if (!(Test-Path -LiteralPath $parent -PathType Container)) { throw 'missing_parent' }
+  $acl = New-Object System.Security.AccessControl.DirectorySecurity
+  $acl.SetOwner($sid)
+  $acl.SetAccessRuleProtection($true, $false)
+  $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'
+  )
+  $acl.AddAccessRule($rule)
+  [System.IO.Directory]::CreateDirectory($Target, $acl) | Out-Null
+}
+$stage = 'acl_read'
+$attributes = [System.IO.File]::GetAttributes($Target)
+if ($attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'reparse_point' }
+$isDirectory = ($attributes -band [System.IO.FileAttributes]::Directory) -ne 0
+# The verified process environment may carry PowerShell Core's PSModulePath.
+# Framework ACL APIs avoid importing Get-Acl/Set-Acl from a different edition
+# or widening module search paths just to read the native security descriptor.
+if ($isDirectory) {
+  $security = [System.IO.Directory]::GetAccessControl($Target)
+} else {
+  $security = [System.IO.File]::GetAccessControl($Target)
+}
+$owner = $security.GetOwner([System.Security.Principal.SecurityIdentifier])
+if ($owner.Value -ne $sid.Value) {
+  # Elevated Windows processes can initially assign their token's Owner group
+  # to new files. Only exclusive-created files may be retitled to User SID;
+  # previously stored material always requires the exact user owner already.
+  $tokenOwner = [System.Security.Principal.WindowsIdentity]::GetCurrent().Owner
+  if (!$ProtectNewFile -or $owner.Value -ne $tokenOwner.Value) { throw 'unexpected_owner' }
+}
+if ($ProtectNewFile) {
+  $stage = 'file_protect'
+  # Python has just created this exact regular file with exclusive-create.
+  # Removing inherited grants is safe only on that newly owned output; the
+  # check-only path never changes previously existing private material.
+  if ($isDirectory) { throw 'expected_file' }
+  $security = New-Object System.Security.AccessControl.FileSecurity
+  $security.SetOwner($sid)
+  $security.SetAccessRuleProtection($true, $false)
+  $security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')))
+  [System.IO.File]::SetAccessControl($Target, $security)
+  $security = [System.IO.File]::GetAccessControl($Target)
+}
+$rules = $security.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+$stage = 'acl_verify'
+$allow = $false
+foreach ($rule in $rules) {
+  if ($rule.AccessControlType -eq 'Allow') {
+    if ($rule.IdentityReference.Value -ne $sid.Value) { throw 'other_reader' }
+    if (($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl) { $allow = $true }
+  }
+}
+if (!$allow) { throw 'missing_owner_access' }
+} catch {
+  # Closed diagnostic fields support native CI without publishing a path,
+  # account, ACL principal or raw OS error. Python accepts only this grammar.
+  [Console]::Error.WriteLine('facsimile_acl_' + $stage + ':' + $_.Exception.GetType().Name)
+  exit 2
+}

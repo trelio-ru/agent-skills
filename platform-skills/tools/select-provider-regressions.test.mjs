@@ -85,7 +85,8 @@ test("shared tooling and workflow changes retain the full regression gate", () =
   ]) {
     const selection = selectProviderRegressions([filePath]);
     assert.equal(selection.full, true, filePath);
-    assert.equal(selection.hostedMatrix.include.length, 24, filePath);
+    assert.equal(selection.hostedMatrix.include.length, 27, filePath);
+    assert.ok(selection.selfHostedSkills.includes("document-facsimile"), filePath);
     assert.ok(selection.selfHostedSkills.includes("gosuslugi"), filePath);
     assert.ok(selection.selfHostedSkills.includes("dodostats-drinkitstats"), filePath);
     assert.equal(selection.runConsultantPlus, true, filePath);
@@ -109,4 +110,14 @@ test("an unregistered provider fails closed instead of silently skipping CI", ()
     () => selectProviderRegressions(["platform-skills/new-provider/SKILL.md"]),
     /Unknown provider directories require an explicit CI route: new-provider/u,
   );
+});
+
+test("facsimile storage and DOCX regressions run on all three hosted operating systems", () => {
+  const selection = selectProviderRegressions(["platform-skills/document-facsimile/scripts/trelio-facsimile.py"]);
+  assert.deepEqual(selection.selfHostedSkills, ["document-facsimile"]);
+  assert.deepEqual(selection.hostedMatrix.include, [
+    { os: "ubuntu-latest", skill: "document-facsimile", language: "python" },
+    { os: "macos-latest", skill: "document-facsimile", language: "python" },
+    { os: "windows-latest", skill: "document-facsimile", language: "python" },
+  ]);
 });
