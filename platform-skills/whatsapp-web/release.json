@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "whatsapp-web",
-    "version": "2.2.1",
+    "version": "2.2.2",
     "summary": "Агент наблюдает завершение настройки и входа без обязательного сообщения «заполнил»."
   },
   "connection": {
@@ -17,7 +17,7 @@
     ]
   },
   "runtime": {
-    "version": "2.2.1",
+    "version": "2.2.2",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "scripts/trelio-whatsapp.mjs",

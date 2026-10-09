@@ -78,6 +78,8 @@ Windows не использует CRT exec overlay; argv, ожидание и р
 заменяют CI без доказанного billing/quota blocker и отдельного решения о VM.
 
 Теги skill-<skill-id>-vX.Y.Z и выпущенные package bytes неизменяемы.
+Каждый release tag отправляй отдельным push и подтверждай запуск его workflow
+по [контракту выпуска](docs/release-process.md).
 MAX read-only assist сохраняет штатный phone lookup для cold контакта;
 точная home-search кнопка проверяется и host gate, и browser event fence.
 Для каждой новой signed-runtime публикации нужна уникальная runtime version,

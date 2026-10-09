@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gas-pravosudie",
-    "version": "4.1.2",
+    "version": "4.1.3",
     "summary": "Агент наблюдает завершение настройки и входа без обязательного сообщения «заполнил»."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.7",
+    "version": "1.0.8",
     "minimumHostVersion": "2.4.0",
     "entrypoint": {
       "path": "scripts/trelio-gas-pravosudie.mjs",
