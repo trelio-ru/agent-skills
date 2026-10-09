@@ -23,6 +23,22 @@ SPEC.loader.exec_module(MODULE)
 
 
 class TrelioTelegramTests(unittest.TestCase):
+    def test_personal_account_keeps_storage_but_scopes_approval(self):
+        original = self.identity()
+        account = {"id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "companyBinding": "a" * 64,
+                   "providerRef": json.dumps({"company_id": original.company_id, "member_id": original.member_id,
+                                              "connection_id": original.connection_id})}
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(MODULE, "default_config_home", return_value=pathlib.Path(directory)):
+            imported = MODULE.Identity(company_id="44444444-4444-4444-8444-444444444444",
+                                       member_id=original.member_id, connection_id=original.connection_id, account=account)
+            self.assertEqual(MODULE.connection_root(original), MODULE.connection_root(imported))
+            operation = {"chat": "synthetic", "text": "same payload"}
+            with mock.patch.dict(os.environ, {"TRELIO_SKILL_ACCOUNT_JSON": json.dumps(account)}):
+                first = MODULE.edit_approval_hash(operation)
+            for change in ({"id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, {"companyBinding": "b" * 64}):
+                with mock.patch.dict(os.environ, {"TRELIO_SKILL_ACCOUNT_JSON": json.dumps({**account, **change})}):
+                    self.assertNotEqual(first, MODULE.edit_approval_hash(operation))
+
     def test_bootstrap_installs_portable_iana_timezone_data(self):
         """Keep named export timezones available on Windows as well as POSIX."""
 

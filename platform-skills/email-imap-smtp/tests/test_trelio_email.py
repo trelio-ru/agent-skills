@@ -1,4 +1,6 @@
 import email
+import json
+import os
 import hashlib
 import http.client
 import importlib.util
@@ -20,6 +22,23 @@ SPEC.loader.exec_module(MODULE)
 
 
 class TrelioEmailTests(unittest.TestCase):
+    def test_personal_catalogue_import_preserves_names_comments_without_credentials(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(MODULE, "CONFIG_PATH", pathlib.Path(directory) / "accounts.toml"), \
+                mock.patch.object(MODULE, "load_raw_config", return_value={"accounts": {"work": {"description": "Клиенты\nи счета"}}}):
+            result = MODULE.import_existing_accounts()
+        self.assertEqual(result, {"schemaVersion": 1, "accounts": [{"sourceKey": "work", "scope": "device",
+                         "name": "work", "comment": "Клиенты\nи счета", "providerRef": "work"}]})
+
+    def test_personal_catalogue_selection_cannot_be_overridden_by_legacy_flag(self):
+        binding = {"id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "providerRef": "work",
+                   "name": "Переименован", "comment": "Новый комментарий", "companyBinding": "a" * 64}
+        with mock.patch.dict(os.environ, {"TRELIO_SKILL_ACCOUNT_JSON": json.dumps(binding)}):
+            self.assertEqual(MODULE.selected_local_account()["mailbox_name"], "work")
+            for arguments in (["doctor", "--account", "other"], ["doctor", "--account=other"]):
+                with mock.patch.object(sys, "argv", ["trelio-email.py", *arguments]):
+                    with self.assertRaises(MODULE.MailboxError):
+                        MODULE.main(_owned=True)
+
     def test_message_text_prefers_plain_text(self):
         message = email.message_from_string(
             "Content-Type: multipart/alternative; boundary=x\n\n"

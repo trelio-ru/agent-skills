@@ -273,6 +273,7 @@ test(
     await atomicWrite(authorizationFile, JSON.stringify(original), helper);
     for (const [who, id, site] of [
       [{ ...identity, company: '33333333-3333-4333-8333-333333333333' }, original.requestId, origin],
+      [{ ...identity, accountId: crypto.randomUUID() }, original.requestId, origin],
       [identity, crypto.randomUUID(), origin],
       [identity, original.requestId, 'https://different.example.org'],
     ])
@@ -292,6 +293,7 @@ test(
       { confirmed: false },
       { origin: 'https://different.example.org' },
       { member: 'wrong' },
+      { accountId: crypto.randomUUID() },
       { requestId: crypto.randomUUID() },
     ])
       await assert.rejects(broker.handle({ ...claim, ...change }));

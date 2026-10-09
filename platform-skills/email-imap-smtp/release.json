@@ -2,20 +2,21 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.1.0",
-    "summary": "Исправлена отправка EML-вложений с сохранением исходных байтов. Диагностика показывает этап сбоя, SMTP-код, безопасную категорию причины и размер письма, различает отказ сервера и неизвестный результат. Ошибка закрытия соединения больше не скрывает первоначальный отказ; автоматические повторы не выполняются."
+    "version": "2.2.0",
+    "summary": "Несколько личных аккаунтов с названиями и комментариями, выбором для каждой компании и сохранением существующих подключений."
   },
   "connection": null,
   "runtime": {
-    "version": "2.1.0",
-    "minimumHostVersion": "1.4.0",
+    "version": "2.2.0",
+    "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-email.py",
       "interpreter": "python"
     },
     "capabilities": [
       "local-session",
-      "network"
+      "network",
+      "local-accounts-v1"
     ],
     "files": [
       {

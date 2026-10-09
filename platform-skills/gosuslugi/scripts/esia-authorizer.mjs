@@ -49,6 +49,7 @@ export class EsiaAuthorizer {
       origin: this.config.authorization.origin,
       company: this.config.identity.company,
       member: this.config.identity.member,
+      accountId: this.config.identity.account?.id ?? null,
       guardPid: this.config.guardPid,
       nativeControl: this.config.authorizerControl,
     });

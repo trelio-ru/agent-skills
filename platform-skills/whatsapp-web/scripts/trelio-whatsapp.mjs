@@ -5,7 +5,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { childEnvironment, configRoot, identityFromEnv, LEASE_MS, requireThat, RUNTIME_VERSION, RuntimeError, serviceHttpFailure, storageDirectory } from './core.mjs';
+import { childEnvironment, configRoot, identityFromEnv, importExistingAccounts, LEASE_MS, requireThat, RUNTIME_VERSION, RuntimeError, serviceHttpFailure, storageDirectory } from './core.mjs';
 import { atomicWrite, createPrivateFile, ensurePrivateDirectory, nativeHelper, SOURCE, verifyPrivate, keychainStatus, verifyKeychain } from './native.mjs';
 import { bootstrap as bootstrapBrowser, dependencies as loadPlaywright } from './dependencies.mjs';
 import { validateRequest } from './client.mjs';
@@ -107,6 +107,7 @@ async function doctor(directory, helper, root, mode = 'protocol') {
       : !runtimeReady ? 'bootstrap' : !configured ? 'start: QR-вход в локальном окне' : 'start: повторное использование сохранённой сессии WhatsApp' };
 }
 export async function run(args) {
+  if (args.length === 1 && args[0] === "__trelio_accounts_import") return importExistingAccounts();
   const { command, options } = parseArguments(args);
   // The signed package includes its request schema reference; catalog agents
   // need no private source checkout to discover command arguments.
@@ -126,6 +127,14 @@ export async function run(args) {
   if (command === 'doctor') return doctor(directory, helper, root, options['--mode']);
   let lease = await optionalJson(path.join(directory, 'lease.json'), helper);
   const control = await optionalJson(path.join(directory, 'control.json'), helper);
+  // An unlocked worker belongs to the company that started it. Reusing the
+  // account in another company requires a new worker after normal shutdown;
+  // a catalogue binding never transfers an existing operation's authority.
+  if (lease && await leaseAlive(lease) && identity.account) {
+    const oldOwner = identity.account.providerRef ? JSON.parse(identity.account.providerRef) : null;
+    const sameLegacyScope = !lease.companyBinding && oldOwner?.company === identity.company && oldOwner?.member === identity.member;
+    requireThat(lease.companyBinding === identity.account.companyBinding || sameLegacyScope, 'account_in_use_in_another_company');
+  }
   if (['start', 'forget'].includes(command)) {
     const transport=options['--mode']||'protocol';
     requireThat(transport === 'browser' || process.platform === 'darwin', 'protocol_not_supported_on_windows');
@@ -154,7 +163,7 @@ export async function run(args) {
     // Browser and protocol credentials remain independent. They share one
     // control lease so a fallback cannot silently run two sending devices at
     // once or reuse the other mode's mutation journal.
-    const now = Date.now(); lease = { leaseId: crypto.randomUUID(), runtimeVersion: RUNTIME_VERSION, transport,
+    const now = Date.now(); lease = { companyBinding: identity.account?.companyBinding ?? null, leaseId: crypto.randomUUID(), runtimeVersion: RUNTIME_VERSION, transport,
       ...(transport === 'browser' ? { browserStorage: 'local_profile' } : {}),
       headless:options['--headless']===true, startedAt: now, expiresAt: now + LEASE_MS, guardPid: null };
     const file = path.join(directory, 'lease.json');

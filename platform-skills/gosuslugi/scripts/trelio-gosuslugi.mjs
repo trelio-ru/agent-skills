@@ -5,7 +5,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { browserSessionBinding, childEnvironment, configRoot, identityFromEnv, LEASE_MS, requireThat, RUNTIME_VERSION, RuntimeError, serviceHttpFailure, storageDirectory } from './core.mjs';
+import { browserSessionBinding, childEnvironment, configRoot, identityFromEnv, importExistingAccounts, LEASE_MS, requireThat, RUNTIME_VERSION, RuntimeError, serviceHttpFailure, storageDirectory } from './core.mjs';
 import { closedDiagnostics } from './auth-safety.mjs';
 import { atomicWrite, createPrivateFile, ensurePrivateDirectory, nativeHelper, nativeKeyHelper,
   nativeRequestTitleInput, SOURCE, verifyPrivate, keychainStatus, verifyKeychain } from './native.mjs';
@@ -129,6 +129,7 @@ async function doctor(directory, helper, root) {
       : !runtimeReady ? 'bootstrap' : !configured ? 'start: первичная локальная настройка' : 'start: системная разблокировка без повторного ввода Госуслуг' };
 }
 export async function run(args) {
+  if (args.length === 1 && args[0] === "__trelio_accounts_import") return importExistingAccounts();
   const { command, options } = parseArguments(args);
   // Parse and authorization-shape errors stay side-effect free and are
   // reported before host access. Every valid command then binds itself to the
@@ -137,7 +138,7 @@ export async function run(args) {
   const identity = identityFromEnv(), root = configRoot();
   if (command === 'client') return { modulePath: path.join(SOURCE, 'playwright-client.mjs'),
     guidePath: path.join(SOURCE, '..', 'references', 'playwright-client.md'),
-    options: { company: identity.company, member: identity.member }, configHome: root,
+    options: { company: identity.company, member: identity.member, ...(identity.account ? { accountId: identity.account.id } : {}) }, configHome: root,
     ownership: 'caller', browserAccess: 'full_playwright_context' };
   const helper = await nativeHelper(root), keyHelper = await nativeKeyHelper(root, helper), directory = storageDirectory(root, identity);
   await ensurePrivateDirectory(directory, helper);
@@ -145,6 +146,14 @@ export async function run(args) {
   if (command === 'doctor') return doctor(directory, helper, root);
   let lease = await optionalJson(path.join(directory, 'lease.json'), helper);
   const control = await optionalJson(path.join(directory, 'control.json'), helper);
+  // An unlocked worker belongs to the company that started it. Reusing the
+  // account in another company requires a new worker after normal shutdown;
+  // a catalogue binding never transfers an existing operation's authority.
+  if (lease && await leaseAlive(lease) && identity.account) {
+    const oldOwner = identity.account.providerRef ? JSON.parse(identity.account.providerRef) : null;
+    const sameLegacyScope = !lease.companyBinding && oldOwner?.company === identity.company && oldOwner?.member === identity.member;
+    requireThat(lease.companyBinding === identity.account.companyBinding || sameLegacyScope, 'account_in_use_in_another_company');
+  }
   const authorization = command === 'authorize' ? await readAuthorization(root, identity, options['--browser-session'], options['--request'], options['--origin'], helper) : null;
   if (['start', 'authorize', 'configure', 'forget'].includes(command)) {
     if (lease && await leaseAlive(lease)) {
@@ -186,7 +195,7 @@ export async function run(args) {
     // OS to unlock the vault. The caller's optional wording is only a fallback
     // in clients without that ID; the title is never persisted with the lease.
     const requestTitle = await resolveRequestTitle(options['--request-title']);
-    const now = Date.now(); lease = { leaseId: crypto.randomUUID(), runtimeVersion: RUNTIME_VERSION, startedAt: authorization?.startedAt || now, expiresAt: authorization?.expiresAt || now + LEASE_MS, guardPid: null, authorizationRequest: authorization?.requestId || null };
+    const now = Date.now(); lease = { companyBinding: identity.account?.companyBinding ?? null, leaseId: crypto.randomUUID(), runtimeVersion: RUNTIME_VERSION, startedAt: authorization?.startedAt || now, expiresAt: authorization?.expiresAt || now + LEASE_MS, guardPid: null, authorizationRequest: authorization?.requestId || null };
     const file = path.join(directory, 'lease.json');
     await createPrivateFile(file, JSON.stringify(lease), helper);
     const child = spawn(helper, ['guard', process.execPath, path.join(SOURCE, 'worker.mjs'), String(Math.max(1, lease.expiresAt - now))], {

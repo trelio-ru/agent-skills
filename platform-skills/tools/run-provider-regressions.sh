@@ -107,6 +107,7 @@ node --test \
   platform-skills/tools/agent-skill-refresh-contract.test.mjs \
   platform-skills/tools/agent-skill-setup-contract.test.mjs \
   platform-skills/tools/build-runtime-package.test.mjs \
+  platform-skills/tools/local-accounts.test.mjs \
   platform-skills/tools/select-provider-regressions.test.mjs
 
 # Every selected executable package remains deterministic before its behavior

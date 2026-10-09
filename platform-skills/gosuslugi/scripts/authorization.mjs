@@ -123,6 +123,7 @@ export function createAuthorizationBroker({
       origin: portal.service.origin,
       company: config.identity.company,
       member: config.identity.member,
+      accountId: config.identity.accountId ?? null,
       startedAt: config.startedAt,
       expiresAt: config.expiresAt,
       brokerPid: process.pid,
@@ -150,6 +151,7 @@ export function createAuthorizationBroker({
           packet.origin === authorization.origin &&
           packet.company === config.identity.company &&
           packet.member === config.identity.member &&
+          (packet.accountId ?? null) === (config.identity.accountId ?? null) &&
           UUID.test(packet.authorizationLease || '') &&
           Number.isInteger(packet.guardPid) &&
           packet.guardPid > 1,

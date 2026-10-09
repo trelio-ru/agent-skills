@@ -35,6 +35,9 @@ def child_environment() -> dict[str, str]:
         "LC_ALL", "LC_CTYPE", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
         "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
         "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "TERM",
+        # Value-free, host-selected account metadata survives the owned worker.
+        # Provider credentials and arbitrary TRELIO_SKILL_* remain excluded.
+        "TRELIO_SKILL_ACCOUNT_JSON",
     }
     return {name: value for name, value in os.environ.items() if name.upper() in names}
 

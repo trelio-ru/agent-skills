@@ -224,6 +224,7 @@ class Identity:
     company_id: str
     member_id: str
     connection_id: str
+    account: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -396,8 +397,27 @@ def resolve_host_identity_part(
     raise TelegramRuntimeError(f"{label} is missing from the signed runtime host identity.")
 
 
+def selected_local_account() -> dict[str, Any] | None:
+    """Read only host-supplied storage metadata; never replace live task scope."""
+    raw = os.environ.get("TRELIO_SKILL_ACCOUNT_JSON")
+    if not raw:
+        return None
+    account = json.loads(raw)
+    normalize_identity_part(account.get("id"), "account id")
+    if not re.fullmatch(r"[a-f0-9]{64}", account.get("companyBinding", "")):
+        raise TelegramRuntimeError("Invalid host account binding.")
+    if account.get("providerRef") is not None:
+        owner = json.loads(account["providerRef"])
+        if set(owner) != {"company_id", "member_id", "connection_id"}:
+            raise TelegramRuntimeError("Invalid account storage reference.")
+        for key, value in owner.items():
+            normalize_identity_part(value, key)
+    return account
+
+
 def identity_from_args(args: argparse.Namespace) -> Identity:
     return Identity(
+        account=selected_local_account(),
         company_id=resolve_host_identity_part(
             args.company_id,
             environment_name=HOST_COMPANY_ID_ENV,
@@ -417,6 +437,13 @@ def identity_from_args(args: argparse.Namespace) -> Identity:
 
 
 def connection_root(identity: Identity) -> Path:
+    # Import preserves the original protected storage location and session lock.
+    # New accounts use their stable UUID, independent of names and companies.
+    if identity.account:
+        if identity.account["providerRef"] is None:
+            return default_config_home() / "integrations" / SKILL_ID / "accounts" / identity.account["id"]
+        owner = json.loads(identity.account["providerRef"])
+        return default_config_home() / "integrations" / SKILL_ID / owner["company_id"] / owner["member_id"] / owner["connection_id"]
     return (
         default_config_home()
         / "integrations"
@@ -5241,8 +5268,12 @@ def edit_text(args: argparse.Namespace) -> str:
 
 
 def edit_approval_hash(operation: dict[str, Any]) -> str:
-    """Bind approval to one canonical target snapshot and replacement body."""
+    """Bind content and host account/company; a preview cannot cross bindings."""
 
+    account = selected_local_account()
+    if account:
+        operation = {"operation": operation, "localAccountId": account["id"],
+                     "companyBinding": account["companyBinding"]}
     encoded = json.dumps(
         operation,
         ensure_ascii=False,
@@ -6077,6 +6108,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def import_existing_account() -> dict[str, Any]:
+    # LEGACY: skill-personal-accounts-v1. Do not open SQLite or credentials.
+    identity = identity_from_args(argparse.Namespace(company_id=None, member_id=None, connection_id=None))
+    if identity.account:
+        raise TelegramRuntimeError("Account import requires an unselected host context.")
+    root = connection_root(identity)
+    try:
+        metadata = root.lstat()
+    except FileNotFoundError:
+        return {"schemaVersion": 1, "accounts": []}
+    if root.is_symlink() or not root.is_dir():
+        raise TelegramRuntimeError("Unsafe existing account directory.")
+    reference = {"company_id": identity.company_id, "member_id": identity.member_id, "connection_id": identity.connection_id}
+    return {"schemaVersion": 1, "accounts": [{"sourceKey": identity.connection_id, "scope": "company",
+        "name": "Основной аккаунт", "comment": "", "providerRef": json.dumps(reference)}]}
+
+
 def main() -> int:
     # The signed host decodes captured stdout/stderr as UTF-8. Windows Python
     # can instead select the ANSI code page for pipes, even when its console
@@ -6092,6 +6140,9 @@ def main() -> int:
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
             reconfigure(encoding="utf-8")
+    if sys.argv[1:] == ["__trelio_accounts_import"]:
+        print(json.dumps(import_existing_account(), ensure_ascii=False))
+        return 0
     parser = build_parser()
     args = parser.parse_args()
     try:
