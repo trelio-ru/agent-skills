@@ -122,6 +122,16 @@ sandbox и approval mode клиента не заменяют, не выдают
   Reply на пост канала становится комментарием в его группе обсуждения.
   Перед ответом прочитай исходную реплику и контекст; проверь returned
   `replyToMessageId`, сообщение и при наличии `threadId`.
+- В каждом сообщении `read`, `thread`, `search`, context и export используй
+  `reactions.results`: emoji либо custom emoji `documentId`, количество,
+  `chosen` / `chosenOrder` для собственной реакции. `reactions=null` означает,
+  что Telegram не вернул metadata, а не доказанное отсутствие реакций.
+  `complete=false` / `totalCount=null` отмечают неполные aggregate counts.
+  При `min=true` собственный выбор неизвестен (`chosen=null`). `recent`
+  содержит доступные последние реакции и безопасные peer identity;
+  `recentComplete=false` – это выборка, не полный список участников.
+  `canSeeList` обозначает возможность отдельного native list read, а не полноту.
+  `asTags=true` отличает tags в Избранном от реакций собеседников.
 - Точное чтение и thread не отправляют read receipts. `link=null` у личных
   диалогов означает отсутствие поддерживаемой message-ссылки; не выдумывай её.
 
