@@ -71,3 +71,6 @@ OS key нужен для оставшейся history. Он не отзывае�
 Windows fixture bootstrap имеет отдельный watchdog 120 секунд и сообщает
 только фиксированную стадию: зависание не превращается в бесконечный CI job,
 private paths, packets и native stderr в diagnostic не включаются.
+Отдельный native control за 10 секунд проверяет private stdin/EOF штатного
+PowerShell процесса до ACL/DPAPI; directory observer выдаёт только номера
+проверяемых уровней и не позволяет пропустить guards.

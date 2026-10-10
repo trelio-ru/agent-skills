@@ -55,7 +55,14 @@ async function atomic(file, text) {
 }
 export class Store {
   constructor(root, owner, { codec } = {}) { this.root = root; this.owner = owner; this.dir = storagePath(root, owner); this.codec = codec; this.key = null; }
-  async init() { await directory(this.root); await directory(path.join(this.root, 'integrations')); await directory(path.join(this.root, 'integrations', 'vk-ads')); await directory(path.dirname(this.dir)); await directory(this.dir); }
+  async init(observe = () => {}) {
+    // Optional in-process observation exposes only fixed stage numbers. The CLI
+    // never supplies it; all native guards still run, including every ancestor.
+    const dirs = [this.root, path.join(this.root, 'integrations'), path.join(this.root, 'integrations', 'vk-ads'), path.dirname(this.dir), this.dir];
+    for (let index = 0; index < dirs.length; index++) {
+      observe(`directory-${index}-start`); await directory(dirs[index]); observe(`directory-${index}-ready`);
+    }
+  }
   async macKey() {
     if (this.key) return this.key;
     const source = await fs.readFile(path.join(here, 'vault-key.swift'));

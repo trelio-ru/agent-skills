@@ -38,7 +38,7 @@ async function fixture(t, options = { codec: codec() }) {
     t.after(async () => { await store.nativeCleanup?.(); store.close(); await fs.rm(root, { recursive: true, force: true }); });
     progress('remove-inherited-temporary-directory');
     if (process.platform === 'win32') { await fs.rmdir(root); } // Native helper creates the initial explicit DACL.
-    progress('create-private-directories'); await store.init();
+    progress('create-private-directories'); await store.init(progress);
     progress('read-empty-state'); const state = await store.read(); state.credentials = auth();
     progress('write-encrypted-state'); await store.write(state);
     progress('ready'); return store;
@@ -95,6 +95,15 @@ test('creation pauses the entire tree, requires a group parent and rejects stand
   await assert.rejects(prepare(api, { kind: 'create', entity: 'groups', payload: { name: 'G', package_id: 1, banners: [{ name: 'B' }] } }), { code: 'parent_plan_required' });
   await assert.rejects(prepare(api, { kind: 'update', entity: 'plans', id: 1, payload: { budget_limit_day: -1 } }), { code: 'budget_invalid' });
   await assert.rejects(prepare(api, { kind: 'create', entity: 'plans', payload: { name: 'X', targetings: { authorization: 'private' } } }), { code: 'payload_field_forbidden' });
+});
+test('Windows native private pipe transport completes before filesystem bootstrap', { skip: process.platform !== 'win32' }, async () => {
+  const root = process.env.SystemRoot || process.env.SYSTEMROOT;
+  const executable = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  // This control contains no private values and isolates redirected stdin/EOF
+  // from ACL, modules and DPAPI. It uses the exact production child environment.
+  const result = await privateProcess(executable, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+    "[Console]::In.ReadToEnd() | Out-Null; [Console]::Out.Write('ready')"], '{}', 10000);
+  assert.equal(result.toString(), 'ready');
 });
 test('apply uses persisted receipts, verifies semantic readback and fences stale state', async t => {
   const store = await fixture(t); let current = { id: 10, budget_limit_day: '50.00' }, writes = 0;
