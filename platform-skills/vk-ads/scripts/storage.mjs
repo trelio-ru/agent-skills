@@ -50,7 +50,10 @@ async function atomic(file, text) {
   try {
     if (process.platform === 'win32') await windows({ mode: 'write', path: temporary, data: Buffer.from(text).toString('base64') });
     else { const handle = await fs.open(temporary, 'wx', 0o600); try { await handle.writeFile(text); await handle.sync(); } finally { await handle.close(); } }
-    await privateFile(temporary); await fs.rename(temporary, file);
+    // The Windows write helper already verifies the newly created explicit
+    // DACL before returning. POSIX creation still needs its mode/owner guard.
+    if (process.platform !== 'win32') await privateFile(temporary);
+    await fs.rename(temporary, file);
   } finally { await fs.rm(temporary, { force: true }); }
 }
 export class Store {
@@ -59,6 +62,11 @@ export class Store {
     // Optional in-process observation exposes only fixed stage numbers. The CLI
     // never supplies it; all native guards still run, including every ancestor.
     const dirs = [this.root, path.join(this.root, 'integrations'), path.join(this.root, 'integrations', 'vk-ads'), path.dirname(this.dir), this.dir];
+    if (process.platform === 'win32') {
+      // One native invocation checks/creates every level with the same owner,
+      // inheritance and reparse guards; no validation result is cached.
+      observe('directories-start'); await windows({ mode: 'directories', paths: dirs }); observe('directories-ready'); return;
+    }
     for (let index = 0; index < dirs.length; index++) {
       observe(`directory-${index}-start`); await directory(dirs[index]); observe(`directory-${index}-ready`);
     }

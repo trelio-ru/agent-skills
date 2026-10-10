@@ -42,6 +42,12 @@ Windows: DPAPI CurrentUser с account-bound entropy; plaintext/key на диск
 MachinePolicy/UserPolicy не меняются и сохраняют приоритет. Чувствительные
 файлы/каталоги создаются с owner-only explicit DACL; чтение проверяет owner,
 ACL и reparse points. GPO/native policy failure блокирует работу.
+JSON, файловые атрибуты и ACL обрабатываются прямыми Framework APIs без
+повторного discovery PowerShell cmdlets. Все пять уровней storage проверяются
+в одном helper вызове; guards не кэшируются. Write helper проверяет новый
+файл после explicit DACL создания до atomic rename.
+Private pipes явно используют UTF-8 без BOM; native fixture включает Unicode
+в path оператора и не зависит от интерактивной Windows code page.
 
 POSIX: dirs700/files600, owner и symlink guards. Linux возвращает
 secure_storage_unsupported, plaintext fallback отсутствует. Защита дисковых
@@ -65,12 +71,14 @@ OS key нужен для оставшейся history. Он не отзывае�
 и binding компании не меняют storage key, но scope hash операций меняется.
 
 Синтетические tests выполняются на Linux/macOS/Windows; native tests реально
-проверяют Keychain/DPAPI, wrong account и ACL. Fixture codec доступен только
+проверяют Keychain/DPAPI, wrong account и ACL; Windows negative test открывает
+inheritance synthetic файла и проверяет отказ до расшифровки. Fixture codec доступен только
 через constructor в tests, отсутствует в CLI/env. До платформенной публикации
 нужны зелёный exact hosted gate и отдельный реальный VK API smoke.
 Windows fixture bootstrap имеет отдельный watchdog 120 секунд и сообщает
 только фиксированную стадию: зависание не превращается в бесконечный CI job,
 private paths, packets и native stderr в diagnostic не включаются.
 Отдельный native control за 10 секунд проверяет private stdin/EOF штатного
-PowerShell процесса до ACL/DPAPI; directory observer выдаёт только номера
-проверяемых уровней и не позволяет пропустить guards.
+PowerShell процесса до ACL/DPAPI; observer выдаёт только фиксированные имена
+стадий и не позволяет пропустить guards. Observation tests используют полный
+30-секундный wait и lease 120 секунд, чтобы проверять переход, а не скорость OS.

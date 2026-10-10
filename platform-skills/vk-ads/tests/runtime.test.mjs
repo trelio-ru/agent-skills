@@ -34,7 +34,7 @@ async function fixture(t, options = { codec: codec() }) {
   }, 120000) : null;
   const progress = value => { stage = value; if (process.platform === 'win32') process.stderr.write(`VK native fixture: ${stage}\n`); };
   try {
-    const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vk-ads-test-'))), store = new Store(root, owner(), options);
+    const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vk-реклама-test-'))), store = new Store(root, owner(), options);
     t.after(async () => { await store.nativeCleanup?.(); store.close(); await fs.rm(root, { recursive: true, force: true }); });
     progress('remove-inherited-temporary-directory');
     if (process.platform === 'win32') { await fs.rmdir(root); } // Native helper creates the initial explicit DACL.
@@ -223,12 +223,14 @@ test('submitted setup persists encrypted readiness without a chat acknowledgemen
 });
 test('setup status retains scope/lease, distinguishes process loss/expiry and returns a phase change immediately', async t => {
   const store = await fixture(t), state = await store.read(), operation = crypto.randomUUID();
-  state.setup = { id: operation, scope: scope(store.owner), phase: 'waiting_input', pid: process.pid, expires: Date.now() + 5000 };
+  // Native storage involves real OS processes. A five-second lease and one-
+  // second observation race assert CPU speed rather than continuation semantics.
+  state.setup = { id: operation, scope: scope(store.owner), phase: 'waiting_input', pid: process.pid, expires: Date.now() + 120000 };
   await store.write(state);
   const pending = await setupStatus(store, operation); assert.equal(pending.phase, 'waiting_input'); assert.equal(pending.continuation.operation, operation);
   const timer = setTimeout(async () => { const current = await store.read(); current.setup.phase = 'checking'; await store.write(current); }, 20);
   t.after(() => clearTimeout(timer));
-  const changed = await setupStatus(store, operation, 1000); assert.equal(changed.phase, 'checking'); assert.equal(changed.expiresAt, pending.expiresAt);
+  const changed = await setupStatus(store, operation, 30000); assert.equal(changed.phase, 'checking'); assert.equal(changed.expiresAt, pending.expiresAt);
   const current = await store.read(); current.setup.pid = 2147483647; await store.write(current);
   assert.equal((await setupStatus(store, operation)).phase, 'process_lost');
   current.setup.expires = Date.now() - 1; await store.write(current); assert.equal((await setupStatus(store, operation)).phase, 'expired');
@@ -245,11 +247,30 @@ test('native storage roundtrip, private ACL and wrong-account rejection on the r
     store.nativeCleanup = async () => { await privateProcess(binary, [], JSON.stringify({ account: store.owner.account, mode: 'delete' })); await privateProcess(binary, [], JSON.stringify({ account: stranger.owner.account, mode: 'delete' })); stranger.close(); };
   } else {
     const root = process.env.SystemRoot || process.env.SYSTEMROOT, executable = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const aclScript = `
+      $ErrorActionPreference='Stop'
+      [Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
+      [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35') | Out-Null
+      $packet=([Web.Script.Serialization.JavaScriptSerializer]::new()).DeserializeObject([Console]::In.ReadToEnd())
+      $acl=[IO.File]::GetAccessControl($packet.path)
+      $acl.SetAccessRuleProtection([bool]$packet.protected,$false)
+      [IO.File]::SetAccessControl($packet.path,$acl)
+    `;
+    const setProtection = protectedValue => privateProcess(executable,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', aclScript],
+      JSON.stringify({ path: path.join(store.dir, 'state.enc'), protected: protectedValue }));
+    // Real native negative evidence: opening inheritance must block the read
+    // before decryption; repairing this synthetic ACL restores the same state.
+    await setProtection(false);
+    try { await assert.rejects(store.read(), { code: 'native_storage_unavailable' }); }
+    finally { await setProtection(true); }
+    assert.equal((await store.read()).credentials.client_secret, 'synthetic-only-secret');
     // The child ignores its parent's Restricted process policy without changing
     // machine/user policy. This is the native bootstrap regression, not a mock.
     const source = new URL('../scripts/vault-windows.ps1', import.meta.url);
     const policyScript = `
       $ErrorActionPreference='Stop'
+      [Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
       $packet=[Console]::In.ReadToEnd() | ConvertFrom-Json
       $before=Get-ExecutionPolicy -List | ConvertTo-Json -Compress
       $env:PSExecutionPolicyPreference='Restricted'

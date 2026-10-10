@@ -21,8 +21,9 @@ Native DialogFolder исключается по constructor до чтения pe
 и [security](platform-skills/vk-ads/references/security.md): paused creation,
 scoped планы, persisted receipts, read-back и запрет replay неизвестной записи.
 POST/PUT и структуру групп нельзя менять как fallback после ошибки API.
-Зависание VK Windows bootstrap диагностируется bounded watchdog из security
-контракта; safe stages не включают private paths, packets или native stderr.
+VK Windows storage использует прямые Framework APIs и один bootstrap всех
+каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
+не включают private paths, packets или native stderr.
 Для факсимиле читай [контракт](platform-skills/document-facsimile/references/workflow.md):
 один account на вариант подписи, обязательное ФИО, локальный PNG, atomic CAS,
 отдельное основание применения и визуальная проверка итогового документа.
