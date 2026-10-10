@@ -68,3 +68,6 @@ OS key нужен для оставшейся history. Он не отзывае�
 проверяют Keychain/DPAPI, wrong account и ACL. Fixture codec доступен только
 через constructor в tests, отсутствует в CLI/env. До платформенной публикации
 нужны зелёный exact hosted gate и отдельный реальный VK API smoke.
+Windows fixture bootstrap имеет отдельный watchdog 120 секунд и сообщает
+только фиксированную стадию: зависание не превращается в бесконечный CI job,
+private paths, packets и native stderr в diagnostic не включаются.

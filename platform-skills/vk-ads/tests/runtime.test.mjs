@@ -24,10 +24,25 @@ function codec() {
     open: async text => { const r = JSON.parse(text), c = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(r.iv, 'base64')); c.setAuthTag(Buffer.from(r.tag, 'base64')); return Buffer.concat([c.update(Buffer.from(r.bytes, 'base64')), c.final()]); } };
 }
 async function fixture(t, options = { codec: codec() }) {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vk-ads-test-'))), store = new Store(root, owner(), options);
-  t.after(async () => { await store.nativeCleanup?.(); store.close(); await fs.rm(root, { recursive: true, force: true }); });
-  if (process.platform === 'win32') { await fs.rmdir(root); } // Native helper creates the initial explicit DACL.
-  await store.init(); const state = await store.read(); state.credentials = auth(); await store.write(state); return store;
+  // Hosted Windows must report the exact bounded stage instead of leaving a
+  // silent job alive for hours. Only fixed stage names are printed; paths,
+  // packets, credentials and native stderr never enter the CI log.
+  let stage = 'temporary-directory';
+  const watchdog = process.platform === 'win32' ? setTimeout(() => {
+    process.stderr.write(`VK native fixture timed out: ${stage}\n`);
+    process.exit(1);
+  }, 120000) : null;
+  const progress = value => { stage = value; if (process.platform === 'win32') process.stderr.write(`VK native fixture: ${stage}\n`); };
+  try {
+    const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vk-ads-test-'))), store = new Store(root, owner(), options);
+    t.after(async () => { await store.nativeCleanup?.(); store.close(); await fs.rm(root, { recursive: true, force: true }); });
+    progress('remove-inherited-temporary-directory');
+    if (process.platform === 'win32') { await fs.rmdir(root); } // Native helper creates the initial explicit DACL.
+    progress('create-private-directories'); await store.init();
+    progress('read-empty-state'); const state = await store.read(); state.credentials = auth();
+    progress('write-encrypted-state'); await store.write(state);
+    progress('ready'); return store;
+  } finally { clearTimeout(watchdog); }
 }
 test('host identity requires an exact selected local account; metadata cannot choose a path', () => {
   const o = owner(), env = { TRELIO_SKILL_ID: 'vk-ads', TRELIO_SKILL_COMPANY_ID: o.company, TRELIO_SKILL_MEMBER_ID: o.member,
