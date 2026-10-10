@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "vk-ads",
+    "version": "1.0.0",
+    "summary": "Управление VK Рекламой с локальными credentials, paused созданием, проверяемыми планами и read-back."
+  },
+  "connection": null,
+  "runtime": {
+    "version": "1.0.0",
+    "minimumHostVersion": "3.7.0",
+    "entrypoint": {
+      "path": "scripts/trelio-vk-ads.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "network",
+      "local-session",
+      "local-accounts-v1"
+    ],
+    "files": [
+      {
+        "source": "scripts/api.mjs",
+        "path": "scripts/api.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/core.mjs",
+        "path": "scripts/core.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/form.mjs",
+        "path": "scripts/form.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/operations.mjs",
+        "path": "scripts/operations.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/storage.mjs",
+        "path": "scripts/storage.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/trelio-vk-ads.mjs",
+        "path": "scripts/trelio-vk-ads.mjs",
+        "mode": 493
+      },
+      {
+        "source": "scripts/vault-key.swift",
+        "path": "scripts/vault-key.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/vault-windows.ps1",
+        "path": "scripts/vault-windows.ps1",
+        "mode": 420
+      },
+      {
+        "source": "references/workflow.md",
+        "path": "references/workflow.md",
+        "mode": 420
+      },
+      {
+        "source": "references/security.md",
+        "path": "references/security.md",
+        "mode": 420
+      }
+    ]
+  }
+}
