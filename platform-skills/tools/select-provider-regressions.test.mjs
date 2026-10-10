@@ -3,6 +3,13 @@ import test from "node:test";
 
 import { selectProviderRegressions } from "./select-provider-regressions.mjs";
 
+test("VK Ads native credential regressions run on macOS and Windows alongside Linux fail-closed tests", () => {
+  const selection = selectProviderRegressions(["platform-skills/vk-ads/scripts/storage.mjs"]);
+  assert.deepEqual(selection.selfHostedSkills, ["vk-ads"]);
+  assert.equal(selection.hostedMatrix.include.length, 3);
+  assert.ok(selection.hostedMatrix.include.every(row => row.skill === "vk-ads" && row.test_file === "platform-skills/vk-ads/tests/runtime.test.mjs"));
+});
+
 test("a MAX-only change selects only MAX across the hosted OS matrix", () => {
   const selection = selectProviderRegressions([
     "platform-skills/max-web/scripts/trelio-max.mjs",
@@ -85,7 +92,8 @@ test("shared tooling and workflow changes retain the full regression gate", () =
   ]) {
     const selection = selectProviderRegressions([filePath]);
     assert.equal(selection.full, true, filePath);
-    assert.equal(selection.hostedMatrix.include.length, 27, filePath);
+    assert.equal(selection.hostedMatrix.include.length, 30, filePath);
+    assert.ok(selection.selfHostedSkills.includes("vk-ads"), filePath);
     assert.ok(selection.selfHostedSkills.includes("document-facsimile"), filePath);
     assert.ok(selection.selfHostedSkills.includes("gosuslugi"), filePath);
     assert.ok(selection.selfHostedSkills.includes("dodostats-drinkitstats"), filePath);

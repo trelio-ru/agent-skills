@@ -24,7 +24,7 @@ package, отчёт CI, traceback или Git. Рабочий результат 
 
 ## Общий каталог личных аккаунтов
 
-Почта, Telegram MTProto/Web, MAX, WhatsApp, Госуслуги и факсимиле объявляют signed
+Почта, Telegram MTProto/Web, MAX, WhatsApp, Госуслуги, ВК Реклама и факсимиле объявляют signed
 `local-accounts-v1` и minimum host `3.7.0`. Каталог, UUID, названия (120 символов),
 подробные комментарии (2000 символов), optimistic revisions и привязки к компаниям
 обслуживает generic runtime. Provider реализует вход, storage reference,
@@ -33,6 +33,12 @@ credential store: Telegram Web и MTProto сохраняют разные авт
 Факсимиле используют тот же каталог для локальных PNG с обязательным ФИО;
 условия выбора каждого варианта находятся в общем комментарии аккаунта.
 Настройка изображения не разрешает самостоятельно подписывать документы.
+ВК Реклама хранит credentials/token и receipts локально под account UUID;
+Client Secret вводится защищённой формой, создавать кампании и менять расход
+разрешает отдельное поручение на exact operation, а не company binding.
+macOS использует Keychain + AES-GCM, Windows – DPAPI CurrentUser;
+Linux credential flow в этой версии fail-closed. Полный контракт – в
+[security.md](../platform-skills/vk-ads/references/security.md).
 
 В пределах одного origin Trelio и OS user `account list` показывает accounts
 этого навыка, включая ещё не включённые в текущей компании. Агент предлагает
