@@ -185,9 +185,13 @@ test('protected form distinguishes cancel, expiry and opener failure and cleans 
 });
 test('submitted setup persists encrypted readiness without a chat acknowledgement; cancellation keeps prior credentials', async t => {
   const store = await fixture(t); let state = await store.read(); const operation = crypto.randomUUID();
+  state.plans = { dispatched: { id: 'dispatched', op: { kind: 'update' } }, unused: { id: 'unused' } };
+  state.operations.previous = { planId: 'dispatched', phase: 'verified' };
   state.setup = { id: operation, scope: scope(store.owner), phase: 'starting', expires: Date.now() + 60000 }; await store.write(state);
   await configureWorker(store, operation, { prompt: async () => ({ ...auth(), client_secret: 'replacement-secret' }), makeApi: () => ({ list: async () => ({ items: [] }) }) });
   state = await store.read(); assert.equal(state.setup.phase, 'ready'); assert.equal(state.credentials.client_secret, 'replacement-secret');
+  assert.deepEqual(Object.keys(state.plans), ['dispatched']);
+  assert.equal(state.operations.previous.phase, 'verified');
   assert.doesNotMatch(await fs.readFile(path.join(store.dir, 'state.enc'), 'utf8'), /replacement-secret|synthetic-client/);
   state.setup = { id: operation, scope: scope(store.owner), phase: 'starting', expires: Date.now() + 60000 }; await store.write(state);
   await configureWorker(store, operation, { prompt: async () => { throw new Fault('user_cancelled'); } });

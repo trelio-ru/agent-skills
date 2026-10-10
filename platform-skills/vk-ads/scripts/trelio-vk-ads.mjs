@@ -36,7 +36,12 @@ export async function configureWorker(store, operation, { prompt = input, makeAp
       const state = await store.read(); check(state.setup?.id === operation && state.setup.scope === scope(store.owner) && state.setup.expires > Date.now(), 'setup_scope_or_expiry_invalid');
       // Persist encrypted credentials even if the readiness probe is offline.
       // An explicit replacement retains the old value until submission succeeds.
-      state.credentials = value; state.plans = {}; state.setup.phase = 'checking'; await store.write(state);
+      state.credentials = value;
+      // Replacing a key invalidates unused plans, but never removes the source
+      // of a dispatched receipt. Its evidence and replay fence must survive
+      // both reset and reconfiguration of the same local account.
+      state.plans = Object.fromEntries(Object.entries(state.plans).filter(([key]) => Object.values(state.operations).some(r => r.planId === key)));
+      state.setup.phase = 'checking'; await store.write(state);
       const api = makeApi(value); await api.list('plans', {}, 1); await api.list('groups', {}, 1);
       state.setup.phase = 'ready'; await store.write(state);
     });
