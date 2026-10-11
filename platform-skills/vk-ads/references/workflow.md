@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.0.3, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.0.4, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -139,6 +139,10 @@ Receipt сохраняет безопасные `errorDetails.httpStatus` и д�
 произвольные строки не сохраняются и не выводятся. Код поля объясняет отказ,
 но не разрешает fallback или повтор записи. Исторический receipt без деталей
 не восстанавливает причину; не повторяй POST лишь ради диагностики.
+При readback_mismatch те же bounded field-code diagnostics называют только
+уровень объекта и static несовпавшее поле, например groups_targetings.
+Запрошенные и прочитанные значения в diagnostic не выводятся; несовпадение
+сохраняет блокировку и требует сверки исходного плана с exact GET.
 
 Apply сохраняет `unknown` до сети, затем object ID/ответ до read-back. Crash,
 timeout или malformed response не стирают receipt. Один operation ID и один

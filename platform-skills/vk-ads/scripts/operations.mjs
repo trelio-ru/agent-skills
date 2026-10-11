@@ -146,7 +146,15 @@ export class Operations {
     const children = op.entity === 'plans' ? this.api.auth.groups : 'banners';
     const scalar = Object.fromEntries(Object.entries(op.payload).filter(([k]) => k !== children));
     const current = await this.api.get(op.entity, receipt.objectId, ['id', ...Object.keys(scalar)]);
-    check(matches(current, scalar), 'readback_mismatch');
+    if (!matches(current, scalar)) {
+      // Report only static field identities, never either compared value or a
+      // nested advertising payload. This lets a retained receipt distinguish
+      // an actual provider normalization from a missing field without exposing
+      // credentials/content or weakening the unresolved-write fence.
+      const allowed = new Set([...FIELDS[op.entity], 'ad_group_id', 'campaign_id']);
+      const failed = Object.keys(scalar).filter(key => allowed.has(key) && !matches(current?.[key], scalar[key], key));
+      throw new Fault('readback_mismatch', { fields: Object.fromEntries(failed.map(key => [`${op.entity}_${key}`, 'readback_mismatch'])) });
+    }
     // Nested creation is not called fully verified merely because the parent
     // exists. Resolve and read every child only under its known created parent.
     if (op.kind === 'create' && op.payload[children]) {

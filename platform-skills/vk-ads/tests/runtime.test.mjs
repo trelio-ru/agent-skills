@@ -189,6 +189,25 @@ test('a readback 403 cannot relabel a successful write as a rejection', async t 
   const receipt = await ops.apply(plan.planId, plan.planHash, 'readback-failure'); assert.equal(receipt.phase, 'written_unverified');
   assert.deepEqual(receipt.errorDetails, { httpStatus: 403 });
 });
+test('readback mismatch projects only static field codes and keeps the write fence', async t => {
+  const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let writes = 0, corrected = false;
+  const spec = { kind: 'create', entity: 'groups', payload: { name: 'Expected', ad_plan_id: 3, package_id: 2, budget_limit_day: 100, banners: [{ name: 'B' }] } };
+  api.request = async () => { writes++; return { id: 4, banners: [{ id: 5 }] }; };
+  api.get = async (entity, number) => entity === 'groups'
+    ? { id: number, name: corrected ? 'Expected' : 'Private provider value', ad_plan_id: 3, package_id: 2, budget_limit_day: corrected ? '100.00' : 200, status: 'blocked' }
+    : { id: number, name: 'B', ad_group_id: 4, status: 'blocked' };
+  const ops = new Operations(store, api), plan = await ops.plan(spec);
+  const receipt = await ops.apply(plan.planId, plan.planHash, 'readback-field-codes');
+  assert.equal(receipt.phase, 'written_unverified'); assert.equal(receipt.error, 'readback_mismatch');
+  assert.deepEqual(receipt.errorDetails, { fields: { groups_name: 'readback_mismatch', groups_budget_limit_day: 'readback_mismatch' } });
+  assert.ok(!JSON.stringify(receipt).includes('Private provider value'));
+  assert.deepEqual((await ops.reconcile('readback-field-codes')).errorDetails, receipt.errorDetails);
+  const next = await ops.plan({ kind: 'update', entity: 'plans', id: 3, payload: { name: 'New' } });
+  await assert.rejects(ops.apply(next.planId, next.planHash, 'mismatch-fences-write'), { code: 'unresolved_write_blocks_new_mutation' });
+  corrected = true;
+  assert.equal((await ops.reconcile('readback-field-codes')).phase, 'verified');
+  assert.equal((await ops.reconcile('readback-field-codes')).errorDetails, undefined); assert.equal(writes, 1);
+});
 test('reconcile a committed update after timeout uses only readback, never another write', async t => {
   const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let writes = 0, current = { id: 9, status: 'active' };
   api.get = async () => current; api.request = async () => { writes++; current = { id: 9, status: 'blocked' }; throw new Fault('write_result_unknown', { httpStatus: 500 }); };

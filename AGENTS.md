@@ -28,6 +28,8 @@ child IDs читает лишь под известным созданным р�
 campaign-list limit=200; одна страница не означает полный каталог.
 VK receipts сохраняют bounded HTTP/field-code diagnostics без raw response и
 credentials; причина отказа не разрешает повтор записи или fallback.
+Read-back mismatch сообщает только static field identity без сравниваемых
+значений; подробность diagnostic не снимает unresolved-write fence.
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.
