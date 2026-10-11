@@ -7,7 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { identity, credentials, Fault, hash, scope, clean, date } from '../scripts/core.mjs';
 import { Store, privateProcess } from '../scripts/storage.mjs';
-import { Api } from '../scripts/api.mjs';
+import { Api, safeApiErrorDetails } from '../scripts/api.mjs';
 import { Operations, prepare, matches } from '../scripts/operations.mjs';
 import { input } from '../scripts/form.mjs';
 import { argumentsOf, configureWorker, setupStatus } from '../scripts/trelio-vk-ads.mjs';
@@ -99,6 +99,38 @@ test('catalogues use endpoint defaults instead of the rejected campaign page siz
   await assert.rejects(api.catalog('billing'), { code: 'catalog_invalid' });
   assert.equal(observed.length, 5); // Invalid catalogue names never reach VK.
 });
+test('API failure projection is bounded and excludes raw text and reflected credentials', () => {
+  const fields = Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`field_${i}`, 'required']));
+  assert.equal(Object.keys(safeApiErrorDetails({ httpStatus: 400, fields }).fields).length, 32);
+  assert.deepEqual(safeApiErrorDetails({ httpStatus: 200, message: 'raw private text', fields: {
+    objective: 'invalid_value', client_secret: 'required', echo: 'syntheticsecret',
+    nested: { code: 'required' }, malformed: 'raw text', constructor: 'required',
+  } }, ['syntheticsecret']), { fields: { objective: 'invalid_value' } });
+});
+test('rejected writes retain safe API reasons across restart without replay', async t => {
+  const store = await fixture(t); let writes = 0;
+  const api = new Api({ ...auth(), client_secret: 'syntheticsecret' }, { fetcher: async (_url, options) => {
+    assert.equal(options.method, 'POST'); writes++;
+    return json({ error: { message: 'raw syntheticsecret', fields: {
+      objective: { code: 'invalid_value', message: 'raw private text' },
+      echo: { code: 'syntheticsecret' }, access_echo: { code: 'synthetictoken' },
+      client_secret: { code: 'required' }, nested: { code: { private: 'text' } },
+    } } }, 400);
+  } });
+  api.access = 'synthetictoken';
+  const ops = new Operations(store, api), plan = await ops.plan({ kind: 'create', entity: 'plans', payload: { name: 'Synthetic' } });
+  const receipt = await ops.apply(plan.planId, plan.planHash, 'rejected-create');
+  assert.equal(receipt.phase, 'rejected'); assert.equal(receipt.error, 'api_rejected');
+  assert.deepEqual(receipt.errorDetails, { httpStatus: 400, fields: { objective: 'invalid_value' } });
+  assert.ok(!JSON.stringify(receipt).includes('syntheticsecret'));
+  assert.ok(!JSON.stringify(receipt).includes('synthetictoken'));
+  const restartedStore = new Store(store.root, store.owner, { codec: store.codec });
+  assert.deepEqual((await restartedStore.read()).operations['rejected-create'], receipt);
+  const restarted = new Operations(restartedStore, api);
+  assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'rejected-create'), receipt);
+  assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'another-rejected-id'), receipt);
+  assert.equal(writes, 1); // A useful reason must never turn a receipt into replay authority.
+});
 test('agency auth selects a per-client token privately and cached tokens avoid token issuance', async () => {
   const api = new Api({ ...auth(), mode: 'agency', agency_client: 'synthetic-agency-client' }, { fetcher: async (_url, opts) => {
     assert.equal(opts.body.get('grant_type'), 'agency_client_credentials'); assert.equal(opts.body.get('agency_client_name'), 'synthetic-agency-client');
@@ -151,17 +183,19 @@ test('unknown create survives restart and prevents a new plan from bypassing the
 });
 test('a readback 403 cannot relabel a successful write as a rejection', async t => {
   const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let calls = 0;
-  api.get = async () => { calls++; if (calls > 2) throw new Fault('permission_denied'); return { id: 1, status: 'blocked' }; };
+  api.get = async () => { calls++; if (calls > 2) throw new Fault('permission_denied', { httpStatus: 403 }); return { id: 1, status: 'blocked' }; };
   api.request = async () => ({});
   const ops = new Operations(store, api), plan = await ops.plan({ kind: 'update', entity: 'plans', id: 1, payload: { status: 'active' } });
   const receipt = await ops.apply(plan.planId, plan.planHash, 'readback-failure'); assert.equal(receipt.phase, 'written_unverified');
+  assert.deepEqual(receipt.errorDetails, { httpStatus: 403 });
 });
 test('reconcile a committed update after timeout uses only readback, never another write', async t => {
   const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let writes = 0, current = { id: 9, status: 'active' };
-  api.get = async () => current; api.request = async () => { writes++; current = { id: 9, status: 'blocked' }; throw new Fault('write_result_unknown'); };
+  api.get = async () => current; api.request = async () => { writes++; current = { id: 9, status: 'blocked' }; throw new Fault('write_result_unknown', { httpStatus: 500 }); };
   const ops = new Operations(store, api), plan = await ops.plan({ kind: 'update', entity: 'plans', id: 9, payload: { status: 'blocked' } });
   assert.equal((await ops.apply(plan.planId, plan.planHash, 'lost-update')).phase, 'unknown');
-  assert.equal((await ops.reconcile('lost-update')).phase, 'verified'); assert.equal(writes, 1);
+  const reconciled = await ops.reconcile('lost-update');
+  assert.equal(reconciled.phase, 'verified'); assert.equal(reconciled.errorDetails, undefined); assert.equal(writes, 1);
   assert.equal(matches({ name: null }, { name: '0' }), false);
   assert.equal(matches({ name: '1' }, { name: '01' }), false);
 });

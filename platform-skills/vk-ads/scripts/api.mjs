@@ -5,6 +5,20 @@ import { check, clean, Fault, id, date } from './core.mjs';
 export const ORIGIN = 'https://ads.vk.com';
 const CATALOG = { packages: '/api/v2/packages.json', patterns: '/api/v2/banner_patterns.json',
   fields: '/api/v2/banner_fields.json', regions: '/api/v2/regions.json', interests: '/api/v2/interests.json' };
+// API failures are persisted and later shown from receipts. Keep only a
+// bounded status/field-code projection: messages, URLs, payloads and reflected
+// credentials must not become durable diagnostics or model-visible output.
+export function safeApiErrorDetails(details = {}, secrets = []) {
+  const result = {};
+  if (Number.isInteger(details?.httpStatus) && details.httpStatus >= 400 && details.httpStatus <= 599) result.httpStatus = details.httpStatus;
+  const privateValues = secrets.filter(value => typeof value === 'string' && value.length);
+  const fields = Object.fromEntries(Object.entries(details?.fields || {}).filter(([field, code]) =>
+    typeof code === 'string' && /^[a-z0-9_]{1,80}$/.test(field) && /^[a-z0-9_]{1,80}$/.test(code) &&
+    !/secret|password|token|authorization|cookie|__proto__|constructor|prototype/i.test(field) &&
+    !privateValues.some(value => field.includes(value) || code.includes(value))).slice(0, 32));
+  if (Object.keys(fields).length) result.fields = fields;
+  return result;
+}
 export class Api {
   constructor(auth, { fetcher = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
     this.auth = auth; this.fetcher = fetcher; this.sleep = sleep;
@@ -36,11 +50,11 @@ export class Api {
       if (!response.ok) {
         let details = {};
         try { const parsed = await boundedResponse(response); details = { fields: Object.fromEntries(Object.entries(parsed.error?.fields || {})
-          .filter(([k, v]) => /^[a-z0-9_]{1,80}$/.test(k) && /^[a-z0-9_]{1,80}$/.test(v?.code || '')).map(([k, v]) => [k, v.code])) }; } catch { /* Error bodies are optional; raw text never leaves the client. */ }
+          .map(([k, v]) => [k, v?.code])) }; } catch { /* Error bodies are optional; raw text never leaves the client. */ }
         const code = response.status === 401 ? 'authorization_required' : response.status === 403 ? 'permission_denied'
           : method !== 'GET' && (response.status >= 500 || response.status === 429) ? 'write_result_unknown'
           : response.status === 405 ? 'api_method_unsupported' : 'api_rejected';
-        throw new Fault(code, { httpStatus: response.status, ...details });
+        throw new Fault(code, safeApiErrorDetails({ httpStatus: response.status, ...details }, secrets));
       }
       if (response.status === 204) return {};
       try { return clean(await boundedResponse(response), secrets); }
