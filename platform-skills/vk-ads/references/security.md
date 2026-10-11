@@ -13,8 +13,13 @@ Origin/Sec-Fetch, один page load/submit, JSON до 12000 bytes. CSP откл
 внешние ресурсы/frame embedding. Нет read endpoint credentials и вывода URI
 формы агенту; системный opener получает локальный URI внутри runtime.
 Сервер закрывается при success/cancel/expiry/failure; секреты не логируются.
-API diagnostics содержат только HTTP status и до 32 пар field/code из
-канонических токенов до 80 символов. Credential-поля и отражённые secret/token
+API diagnostics содержат только HTTP status и до 32 top-level или вложенных пар path/code
+из канонических токенов до 80 символов. Вложенный путь ограничен 8 частями,
+400 символами и индексами 0–9999; обход – 256 узлами/64 элементами контейнера.
+Разбираются лишь validation `fields/items/errors`, никогда message, URL,
+request body или произвольный JSON. Stored paths повторно проверяются перед
+receipt persistence; дополнительная диагностика не отменяет write fence.
+Credential-поля и отражённые secret/token
 значения исключаются; raw response/message/URL не сохраняются в receipt.
 Read-back mismatch сообщает лишь static field code с уровнем объекта, без
 запрошенных/прочитанных значений; malformed stored keys не попадают в diagnostic.

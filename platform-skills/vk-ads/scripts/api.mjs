@@ -5,19 +5,73 @@ import { check, clean, Fault, id, date } from './core.mjs';
 export const ORIGIN = 'https://ads.vk.com';
 const CATALOG = { packages: '/api/v2/packages.json', patterns: '/api/v2/banner_patterns.json',
   fields: '/api/v2/banner_fields.json', regions: '/api/v2/regions.json', interests: '/api/v2/interests.json' };
-// API failures are persisted and later shown from receipts. Keep only a
-// bounded status/field-code projection: messages, URLs, payloads and reflected
-// credentials must not become durable diagnostics or model-visible output.
+// API failures are persisted and later shown from receipts. Messages, URLs and
+// payload values are never traversed. Nested diagnostics accept only validation
+// containers (fields/items/errors), canonical field tokens and bounded indices.
+const ERROR_TOKEN = /^[a-z0-9_]{1,80}$/;
+const PRIVATE_FIELD = /secret|password|token|authorization|cookie|__proto__|constructor|prototype/i;
+const ERROR_INDEX = /^(?:0|[1-9]\d{0,3})$/;
+const ERROR_PATH = /^[a-z0-9_]{1,80}(?:\[(?:0|[1-9]\d{0,3})\]|\.[a-z0-9_]{1,80}){0,8}$/;
 export function safeApiErrorDetails(details = {}, secrets = []) {
   const result = {};
   if (Number.isInteger(details?.httpStatus) && details.httpStatus >= 400 && details.httpStatus <= 599) result.httpStatus = details.httpStatus;
   const privateValues = secrets.filter(value => typeof value === 'string' && value.length);
+  const safe = (field, code) => typeof code === 'string' && ERROR_TOKEN.test(code) &&
+    !PRIVATE_FIELD.test(field) && !privateValues.some(value => field.includes(value) || code.includes(value));
   const fields = Object.fromEntries(Object.entries(details?.fields || {}).filter(([field, code]) =>
-    typeof code === 'string' && /^[a-z0-9_]{1,80}$/.test(field) && /^[a-z0-9_]{1,80}$/.test(code) &&
-    !/secret|password|token|authorization|cookie|__proto__|constructor|prototype/i.test(field) &&
-    !privateValues.some(value => field.includes(value) || code.includes(value))).slice(0, 32));
+    ERROR_TOKEN.test(field) && safe(field, code)).slice(0, 32));
   if (Object.keys(fields).length) result.fields = fields;
+  // Reprojection happens at the durable receipt boundary and after restart.
+  // Validate this representation again rather than trusting previously stored
+  // paths, and share the 32-entry budget with the compatible top-level fields.
+  const fieldErrors = []; const seen = new Set();
+  for (const item of Array.isArray(details?.fieldErrors) ? details.fieldErrors.slice(0, 32) : []) {
+    const field = item?.path, code = item?.code;
+    if (typeof field !== 'string' || field.length > 400 || !ERROR_PATH.test(field) || !safe(field, code)) continue;
+    if (Object.keys(fields).length + fieldErrors.length >= 32) break;
+    const key = `${field}:${code}`;
+    if (!seen.has(key)) { seen.add(key); fieldErrors.push({ path: field, code }); }
+  }
+  if (fieldErrors.length) result.fieldErrors = fieldErrors;
   return result;
+}
+// Do not recursively search arbitrary JSON for a key called "code": a creative
+// or message could contain one. Follow only explicit validation structures. The
+// traversal budget also bounds work when the provider sends thousands of errors.
+export function apiValidationDetails(error, secrets = []) {
+  const fields = {}, fieldErrors = []; let remaining = 256;
+  const ownObject = value => value && typeof value === 'object' && !Array.isArray(value);
+  function fieldMap(map, prefix = '', depth = 0) {
+    if (!ownObject(map) || depth > 8) return;
+    for (const [field, node] of Object.entries(map).slice(0, 64)) {
+      if (--remaining < 0) return;
+      if (!ERROR_TOKEN.test(field) || PRIVATE_FIELD.test(field) ||
+        prefix && /^\d+$/.test(field) && !ERROR_INDEX.test(field)) continue;
+      const name = prefix ? ERROR_INDEX.test(field) ? `${prefix}[${field}]` : `${prefix}.${field}` : field;
+      if (!prefix && typeof node?.code === 'string') fields[field] = node.code;
+      else if (typeof node?.code === 'string') fieldErrors.push({ path: name, code: node.code });
+      validation(node, name, depth + 1);
+    }
+  }
+  function validation(node, prefix, depth) {
+    if (!ownObject(node) || depth > 8 || remaining < 0) return;
+    fieldMap(node.fields, prefix, depth);
+    // List errors may be an array (its position is the index), a numeric map,
+    // or records carrying an explicit index. Never copy a supplied path/name.
+    for (const container of [node.items, node.errors]) {
+      if (!container || typeof container !== 'object') continue;
+      for (const [position, entry] of Object.entries(container).slice(0, 64)) {
+        if (--remaining < 0) return;
+        const index = ownObject(entry) && Object.hasOwn(entry, 'index') ? entry.index : position;
+        if (!ERROR_INDEX.test(String(index))) continue;
+        const name = `${prefix}[${index}]`;
+        if (typeof entry?.code === 'string') fieldErrors.push({ path: name, code: entry.code });
+        validation(entry, name, depth + 1);
+      }
+    }
+  }
+  fieldMap(error?.fields);
+  return safeApiErrorDetails({ fields, fieldErrors }, secrets);
 }
 export class Api {
   constructor(auth, { fetcher = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
@@ -49,8 +103,7 @@ export class Api {
       }
       if (!response.ok) {
         let details = {};
-        try { const parsed = await boundedResponse(response); details = { fields: Object.fromEntries(Object.entries(parsed.error?.fields || {})
-          .map(([k, v]) => [k, v?.code])) }; } catch { /* Error bodies are optional; raw text never leaves the client. */ }
+        try { const parsed = await boundedResponse(response); details = apiValidationDetails(parsed.error, secrets); } catch { /* Error bodies are optional; raw text never leaves the client. */ }
         const code = response.status === 401 ? 'authorization_required' : response.status === 403 ? 'permission_denied'
           : method !== 'GET' && (response.status >= 500 || response.status === 429) ? 'write_result_unknown'
           : response.status === 405 ? 'api_method_unsupported' : 'api_rejected';

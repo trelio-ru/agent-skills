@@ -9,7 +9,7 @@ const FIELDS = { plans: [...COMMON, 'objective', 'enable_utm', 'enable_offline_g
   groups: [...COMMON, 'package_id', 'ad_plan_id', 'targetings', 'price', 'mixing', 'age_restrictions', 'uniq_shows_limit', 'uniq_shows_period', 'banner_uniq_shows_limit', 'enable_utm', 'objective'],
   banners: ['name', 'status', 'content', 'urls', 'textblocks'] };
 function decimal(value) { return /^\d+(?:\.\d{1,2})?$/.test(String(value)) && Number(value) > 0 && Number(value) <= 100000000; }
-function fields(entity, payload, create, dialect) {
+function fields(entity, payload, create, dialect, inheritedEnd) {
   check(FIELDS[entity] && payload && !Array.isArray(payload), 'payload_invalid'); data(payload);
   const nested = entity === 'plans' ? dialect : entity === 'groups' ? 'banners' : null;
   const allowed = [...FIELDS[entity], ...(create && nested ? [nested] : [])];
@@ -20,13 +20,20 @@ function fields(entity, payload, create, dialect) {
   for (const key of ['date_start', 'date_end']) if (payload[key] !== undefined) check(/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/.test(payload[key]) && !Number.isNaN(Date.parse(payload[key].replace(' ', 'T'))), 'date_invalid');
   if (payload.date_start && payload.date_end) check(payload.date_start <= payload.date_end, 'date_invalid');
   for (const key of ['package_id', 'ad_plan_id']) if (payload[key] !== undefined) id(payload[key]);
+  if (payload.autobidding_mode !== undefined) check(typeof payload.autobidding_mode === 'string' && /^[a-z0-9_]{1,80}$/.test(payload.autobidding_mode), 'autobidding_mode_invalid');
   if (create) {
+    // max_goals needs a daily budget or a total budget with a finite period.
+    // Check only new objects: an update can legitimately keep an existing
+    // budget/date, so a partial patch must not be mistaken for an empty plan.
+    // Package-specific strategies/minimums remain the live API's decision.
+    if (payload.autobidding_mode === 'max_goals') check(payload.budget_limit_day !== undefined ||
+      payload.budget_limit !== undefined && (payload.date_end || inheritedEnd), 'autobidding_budget_required');
     check(payload.status === undefined || payload.status === 'blocked', 'create_must_be_paused'); payload.status = 'blocked';
     if (entity !== 'banners') check(payload.name, 'name_required');
     if (entity === 'groups') { check(payload.package_id && payload.banners?.length, 'group_package_and_banners_required'); }
     if (payload[nested]) {
       check(Array.isArray(payload[nested]) && payload[nested].length > 0 && payload[nested].length <= 20, 'children_invalid');
-      for (const child of payload[nested]) fields(entity === 'plans' ? 'groups' : 'banners', child, true, dialect);
+      for (const child of payload[nested]) fields(entity === 'plans' ? 'groups' : 'banners', child, true, dialect, payload.date_end || inheritedEnd);
     }
   }
   return payload;

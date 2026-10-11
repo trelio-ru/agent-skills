@@ -27,7 +27,11 @@ child IDs читает лишь под известным созданным р�
 Справочники VK используют штатный размер страницы своего endpoint, а не
 campaign-list limit=200; одна страница не означает полный каталог.
 VK receipts сохраняют bounded HTTP/field-code diagnostics без raw response и
-credentials; причина отказа не разрешает повтор записи или fallback.
+credentials; вложенные path/code проходят тот же bounded projection и
+повторную проверку у receipt boundary. Обход только fields/items/errors,
+без message/body; причина отказа не разрешает повтор записи или fallback.
+Новый max_goals проверяет дневной бюджет либо общий бюджет с конечной датой;
+частичный update и package-specific availability не заменяются догадкой.
 Read-back mismatch сообщает только static field identity без сравниваемых
 значений; подробность diagnostic не снимает unresolved-write fence.
 Только targetings.sex допускает смену порядка уникальных male/female при
