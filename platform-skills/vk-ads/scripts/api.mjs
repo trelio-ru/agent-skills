@@ -77,7 +77,14 @@ export class Api {
     }
     return { items, count, truncated: count === null || items.length < count };
   }
-  async catalog(name) { check(CATALOG[name], 'catalog_invalid'); return this.request('GET', CATALOG[name], { query: { limit: 200 } }); }
+  async catalog(name) {
+    check(CATALOG[name], 'catalog_invalid');
+    // Catalogues have their own page ceilings: the packages endpoint rejects
+    // the campaign-list size of 200. Let each endpoint choose its default
+    // instead of guessing a shared maximum or treating a 400 as an auth error.
+    // This remains one bounded page, not an exhaustive catalogue download.
+    return this.request('GET', CATALOG[name]);
+  }
   async stats(entity, ids, from, to) {
     check(['plans', 'groups', 'banners'].includes(entity) && ids.length > 0 && ids.length <= 200, 'statistics_ids_invalid');
     date(from); date(to); check(from <= to && (Date.parse(to) - Date.parse(from)) / 86400000 < 365, 'statistics_dates_invalid');

@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.0.0, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.0.1, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -39,7 +39,7 @@ approved обновление → read-back → approved очистка. Product
 | `list --entity groups --parent 123` | группы одной кампании |
 | `list --entity banners --parent 456` | объявления одной группы |
 | `get --entity plans --id 123 --fields id,name,status,budget_limit_day` | выбранные поля exact объекта |
-| `catalog --name packages` | первая страница до 200; не полный каталог |
+| `catalog --name packages` | первая страница штатного размера API; не полный каталог |
 | `catalog --name patterns` | форматы объявлений |
 | `catalog --name fields` | роли/ограничения полей |
 | `catalog --name regions` / `interests` | справочники targeting |
@@ -52,6 +52,10 @@ approved обновление → read-back → approved очистка. Product
 | `recover-lock --confirm recover-dead-process` | проверка мёртвого PID, cleanup без replay |
 | `reset --confirm delete-local-credentials` | удаление локальных credentials, сохранение receipts |
 
+Каждый справочник задаёт собственный максимальный размер страницы. Runtime
+не передаёт campaign-list limit=200 в справочники, а получает одну страницу
+с размером по умолчанию конкретного endpoint. Не выдавай её за полный каталог;
+для вывода о полноте сравни items и count, если count возвращён API.
 Справочники/статистика зависят от прав и версии API конкретного кабинета;
 404/405 возвращаются как blocker. Чтение catalog не утверждает completeness.
 Поля `ad_groups`/`campaigns` – create-only children и не запрашиваются как
