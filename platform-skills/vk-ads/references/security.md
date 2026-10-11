@@ -16,6 +16,8 @@ Origin/Sec-Fetch, один page load/submit, JSON до 12000 bytes. CSP откл
 API diagnostics содержат только HTTP status и до 32 пар field/code из
 канонических токенов до 80 символов. Credential-поля и отражённые secret/token
 значения исключаются; raw response/message/URL не сохраняются в receipt.
+Read-back mismatch сообщает лишь static field code с уровнем объекта, без
+запрошенных/прочитанных значений; malformed stored keys не попадают в diagnostic.
 Настройка detached: operation/pid/phase/expiry сохраняются, статус наблюдается
 в пределах первоначального account/scope, один wait <=30s. Вкладка без submit
 не является success. Credentials сохраняются после submit до auth probe,

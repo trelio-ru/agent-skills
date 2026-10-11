@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk-ads",
-    "version": "1.0.3",
-    "summary": "Проверка вложенного создания учитывает campaigns в ответе VK и читает дочерние объекты только внутри exact созданного родителя без повторной записи."
+    "version": "1.0.4",
+    "summary": "Сверка записи сообщает конкретные несовпавшие поля без их значений; запрет повторной записи и блокировка непроверенного результата сохраняются."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.3",
+    "version": "1.0.4",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "scripts/trelio-vk-ads.mjs",
