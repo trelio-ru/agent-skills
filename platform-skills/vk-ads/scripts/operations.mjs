@@ -148,14 +148,54 @@ export class Operations {
     const current = await this.api.get(op.entity, receipt.objectId, ['id', ...Object.keys(scalar)]);
     check(matches(current, scalar), 'readback_mismatch');
     // Nested creation is not called fully verified merely because the parent
-    // exists. Read every returned child; missing child IDs retain the receipt.
+    // exists. Resolve and read every child only under its known created parent.
     if (op.kind === 'create' && op.payload[children]) {
-      const ids = receipt.response[children];
+      const childEntity = op.entity === 'plans' ? 'groups' : 'banners';
+      const parentField = childEntity === 'groups' ? 'ad_plan_id' : this.api.auth.groups === 'ad_groups' ? 'ad_group_id' : 'campaign_id';
+      let ids = receipt.response[children];
+      // VK can label an ad_groups creation response as campaigns. This is a
+      // response alias only: it must never switch the configured request API,
+      // issue another POST, or override an explicit conflicting child list.
+      if (op.entity === 'plans') {
+        const alias = receipt.response[children === 'ad_groups' ? 'campaigns' : 'ad_groups'];
+        check(ids === undefined || alias === undefined || stable(ids) === stable(alias), 'created_children_unverified');
+        if (ids === undefined) ids = alias;
+      }
+      let listed = false;
+      if (ids === undefined) {
+        // The parent ID is known from the persisted write response. Discover
+        // children only inside that exact new parent, never by a similar name
+        // across the account. One extra row detects concurrent additions, and
+        // truncated/incomplete lists cannot unlock the mutation fence.
+        const page = await this.api.list(childEntity, { [`_${parentField}`]: receipt.objectId, fields: `id,${parentField}` }, op.payload[children].length + 1);
+        check(!page.truncated && (page.count === null || page.count === page.items.length), 'created_children_unverified');
+        ids = page.items; listed = true;
+      }
       check(Array.isArray(ids) && ids.length === op.payload[children].length, 'created_children_unverified');
+      check(new Set(ids.map(child => id(child.id))).size === ids.length, 'created_children_unverified');
+      const available = [...ids];
+      receipt.children = [];
       for (let i = 0; i < ids.length; i++) {
-        const childOp = { kind: 'create', entity: op.entity === 'plans' ? 'groups' : 'banners', payload: op.payload[children][i] };
-        const childReceipt = { objectId: id(ids[i].id), response: ids[i] };
+        const childOp = { kind: 'create', entity: childEntity, payload: { ...op.payload[children][i], [parentField]: receipt.objectId } };
+        let child = ids[i];
+        if (listed) {
+          // Lists have no creation-order guarantee. Match the complete scalar
+          // specification and parent relationship, not merely the name. An
+          // ambiguous match stays unverified rather than guessing an ID.
+          const nested = childEntity === 'groups' ? 'banners' : null;
+          const expected = Object.fromEntries(Object.entries(childOp.payload).filter(([key]) => key !== nested));
+          const candidates = [];
+          for (const candidate of available) {
+            check(matches(candidate[parentField], receipt.objectId, parentField), 'created_child_parent_mismatch');
+            const observed = await this.api.get(childEntity, id(candidate.id), ['id', ...Object.keys(expected)]);
+            if (matches(observed, expected)) candidates.push(candidate);
+          }
+          check(candidates.length === 1, 'created_children_unverified');
+          child = candidates[0]; available.splice(available.indexOf(child), 1);
+        }
+        const childReceipt = { objectId: id(child.id), response: child };
         await this.verify({ op: childOp }, childReceipt);
+        receipt.children.push({ entity: childEntity, objectId: childReceipt.objectId, ...(childReceipt.children ? { children: childReceipt.children } : {}) });
       }
     }
     receipt.phase = 'verified'; receipt.observed = current;

@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk-ads",
-    "version": "1.0.2",
-    "summary": "Результаты отклонённых записей сохраняют безопасную причину VK API: HTTP status и коды полей без raw response и credentials."
+    "version": "1.0.3",
+    "summary": "Проверка вложенного создания учитывает campaigns в ответе VK и читает дочерние объекты только внутри exact созданного родителя без повторной записи."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.2",
+    "version": "1.0.3",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "scripts/trelio-vk-ads.mjs",

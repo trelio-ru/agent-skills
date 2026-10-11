@@ -231,8 +231,51 @@ test('nested create checks every banner and does not invent child IDs', async t 
   const store = await fixture(t), api = new Api(auth()); api.access = 'token';
   const spec = { kind: 'create', entity: 'groups', payload: { ad_plan_id: 3, name: 'G', package_id: 2, banners: [{ name: 'B' }] } };
   api.request = async () => ({ id: 4, banners: [{ id: 5 }] });
-  api.get = async (entity, number) => entity === 'groups' ? { id: number, name: 'G', package_id: 2, ad_plan_id: 3, status: 'blocked' } : { id: number, name: 'B', status: 'blocked' };
+  api.get = async (entity, number) => entity === 'groups' ? { id: number, name: 'G', package_id: 2, ad_plan_id: 3, status: 'blocked' } : { id: number, name: 'B', ad_group_id: 4, status: 'blocked' };
   const ops = new Operations(store, api), plan = await ops.plan(spec); assert.equal((await ops.apply(plan.planId, plan.planHash, 'nested-create')).phase, 'verified');
+});
+test('VK response alias and parent-scoped child reads reconcile a nested write without replay', async t => {
+  const store = await fixture(t), api = new Api(auth()); api.access = 'token';
+  const spec = { kind: 'create', entity: 'plans', payload: { name: 'P', ad_groups: [{ name: 'G', package_id: 2, banners: [{ name: 'B' }] }] } };
+  let writes = 0, visible = false;
+  api.request = async (method, route, options) => {
+    if (method === 'POST') { assert.equal(route, '/api/v2/ad_plans.json'); assert.ok(options.body.ad_groups); assert.equal(options.body.campaigns, undefined); writes++; return { id: 3, campaigns: [{ id: 4 }] }; }
+    assert.equal(route, '/api/v2/banners.json');
+    assert.equal(options.query._ad_group_id, 4); assert.equal(options.query._campaign_id, undefined);
+    assert.equal(options.query.limit, 2); assert.equal(options.query.fields, 'id,ad_group_id');
+    return { items: visible ? [{ id: 5, ad_group_id: 4 }] : [], count: visible ? 1 : 0 };
+  };
+  api.get = async (entity, number) => entity === 'plans' ? { id: number, name: 'P', status: 'blocked' }
+    : entity === 'groups' ? { id: number, ad_plan_id: 3, name: 'G', package_id: 2, status: 'blocked' }
+    : { id: number, ad_group_id: 4, name: 'B', status: 'blocked' };
+  const ops = new Operations(store, api), plan = await ops.plan(spec);
+  assert.equal((await ops.apply(plan.planId, plan.planHash, 'nested-alias-create')).phase, 'written_unverified');
+  const next = await ops.plan({ kind: 'update', entity: 'plans', id: 3, payload: { name: 'Rename' } });
+  await assert.rejects(ops.apply(next.planId, next.planHash, 'blocked-until-readback'), { code: 'unresolved_write_blocks_new_mutation' });
+  visible = true;
+  const restarted = new Operations(new Store(store.root, store.owner, { codec: store.codec }), api);
+  const receipt = await restarted.reconcile('nested-alias-create');
+  assert.equal(receipt.phase, 'verified'); assert.equal(receipt.error, undefined);
+  assert.deepEqual(receipt.children, [{ entity: 'groups', objectId: 4, children: [{ entity: 'banners', objectId: 5 }] }]);
+  assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'another-id-same-nested-plan'), receipt);
+  assert.equal(writes, 1);
+});
+test('nested verification rejects conflicting aliases, foreign parents and incomplete child inventories', async t => {
+  for (const mode of ['conflicting_alias', 'foreign_parent', 'truncated', 'extra', 'duplicate', 'ambiguous']) {
+    const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let writes = 0;
+    const spec = { kind: 'create', entity: 'plans', payload: { name: 'P', ad_groups: [{ name: 'G', package_id: 2, banners: [{ name: 'B' }] }] } };
+    if (['duplicate', 'ambiguous'].includes(mode)) spec.payload.ad_groups[0].banners.push({ name: 'B' });
+    api.request = async () => { writes++; return mode === 'conflicting_alias' ? { id: 3, ad_groups: [{ id: 4 }], campaigns: [{ id: 9 }] } : { id: 3, campaigns: [{ id: 4 }] }; };
+    api.get = async (entity, number) => entity === 'plans' ? { id: number, name: 'P', status: 'blocked' }
+      : entity === 'groups' ? { id: number, ad_plan_id: mode === 'foreign_parent' ? 99 : 3, name: 'G', package_id: 2, status: 'blocked' }
+      : { id: number, ad_group_id: 4, name: 'B', status: 'blocked' };
+    api.list = async () => ({ items: ['extra', 'ambiguous'].includes(mode) ? [{ id: 5, ad_group_id: 4 }, { id: 6, ad_group_id: 4 }]
+      : mode === 'duplicate' ? [{ id: 5, ad_group_id: 4 }, { id: 5, ad_group_id: 4 }] : [{ id: 5, ad_group_id: 4 }], count: ['extra', 'duplicate', 'ambiguous'].includes(mode) ? 2 : 1, truncated: mode === 'truncated' });
+    const ops = new Operations(store, api), plan = await ops.plan(spec);
+    assert.equal((await ops.apply(plan.planId, plan.planHash, `nested-invalid-${mode}`)).phase, 'written_unverified');
+    assert.equal((await ops.reconcile(`nested-invalid-${mode}`)).phase, 'written_unverified');
+    assert.equal(writes, 1);
+  }
 });
 async function localHttp(url, { method = 'GET', headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {

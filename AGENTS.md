@@ -21,6 +21,9 @@ Native DialogFolder исключается по constructor до чтения pe
 и [security](platform-skills/vk-ads/references/security.md): paused creation,
 scoped планы, persisted receipts, read-back и запрет replay неизвестной записи.
 POST/PUT и структуру групп нельзя менять как fallback после ошибки API.
+VK read-back принимает campaigns как response alias ad_groups; недостающие
+child IDs читает лишь под известным созданным родителем, проверяя его связь,
+полные scalar значения и однозначность. Новый POST и поиск по имени запрещены.
 Справочники VK используют штатный размер страницы своего endpoint, а не
 campaign-list limit=200; одна страница не означает полный каталог.
 VK receipts сохраняют bounded HTTP/field-code diagnostics без raw response и

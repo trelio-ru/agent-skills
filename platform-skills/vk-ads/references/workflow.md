@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.0.2, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.0.3, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -143,7 +143,15 @@ Receipt сохраняет безопасные `errorDetails.httpStatus` и д�
 Apply сохраняет `unknown` до сети, затем object ID/ответ до read-back. Crash,
 timeout или malformed response не стирают receipt. Один operation ID и один
 planHash не отправляются повторно, даже после restart или с другим ID.
-Unknown другого плана блокирует новую запись всего аккаунта. `reconcile`
+`unknown` и `written_unverified` блокируют новую запись всего аккаунта.
+Ответ создания может называть группы `campaigns` при настроенном `ad_groups`:
+это только alias ответа, структура запросов не меняется. Если ответ не вернул
+ID дочерних объектов, сверка читает полный bounded список лишь внутри exact
+созданного родителя с известным ID. Каждый ребёнок проверяется по своей связи
+с родителем и всем запрошенным scalar полям. Порядок списка не угадывается:
+неоднозначность, лишние дети, duplicate IDs и truncated сохраняют blocker.
+Успешная сверка сохраняет exact дерево child IDs в receipt.children.
+`reconcile`
 не ищет похожие объекты для lost create ID и не повторяет POST. Человек может
 отдельно принять unknown, сохраняя явное отсутствие evidence.
 
