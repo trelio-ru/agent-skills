@@ -85,6 +85,12 @@ function snapshot(value) {
   if (targetingSet(copy?.targetings?.sex, 'targetings.sex')) copy.targetings.sex = [...copy.targetings.sex].sort();
   const local = copy?.targetings?.geo?.local_geo;
   if (targetingSet(local?.loc_type, 'targetings.geo.local_geo.loc_type')) local.loc_type = [...local.loc_type].sort();
+  // VK omits this exact key after clearing the segment filter. Canonicalize
+  // only a real empty array to absence in a private copy; nonempty selections,
+  // null/scalar values and every other missing key remain concurrency changes.
+  const targeting = copy?.targetings;
+  if (targeting && !Array.isArray(targeting) && Object.hasOwn(targeting, 'segments') &&
+    Array.isArray(targeting.segments) && targeting.segments.length === 0) delete targeting.segments;
   // Compare the entire snapshot, including extra/missing keys and types. The
   // subset readback matcher is intentionally unsuitable for stale-state CAS.
   return stable(copy);
@@ -92,7 +98,16 @@ function snapshot(value) {
 // Readback compares the requested semantic values. VK decimal budgets can be
 // strings with trailing zeros; representation differences are not a mismatch.
 export function matches(actual, expected, field = '', fieldPath = field) {
-  if (expected && !Array.isArray(expected) && typeof expected === 'object') return actual && Object.entries(expected).every(([k, v]) => matches(actual[k], v, k, fieldPath ? `${fieldPath}.${k}` : k));
+  if (expected && !Array.isArray(expected) && typeof expected === 'object') return actual && Object.entries(expected).every(([k, v]) => {
+    const childPath = fieldPath ? `${fieldPath}.${k}` : k;
+    // Clearing segments is saved as an absent key, not []. Recognize only an
+    // actually missing property of the targeting object. An explicit invalid
+    // value, another empty targeting field or a similarly named creative must
+    // still fail verification and keep the account's unresolved-write fence.
+    if (childPath === 'targetings.segments' && Array.isArray(v) && v.length === 0 &&
+      typeof actual === 'object' && !Array.isArray(actual) && !Object.hasOwn(actual, k)) return true;
+    return matches(actual[k], v, k, childPath);
+  });
   if (Array.isArray(expected)) {
     if (targetingSet(actual, fieldPath) && targetingSet(expected, fieldPath)) return actual.length === expected.length && expected.every(v => actual.includes(v));
     return Array.isArray(actual) && stable(actual) === stable(expected);

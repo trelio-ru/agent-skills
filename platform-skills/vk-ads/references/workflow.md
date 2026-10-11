@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.0.7, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.0.8, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -169,6 +169,12 @@ Raw message/body, credentials и
 неизвестные значения и остальные массивы не нормализуются. Та же узкая
 нормализация применяется к before/preflight; весь snapshot, включая ключи
 и типы остальных полей, по-прежнему сравнивается целиком.
+При очистке фильтра `targetings.segments: []` VK может убрать ключ `segments`
+из GET. Только этот пустой массив и отсутствующий ключ считаются эквивалентными
+при read-back и before/preflight. Непустые списки (включая их порядок), null,
+другие типы и отсутствие любого другого поля сохраняют строгую проверку.
+Уже сохранённый `written_unverified` с этой причиной проверяется обычным
+`reconcile` по прежнему operation ID: только GET, без повторной отправки записи.
 
 Apply сохраняет `unknown` до сети, затем object ID/ответ до read-back. Crash,
 timeout или malformed response не стирают receipt. Один operation ID и один
