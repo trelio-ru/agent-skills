@@ -7,7 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { identity, credentials, Fault, hash, scope, clean, date } from '../scripts/core.mjs';
 import { Store, privateProcess } from '../scripts/storage.mjs';
-import { Api, safeApiErrorDetails } from '../scripts/api.mjs';
+import { Api, safeApiErrorDetails, apiValidationDetails } from '../scripts/api.mjs';
 import { Operations, prepare, matches } from '../scripts/operations.mjs';
 import { input } from '../scripts/form.mjs';
 import { argumentsOf, configureWorker, setupStatus } from '../scripts/trelio-vk-ads.mjs';
@@ -107,6 +107,77 @@ test('API failure projection is bounded and excludes raw text and reflected cred
     nested: { code: 'required' }, malformed: 'raw text', constructor: 'required',
   } }, ['syntheticsecret']), { fields: { objective: 'invalid_value' } });
 });
+test('nested validation keeps field paths and indices, never message or payload data', () => {
+  const error = { fields: { campaigns: { code: 'bad_items', message: 'private', items: [
+    { fields: { budget_limit_day: { code: 'min_value', message: 'private budget' }, banners: {
+      code: 'bad_items', errors: { 3: { fields: { urls: { fields: { primary: { code: 'unallowed_value', url: 'https://private.invalid' } } } } } },
+    } } },
+  ] }, objective: { code: 'bad_value' } }, payload: { code: 'do_not_copy' } };
+  const expected = { fields: { campaigns: 'bad_items', objective: 'bad_value' }, fieldErrors: [
+    { path: 'campaigns[0].budget_limit_day', code: 'min_value' },
+    { path: 'campaigns[0].banners', code: 'bad_items' },
+    { path: 'campaigns[0].banners[3].urls.primary', code: 'unallowed_value' },
+  ] };
+  assert.deepEqual(apiValidationDetails(error), expected);
+  assert.deepEqual(safeApiErrorDetails(expected), expected); // Receipt reprojection is idempotent.
+  assert.deepEqual(apiValidationDetails({ fields: { campaigns: { fields: {
+    0: { fields: { price: { code: 'bad_value' } } },
+    '0001': { fields: { price: { code: 'required' } } },
+    10000: { fields: { price: { code: 'required' } } },
+  } } } }), { fieldErrors: [{ path: 'campaigns[0].price', code: 'bad_value' }] });
+  assert.deepEqual(apiValidationDetails({ fields: { campaigns: { errors: [
+    { index: 7, fields: { price: { code: 'bad_value' } } },
+  ] } } }), { fieldErrors: [{ path: 'campaigns[7].price', code: 'bad_value' }] });
+});
+test('nested projection is bounded and rejects credential reflection, forged paths and indices', () => {
+  const error = { fields: { campaigns: { code: 'bad_items', items: {
+    0: { fields: { client_secret: { code: 'required' }, safe: { code: 'syntheticsecret' },
+      synthetictoken: { code: 'required' }, urls: { message: { fields: { primary: { code: 'leak' } } } } } },
+    1: { index: -1, fields: { price: { code: 'bad_value' } } },
+    2: { index: '0002', fields: { price: { code: 'bad_value' } } },
+    3: { index: 10000, fields: { price: { code: 'bad_value' } } },
+  } } } };
+  assert.deepEqual(apiValidationDetails(error, ['syntheticsecret', 'synthetictoken']), { fields: { campaigns: 'bad_items' } });
+  assert.deepEqual(safeApiErrorDetails({ fieldErrors: [
+    { path: 'campaigns[0].client_secret', code: 'required' },
+    { path: 'https://private.invalid', code: 'required' },
+    { path: 'campaigns[0].price', code: 'raw message' },
+    { path: 'campaigns[0002].price', code: 'required' },
+    { path: 'campaigns[0].price', code: 'required', message: 'private' },
+    { path: 'campaigns[0].price', code: 'required' },
+  ] }), { fieldErrors: [{ path: 'campaigns[0].price', code: 'required' }] });
+  const many = apiValidationDetails({ fields: { campaigns: { code: 'bad_items', items:
+    Array.from({ length: 1000 }, () => ({ fields: { price: { code: 'min_value' } } })),
+  } } });
+  assert.equal(Object.keys(many.fields).length + many.fieldErrors.length, 32);
+  const deep = {}; let node = deep;
+  for (let i = 0; i < 100; i++) { node.fields = { child: { code: 'required' } }; node = node.fields.child; }
+  const bounded = apiValidationDetails(deep);
+  assert.ok((bounded.fieldErrors?.length || 0) <= 8);
+  assert.ok(bounded.fieldErrors.every(item => item.path.split('.').length <= 9));
+});
+test('nested diagnostics survive the API and persisted receipt without replay or weakening unknown fence', async t => {
+  for (const status of [400, 500]) {
+    const store = await fixture(t); let writes = 0;
+    const api = new Api(auth(), { fetcher: async () => { writes++; return json({ error: { fields: {
+      campaigns: { code: 'bad_items', items: [{ fields: { autobidding_mode: { code: 'not_allowed_for_package', message: 'private' } } }] },
+    } } }, status); } }); api.access = 'synthetic-token';
+    const ops = new Operations(store, api), plan = await ops.plan({ kind: 'create', entity: 'plans', payload: { name: 'Synthetic' } });
+    const receipt = await ops.apply(plan.planId, plan.planHash, 'nested-rejection');
+    assert.equal(receipt.phase, status === 400 ? 'rejected' : 'unknown');
+    assert.deepEqual(receipt.errorDetails, { httpStatus: status, fields: { campaigns: 'bad_items' },
+      fieldErrors: [{ path: 'campaigns[0].autobidding_mode', code: 'not_allowed_for_package' }] });
+    const restartedStore = new Store(store.root, store.owner, { codec: store.codec });
+    const restarted = new Operations(restartedStore, api);
+    assert.deepEqual((await restartedStore.read()).operations['nested-rejection'], receipt);
+    assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'another-nested-id'), receipt);
+    if (status === 500) {
+      const next = await restarted.plan({ kind: 'create', entity: 'plans', payload: { name: 'Different' } });
+      await assert.rejects(restarted.apply(next.planId, next.planHash, 'new-unknown-write'), { code: 'unresolved_write_blocks_new_mutation' });
+    }
+    assert.equal(writes, 1);
+  }
+});
 test('rejected writes retain safe API reasons across restart without replay', async t => {
   const store = await fixture(t); let writes = 0;
   const api = new Api({ ...auth(), client_secret: 'syntheticsecret' }, { fetcher: async (_url, options) => {
@@ -147,6 +218,24 @@ test('creation pauses the entire tree, requires a group parent and rejects stand
   await assert.rejects(prepare(api, { kind: 'create', entity: 'groups', payload: { name: 'G', package_id: 1, banners: [{ name: 'B' }] } }), { code: 'parent_plan_required' });
   await assert.rejects(prepare(api, { kind: 'update', entity: 'plans', id: 1, payload: { budget_limit_day: -1 } }), { code: 'budget_invalid' });
   await assert.rejects(prepare(api, { kind: 'create', entity: 'plans', payload: { name: 'X', targetings: { authorization: 'private' } } }), { code: 'payload_field_forbidden' });
+});
+test('new max_goals objects require budget while partial updates and other strategies remain available', async () => {
+  const api = new Api(auth()); let reads = 0; api.get = async () => { reads++; return { id: 1, autobidding_mode: 'max_goals' }; };
+  await assert.rejects(prepare(api, { kind: 'create', entity: 'plans', payload: { name: 'Synthetic', autobidding_mode: 'max_goals' } }), { code: 'autobidding_budget_required' });
+  await assert.rejects(prepare(api, { kind: 'create', entity: 'plans', payload: { name: 'Synthetic', autobidding_mode: 'max_goals', budget_limit: 2000 } }), { code: 'autobidding_budget_required' });
+  const spec = { kind: 'create', entity: 'plans', payload: { name: 'Synthetic', date_end: '2026-10-12', ad_groups: [
+    { name: 'Group', package_id: 1, autobidding_mode: 'max_goals', budget_limit: 2000, banners: [{ name: 'Banner' }] },
+  ] } };
+  const finite = await prepare(api, spec); assert.equal(finite.payload.ad_groups[0].budget_limit, 2000);
+  const daily = structuredClone(spec); delete daily.payload.date_end;
+  daily.payload.ad_groups[0].budget_limit_day = 1000;
+  assert.equal((await prepare(api, daily)).payload.ad_groups[0].budget_limit_day, 1000);
+  const missing = structuredClone(daily); delete missing.payload.ad_groups[0].budget_limit; delete missing.payload.ad_groups[0].budget_limit_day;
+  await assert.rejects(prepare(api, missing), { code: 'autobidding_budget_required' });
+  const other = structuredClone(missing); other.payload.ad_groups[0].autobidding_mode = 'second_price';
+  await prepare(api, other); // A legacy strategy is not globally forbidden by one package rejection.
+  await prepare(api, { kind: 'update', entity: 'plans', id: 1, payload: { autobidding_mode: 'max_goals' } });
+  assert.equal(reads, 1);
 });
 test('Windows native private pipe transport completes before filesystem bootstrap', { skip: process.platform !== 'win32' }, async () => {
   const root = process.env.SystemRoot || process.env.SYSTEMROOT;
