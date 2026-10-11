@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { check, data, hash, stable, scope, id, Fault } from './core.mjs';
+import { safeApiErrorDetails } from './api.mjs';
 
 const COMMON = ['name', 'status', 'date_start', 'date_end', 'budget_limit', 'budget_limit_day', 'autobidding_mode'];
 const FIELDS = { plans: [...COMMON, 'objective', 'enable_utm', 'enable_offline_goals'],
@@ -125,6 +126,11 @@ export class Operations {
         // Once dispatched, even a crash before response persistence leaves an
         // unknown receipt. A rejection can be terminal, but is never auto-retried.
         receipt.error = error instanceof Fault ? error.code : 'write_result_unknown';
+        // Preserve the provider's safe reason alongside the replay fence. A
+        // terminal 400 otherwise loses the fields needed to prepare a reviewed
+        // correction; retaining it never authorizes another POST or fallback.
+        const details = safeApiErrorDetails(error instanceof Fault ? error.details : {}, [this.api.auth.client_secret, this.api.access]);
+        if (Object.keys(details).length) receipt.errorDetails = details;
         if (receipt.phase === 'unknown' && error instanceof Fault && ['api_rejected', 'api_method_unsupported', 'authorization_required', 'permission_denied'].includes(error.code)) receipt.phase = 'rejected';
         await this.store.write(state); return receipt;
       }
@@ -164,7 +170,14 @@ export class Operations {
         // similarly named object or turn absence in a list into permission to retry.
         if (!receipt.objectId && plan.op.kind !== 'update') return { ...receipt, nextAction: 'Find the result in VK manually; do not repeat this creation' };
         receipt.objectId ||= plan.op.id;
-        try { await this.verify(plan, receipt); delete receipt.error; } catch (error) { receipt.error = error instanceof Fault ? error.code : 'readback_failed'; }
+        try { await this.verify(plan, receipt); delete receipt.error; delete receipt.errorDetails; } catch (error) {
+          receipt.error = error instanceof Fault ? error.code : 'readback_failed';
+          const details = safeApiErrorDetails(error instanceof Fault ? error.details : {}, [this.api.auth.client_secret, this.api.access]);
+          // A later readback failure supersedes the earlier diagnostic; do not
+          // display a stale HTTP status when the latest error has no projection.
+          delete receipt.errorDetails;
+          if (Object.keys(details).length) receipt.errorDetails = details;
+        }
         await this.store.write(state);
       }
       return receipt;

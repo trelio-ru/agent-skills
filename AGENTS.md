@@ -23,6 +23,8 @@ scoped планы, persisted receipts, read-back и запрет replay неиз
 POST/PUT и структуру групп нельзя менять как fallback после ошибки API.
 Справочники VK используют штатный размер страницы своего endpoint, а не
 campaign-list limit=200; одна страница не означает полный каталог.
+VK receipts сохраняют bounded HTTP/field-code diagnostics без raw response и
+credentials; причина отказа не разрешает повтор записи или fallback.
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.

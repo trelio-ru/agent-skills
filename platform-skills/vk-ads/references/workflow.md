@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.0.1, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.0.2, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -134,6 +134,11 @@ GET повторяется до трёх попыток с паузами 500/10
 Advertising POST никогда не повторяется автоматически. OAuth token сохраняется
 зашифрованно до expires_at, новый выдаётся при expiry; 401 не вызывает
 автоматическое изменение credential. 403 не трактуется как logout.
+Receipt сохраняет безопасные `errorDetails.httpStatus` и до 32 кодов
+`errorDetails.fields`, когда API их вернул. Raw message/body, credentials и
+произвольные строки не сохраняются и не выводятся. Код поля объясняет отказ,
+но не разрешает fallback или повтор записи. Исторический receipt без деталей
+не восстанавливает причину; не повторяй POST лишь ради диагностики.
 
 Apply сохраняет `unknown` до сети, затем object ID/ответ до read-back. Crash,
 timeout или malformed response не стирают receipt. Один operation ID и один

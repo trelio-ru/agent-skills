@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk-ads",
-    "version": "1.0.1",
-    "summary": "Исправлено чтение справочников VK Рекламы: размер страницы выбирает API конкретного справочника."
+    "version": "1.0.2",
+    "summary": "Результаты отклонённых записей сохраняют безопасную причину VK API: HTTP status и коды полей без raw response и credentials."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.1",
+    "version": "1.0.2",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "scripts/trelio-vk-ads.mjs",

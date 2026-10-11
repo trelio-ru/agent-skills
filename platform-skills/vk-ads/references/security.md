@@ -13,6 +13,9 @@ Origin/Sec-Fetch, один page load/submit, JSON до 12000 bytes. CSP откл
 внешние ресурсы/frame embedding. Нет read endpoint credentials и вывода URI
 формы агенту; системный opener получает локальный URI внутри runtime.
 Сервер закрывается при success/cancel/expiry/failure; секреты не логируются.
+API diagnostics содержат только HTTP status и до 32 пар field/code из
+канонических токенов до 80 символов. Credential-поля и отражённые secret/token
+значения исключаются; raw response/message/URL не сохраняются в receipt.
 Настройка detached: operation/pid/phase/expiry сохраняются, статус наблюдается
 в пределах первоначального account/scope, один wait <=30s. Вкладка без submit
 не является success. Credentials сохраняются после submit до auth probe,
