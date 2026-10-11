@@ -34,9 +34,10 @@ credentials; вложенные path/code проходят тот же bounded p
 частичный update и package-specific availability не заменяются догадкой.
 Read-back mismatch сообщает только static field identity без сравниваемых
 значений; подробность diagnostic не снимает unresolved-write fence.
-Только targetings.sex допускает смену порядка уникальных male/female при
-read-back и before/preflight. Состав, duplicates, неизвестные значения,
-остальные массивы и полный optimistic snapshot остаются exact.
+Только targetings.sex и targetings.geo.local_geo.loc_type допускают смену
+порядка уникальных male/female и home/work при read-back и before/preflight.
+Состав, duplicates, неизвестные значения, остальные массивы и полный
+optimistic snapshot остаются exact.
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.
