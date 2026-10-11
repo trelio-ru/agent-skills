@@ -79,6 +79,26 @@ test('writes do not retry on timeout, 429 or 5xx; 401 and 403 remain distinct', 
     assert.equal(calls, 1);
   }
 });
+test('catalogues use endpoint defaults instead of the rejected campaign page size', async () => {
+  const routes = ['/api/v2/packages.json', '/api/v2/banner_patterns.json',
+    '/api/v2/banner_fields.json', '/api/v2/regions.json', '/api/v2/interests.json'];
+  const observed = [], page = { items: [{ id: 3232 }], count: 5 };
+  const api = new Api(auth(), { fetcher: async (url, options) => {
+    observed.push(url.pathname); assert.equal(options.method, 'GET');
+    // Reproduce the real packages rejection. A guessed smaller limit would
+    // still fail this fixture: endpoint defaults, not a common magic number,
+    // are the contract for all independently versioned catalogues.
+    if (url.searchParams.has('limit')) return json({ error: { fields: { limit: { code: 'max_value' } } } }, 400);
+    assert.equal(url.search, ''); return json(page);
+  } });
+  api.access = 'synthetic-token';
+  for (const name of ['packages', 'patterns', 'fields', 'regions', 'interests']) {
+    assert.deepEqual(await api.catalog(name), page);
+  }
+  assert.deepEqual(observed, routes);
+  await assert.rejects(api.catalog('billing'), { code: 'catalog_invalid' });
+  assert.equal(observed.length, 5); // Invalid catalogue names never reach VK.
+});
 test('agency auth selects a per-client token privately and cached tokens avoid token issuance', async () => {
   const api = new Api({ ...auth(), mode: 'agency', agency_client: 'synthetic-agency-client' }, { fetcher: async (_url, opts) => {
     assert.equal(opts.body.get('grant_type'), 'agency_client_credentials'); assert.equal(opts.body.get('agency_client_name'), 'synthetic-agency-client');

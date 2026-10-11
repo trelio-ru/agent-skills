@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 export const SKILL = 'vk-ads';
-export const VERSION = '1.0.0';
+export const VERSION = '1.0.1';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export class Fault extends Error {
   constructor(code, details = {}) { super(code); this.code = code; this.details = details; }
