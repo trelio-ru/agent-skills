@@ -23,6 +23,11 @@ Read-back и полный before/preflight snapshot нормализуют то�
 уникальных male/female в targetings.sex и home/work в
 targetings.geo.local_geo.loc_type. Изменённый состав, duplicates, неизвестные
 значения, другие массивы и ключи/типы полного snapshot остаются exact.
+Единственное исключение отсутствующего поля: пустой массив targetings.segments
+после очистки фильтра эквивалентен отсутствующему ключу segments. Непустой
+массив, null, прочие типы и остальные отсутствующие ключи остаются exact;
+before/preflight нормализует только копию, не сохранённый план или его hash.
+Восстановление старого receipt выполняется GET-only reconcile без replay.
 Credential-поля и отражённые secret/token
 значения исключаются; raw response/message/URL не сохраняются в receipt.
 Read-back mismatch сообщает лишь static field code с уровнем объекта, без

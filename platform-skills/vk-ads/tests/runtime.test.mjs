@@ -337,6 +337,76 @@ test('local geo order normalization preserves complete optimistic snapshots befo
     assert.deepEqual((await store.read()).plans[plan.planId].op.before, original);
   }
 });
+test('only an empty segments selection matches an absent exact targeting key', () => {
+  const expected = { targetings: { segments: [], regions: [1, 2] } };
+  const actual = { targetings: { regions: [1, 2] } };
+  const original = structuredClone({ actual, expected });
+  assert.equal(matches(actual, expected), true);
+  assert.equal(matches(actual.targetings, expected.targetings, 'targetings'), true);
+  assert.deepEqual({ actual, expected }, original);
+  for (const segments of [null, false, 0, '', {}, [1], ['1'], [1, 1]]) {
+    assert.equal(matches({ targetings: { ...actual.targetings, segments } }, expected), false);
+    assert.equal(matches(actual, { targetings: { ...actual.targetings, segments } }), false);
+  }
+  assert.equal(matches({ targetings: { ...actual.targetings, segments: undefined } }, expected), false);
+  assert.equal(matches({}, { segments: [] }), false);
+  assert.equal(matches({ content: actual }, { content: expected }), false);
+  assert.equal(matches({ targetings: {} }, { targetings: { regions: [] } }), false);
+  assert.equal(matches({ targetings: { segments: [2, 1] } }, { targetings: { segments: [1, 2] } }), false);
+});
+test('empty segments normalization preserves full optimistic snapshots and audience changes', async t => {
+  for (const mode of ['omit', 'empty', 'nonempty', 'null', 'object', 'other-array', 'extra-key', 'missing-key', 'type']) {
+    const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let writes = 0;
+    const current = { id: 4, targetings: { regions: [1, 2], limit: 5, ...(mode === 'empty' ? {} : { segments: [] }) } };
+    api.get = async () => structuredClone(current);
+    api.request = async () => { writes++; delete current.targetings.segments; return {}; };
+    const ops = new Operations(store, api);
+    const plan = await ops.plan({ kind: 'update', entity: 'groups', id: 4, payload: { targetings: { regions: [1, 2], limit: 5, segments: [] } } });
+    const before = structuredClone(plan.operation.before);
+    if (mode === 'empty') current.targetings.segments = [];
+    else delete current.targetings.segments;
+    if (mode === 'nonempty') current.targetings.segments = [1];
+    if (mode === 'null') current.targetings.segments = null;
+    if (mode === 'object') current.targetings.segments = {};
+    if (mode === 'other-array') current.targetings.regions.reverse();
+    if (mode === 'extra-key') current.targetings.extra = true;
+    if (mode === 'missing-key') delete current.targetings.limit;
+    if (mode === 'type') current.targetings.limit = '5';
+    const equivalent = ['omit', 'empty'].includes(mode);
+    if (equivalent) assert.equal((await ops.apply(plan.planId, plan.planHash, `segments-update-${mode}`)).phase, 'verified');
+    else await assert.rejects(ops.apply(plan.planId, plan.planHash, `segments-update-${mode}`), { code: 'object_changed_replan_required' });
+    assert.equal(writes, equivalent ? 1 : 0);
+    assert.deepEqual(plan.operation.before, before);
+    assert.deepEqual((await store.read()).plans[plan.planId].op.before, before);
+  }
+});
+test('persisted empty segments mismatch reconciles by reads without another advertising write', async t => {
+  const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let writes = 0;
+  const current = { id: 4, status: 'blocked', targetings: { segments: [1], regions: [2] } };
+  api.get = async () => structuredClone(current);
+  api.request = async () => { writes++; delete current.targetings.segments; return {}; };
+  const ops = new Operations(store, api);
+  const plan = await ops.plan({ kind: 'update', entity: 'groups', id: 4, payload: { targetings: { segments: [], regions: [2] } } });
+  assert.equal((await ops.apply(plan.planId, plan.planHash, 'segments-cleared')).phase, 'verified');
+  // Model the exact retained receipt shape produced by the older matcher. The
+  // new runtime must recover its original hash/specification, never replan or
+  // resend the committed mutation. Real missing filters must keep the fence.
+  const state = await store.read(), legacy = state.operations['segments-cleared'];
+  legacy.phase = 'written_unverified'; delete legacy.observed;
+  legacy.error = 'readback_mismatch'; legacy.errorDetails = { fields: { groups_targetings: 'readback_mismatch' } };
+  await store.write(state);
+  const restarted = new Operations(new Store(store.root, store.owner, { codec: store.codec }), api);
+  current.targetings.segments = [3];
+  assert.equal((await restarted.reconcile('segments-cleared')).phase, 'written_unverified');
+  const next = await restarted.plan({ kind: 'update', entity: 'groups', id: 4, payload: { name: 'Synthetic next' } });
+  await assert.rejects(restarted.apply(next.planId, next.planHash, 'segments-fence'), { code: 'unresolved_write_blocks_new_mutation' });
+  delete current.targetings.segments;
+  const result = await restarted.reconcile('segments-cleared');
+  assert.equal(result.phase, 'verified'); assert.equal(result.errorDetails, undefined); assert.equal(result.error, undefined);
+  assert.equal(result.hash, plan.planHash); assert.equal(result.planId, plan.planId); assert.equal(writes, 1);
+  assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'segments-cleared'), result);
+  assert.equal(writes, 1); assert.equal(current.status, 'blocked');
+});
 test('unknown create survives restart and prevents a new plan from bypassing the receipt', async t => {
   const store = await fixture(t); let writes = 0; const api = new Api(auth()); api.access = 'token';
   api.request = async () => { writes++; throw new Fault('write_result_unknown'); };

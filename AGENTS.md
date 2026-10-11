@@ -37,7 +37,9 @@ Read-back mismatch сообщает только static field identity без с
 Только targetings.sex и targetings.geo.local_geo.loc_type допускают смену
 порядка уникальных male/female и home/work при read-back и before/preflight.
 Состав, duplicates, неизвестные значения, остальные массивы и полный
-optimistic snapshot остаются exact.
+optimistic snapshot остаются exact. Только пустой targetings.segments и
+отсутствующий ключ segments эквивалентны после очистки фильтра; null, другие
+типы, непустой массив и отсутствующие остальные ключи не нормализуются.
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.
