@@ -170,6 +170,42 @@ test('apply uses persisted receipts, verifies semantic readback and fences stale
   const switched = new Store(store.root, { ...store.owner, binding: 'b'.repeat(64) }, { codec: store.codec });
   await assert.rejects(new Operations(switched, api).apply(next.planId, next.planHash, 'cross-operation'), { code: 'plan_scope_or_hash_invalid' });
 });
+test('only the known targeting sex set ignores ordering without changing either input', () => {
+  const expected = { targetings: { sex: ['male', 'female'] } }, actual = { targetings: { sex: ['female', 'male'] } };
+  const before = structuredClone({ expected, actual });
+  assert.equal(matches(actual, expected), true);
+  assert.equal(matches(actual.targetings, expected.targetings, 'targetings'), true); // Static mismatch diagnostic uses this entry point.
+  assert.deepEqual({ expected, actual }, before);
+  for (const sex of [['male'], [], ['male', 'male'], ['female', 'male', 'female'], ['unknown', 'male']]) {
+    assert.equal(matches({ targetings: { sex } }, expected), false);
+  }
+  assert.equal(matches({ sex: ['female', 'male'] }, { sex: ['male', 'female'] }), false);
+  assert.equal(matches({ content: { targetings: actual.targetings } }, { content: { targetings: expected.targetings } }), false);
+  assert.equal(matches({ targetings: { regions: [2, 1] } }, { targetings: { regions: [1, 2] } }), false);
+});
+test('sex order normalization preserves full optimistic snapshots and dispatches only unchanged selections', async t => {
+  for (const mode of ['order', 'membership', 'duplicate', 'unknown', 'other-array', 'extra-key', 'missing-key', 'type']) {
+    const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let writes = 0;
+    let current = { id: 4, targetings: { sex: ['male', 'female'], regions: [1, 2], limit: 5 } };
+    api.get = async () => structuredClone(current);
+    api.request = async () => { writes++; current.targetings = { sex: ['female', 'male'], regions: [1, 2], limit: 5 }; return {}; };
+    const ops = new Operations(store, api), spec = { kind: 'update', entity: 'groups', id: 4, payload: { targetings: structuredClone(current.targetings) } };
+    const plan = await ops.plan(spec), original = structuredClone(plan.operation.before);
+    current.targetings.sex.reverse();
+    if (mode === 'membership') current.targetings.sex = ['female'];
+    if (mode === 'duplicate') current.targetings.sex = ['male', 'male'];
+    if (mode === 'unknown') current.targetings.sex = ['male', 'unknown'];
+    if (mode === 'other-array') current.targetings.regions.reverse();
+    if (mode === 'extra-key') current.extra = true;
+    if (mode === 'missing-key') delete current.targetings.limit;
+    if (mode === 'type') current.targetings.limit = '5';
+    if (mode === 'order') assert.equal((await ops.apply(plan.planId, plan.planHash, `sex-update-${mode}`)).phase, 'verified');
+    else await assert.rejects(ops.apply(plan.planId, plan.planHash, `sex-update-${mode}`), { code: 'object_changed_replan_required' });
+    assert.equal(writes, mode === 'order' ? 1 : 0);
+    assert.deepEqual(plan.operation.before, original);
+    assert.deepEqual((await store.read()).plans[plan.planId].op.before, original);
+  }
+});
 test('unknown create survives restart and prevents a new plan from bypassing the receipt', async t => {
   const store = await fixture(t); let writes = 0; const api = new Api(auth()); api.access = 'token';
   api.request = async () => { writes++; throw new Fault('write_result_unknown'); };
@@ -278,6 +314,27 @@ test('VK response alias and parent-scoped child reads reconcile a nested write w
   assert.deepEqual(receipt.children, [{ entity: 'groups', objectId: 4, children: [{ entity: 'banners', objectId: 5 }] }]);
   assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'another-id-same-nested-plan'), receipt);
   assert.equal(writes, 1);
+});
+test('reconcile verifies a paused nested tree despite changing sex order with no creation replay', async t => {
+  const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let writes = 0, available = false;
+  const spec = { kind: 'create', entity: 'plans', payload: { name: 'P', ad_groups: [{ name: 'G', package_id: 2,
+    targetings: { sex: ['male', 'female'] }, banners: [{ name: 'B' }] }] } };
+  api.request = async () => { writes++; return { id: 3, campaigns: [{ id: 4 }] }; };
+  api.list = async () => ({ items: [{ id: 5, ad_group_id: 4 }], count: 1, truncated: false });
+  api.get = async (entity, number) => {
+    if (!available && entity === 'groups') throw new Fault('readback_failed');
+    return entity === 'plans' ? { id: number, name: 'P', status: 'blocked' }
+      : entity === 'groups' ? { id: number, name: 'G', ad_plan_id: 3, package_id: 2, targetings: { sex: ['female', 'male'] }, status: 'blocked' }
+      : { id: number, name: 'B', ad_group_id: 4, status: 'blocked' };
+  };
+  const ops = new Operations(store, api), plan = await ops.plan(spec);
+  assert.equal((await ops.apply(plan.planId, plan.planHash, 'sex-nested-create')).phase, 'written_unverified');
+  available = true;
+  const restarted = new Operations(new Store(store.root, store.owner, { codec: store.codec }), api);
+  const receipt = await restarted.reconcile('sex-nested-create');
+  assert.equal(receipt.phase, 'verified'); assert.equal(receipt.error, undefined);
+  assert.deepEqual(receipt.children, [{ entity: 'groups', objectId: 4, children: [{ entity: 'banners', objectId: 5 }] }]);
+  assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'sex-nested-create'), receipt); assert.equal(writes, 1);
 });
 test('nested verification rejects conflicting aliases, foreign parents and incomplete child inventories', async t => {
   for (const mode of ['conflicting_alias', 'foreign_parent', 'truncated', 'extra', 'duplicate', 'ambiguous']) {
