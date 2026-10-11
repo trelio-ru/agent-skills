@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.0.6, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.0.7, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -163,8 +163,9 @@ Raw message/body, credentials и
 уровень объекта и static несовпавшее поле, например groups_targetings.
 Запрошенные и прочитанные значения в diagnostic не выводятся; несовпадение
 сохраняет блокировку и требует сверки исходного плана с exact GET.
-Только `targetings.sex` сравнивается как набор уникальных `male`/`female`:
-VK может менять их порядок без изменения аудитории. Состав, duplicates,
+`targetings.sex` и `targetings.geo.local_geo.loc_type` сравниваются как наборы
+уникальных `male`/`female` и `home`/`work` соответственно: VK может менять их
+порядок без изменения аудитории. Состав, duplicates,
 неизвестные значения и остальные массивы не нормализуются. Та же узкая
 нормализация применяется к before/preflight; весь snapshot, включая ключи
 и типы остальных полей, по-прежнему сравнивается целиком.

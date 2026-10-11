@@ -68,15 +68,23 @@ export async function prepare(api, specification) {
   }
   return op;
 }
-// VK returns the same sex selection in either order. Limit normalization to
-// this known enum set: duplicates, unknown values and all other arrays keep
-// their exact representation, so this cannot hide a changed audience/creative.
-function sexSet(value) {
-  return Array.isArray(value) && value.length <= 2 && new Set(value).size === value.length && value.every(v => ['male', 'female'].includes(v));
+// VK reorders these two known audience selections without changing membership.
+// Match only their exact targeting paths, never similarly named creative data.
+// Duplicates/unknown values stay exact; locations, schedules and other arrays
+// retain their order, so normalization cannot conceal a changed audience.
+const TARGETING_SETS = {
+  'targetings.sex': ['male', 'female'],
+  'targetings.geo.local_geo.loc_type': ['home', 'work'],
+};
+function targetingSet(value, fieldPath) {
+  const values = Object.hasOwn(TARGETING_SETS, fieldPath) ? TARGETING_SETS[fieldPath] : undefined;
+  return values && Array.isArray(value) && value.length <= values.length && new Set(value).size === value.length && value.every(v => values.includes(v));
 }
 function snapshot(value) {
   const copy = structuredClone(value);
-  if (sexSet(copy?.targetings?.sex)) copy.targetings.sex = [...copy.targetings.sex].sort();
+  if (targetingSet(copy?.targetings?.sex, 'targetings.sex')) copy.targetings.sex = [...copy.targetings.sex].sort();
+  const local = copy?.targetings?.geo?.local_geo;
+  if (targetingSet(local?.loc_type, 'targetings.geo.local_geo.loc_type')) local.loc_type = [...local.loc_type].sort();
   // Compare the entire snapshot, including extra/missing keys and types. The
   // subset readback matcher is intentionally unsuitable for stale-state CAS.
   return stable(copy);
@@ -86,7 +94,7 @@ function snapshot(value) {
 export function matches(actual, expected, field = '', fieldPath = field) {
   if (expected && !Array.isArray(expected) && typeof expected === 'object') return actual && Object.entries(expected).every(([k, v]) => matches(actual[k], v, k, fieldPath ? `${fieldPath}.${k}` : k));
   if (Array.isArray(expected)) {
-    if (fieldPath === 'targetings.sex' && sexSet(actual) && sexSet(expected)) return actual.length === expected.length && expected.every(v => actual.includes(v));
+    if (targetingSet(actual, fieldPath) && targetingSet(expected, fieldPath)) return actual.length === expected.length && expected.every(v => actual.includes(v));
     return Array.isArray(actual) && stable(actual) === stable(expected);
   }
   if (typeof expected === 'number' || ['budget_limit', 'budget_limit_day', 'price', 'id', 'package_id', 'ad_plan_id'].includes(field)) {

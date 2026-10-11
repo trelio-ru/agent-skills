@@ -295,6 +295,48 @@ test('sex order normalization preserves full optimistic snapshots and dispatches
     assert.deepEqual((await store.read()).plans[plan.planId].op.before, original);
   }
 });
+test('only the exact local geo location-type set ignores order without mutating inputs', () => {
+  const selection = loc_type => ({ targetings: { geo: { local_geo: { loc_type, visit_type: 'usual', locations: [{ id: 1 }, { id: 2 }] } } } });
+  const expected = selection(['home', 'work']), actual = selection(['work', 'home']);
+  const before = structuredClone({ expected, actual });
+  assert.equal(matches(actual, expected), true);
+  assert.equal(matches(actual.targetings, expected.targetings, 'targetings'), true);
+  assert.deepEqual({ expected, actual }, before);
+  for (const loc_type of [['home'], [], ['home', 'home'], ['unknown', 'work'], ['home', 'work', 'work']]) {
+    assert.equal(matches(selection(loc_type), expected), false);
+  }
+  const reordered = selection(['work', 'home']); reordered.targetings.geo.local_geo.locations.reverse();
+  assert.equal(matches(reordered, expected), false);
+  const changed = selection(['work', 'home']); changed.targetings.geo.local_geo.visit_type = 'recent';
+  assert.equal(matches(changed, expected), false);
+  assert.equal(matches({ loc_type: ['work', 'home'] }, { loc_type: ['home', 'work'] }), false);
+  assert.equal(matches({ content: actual }, { content: expected }), false);
+  assert.equal(matches(['work', 'home'], ['home', 'work'], 'constructor'), false);
+});
+test('local geo order normalization preserves complete optimistic snapshots before dispatch', async t => {
+  for (const mode of ['order', 'membership', 'duplicate', 'unknown', 'locations', 'visit-type', 'extra-key', 'missing-key', 'type']) {
+    const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let writes = 0;
+    const current = { id: 4, targetings: { geo: { local_geo: { loc_type: ['home', 'work'], visit_type: 'usual', locations: [{ id: 1 }, { id: 2 }], limit: 5 } } } };
+    api.get = async () => structuredClone(current);
+    api.request = async () => { writes++; return {}; };
+    const ops = new Operations(store, api), plan = await ops.plan({ kind: 'update', entity: 'groups', id: 4, payload: { targetings: structuredClone(current.targetings) } });
+    const original = structuredClone(plan.operation.before), local = current.targetings.geo.local_geo;
+    local.loc_type.reverse();
+    if (mode === 'membership') local.loc_type = ['home'];
+    if (mode === 'duplicate') local.loc_type = ['home', 'home'];
+    if (mode === 'unknown') local.loc_type = ['home', 'unknown'];
+    if (mode === 'locations') local.locations.reverse();
+    if (mode === 'visit-type') local.visit_type = 'recent';
+    if (mode === 'extra-key') local.extra = true;
+    if (mode === 'missing-key') delete local.limit;
+    if (mode === 'type') local.limit = '5';
+    if (mode === 'order') assert.equal((await ops.apply(plan.planId, plan.planHash, `geo-update-${mode}`)).phase, 'verified');
+    else await assert.rejects(ops.apply(plan.planId, plan.planHash, `geo-update-${mode}`), { code: 'object_changed_replan_required' });
+    assert.equal(writes, mode === 'order' ? 1 : 0);
+    assert.deepEqual(plan.operation.before, original);
+    assert.deepEqual((await store.read()).plans[plan.planId].op.before, original);
+  }
+});
 test('unknown create survives restart and prevents a new plan from bypassing the receipt', async t => {
   const store = await fixture(t); let writes = 0; const api = new Api(auth()); api.access = 'token';
   api.request = async () => { writes++; throw new Fault('write_result_unknown'); };
@@ -424,6 +466,30 @@ test('reconcile verifies a paused nested tree despite changing sex order with no
   assert.equal(receipt.phase, 'verified'); assert.equal(receipt.error, undefined);
   assert.deepEqual(receipt.children, [{ entity: 'groups', objectId: 4, children: [{ entity: 'banners', objectId: 5 }] }]);
   assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'sex-nested-create'), receipt); assert.equal(writes, 1);
+});
+test('persisted local geo mismatch reconciles a paused tree by reads without creation replay', async t => {
+  const store = await fixture(t), api = new Api(auth()); api.access = 'token'; let writes = 0, available = false;
+  const spec = { kind: 'create', entity: 'plans', payload: { name: 'P', ad_groups: [{ name: 'G', package_id: 2,
+    targetings: { geo: { local_geo: { loc_type: ['home', 'work'] } } }, banners: [{ name: 'B' }] }] } };
+  api.request = async () => { writes++; return { id: 3, campaigns: [{ id: 4 }] }; };
+  api.list = async () => ({ items: [{ id: 5, ad_group_id: 4 }], count: 1, truncated: false });
+  api.get = async (entity, number) => entity === 'plans' ? { id: number, name: 'P', status: 'blocked' }
+    : entity === 'groups' ? { id: number, name: 'G', ad_plan_id: 3, package_id: 2,
+      targetings: { geo: { local_geo: { loc_type: available ? ['work', 'home'] : ['home'] } } }, status: 'blocked' }
+    : { id: number, name: 'B', ad_group_id: 4, status: 'blocked' };
+  const ops = new Operations(store, api), plan = await ops.plan(spec);
+  const result = await ops.apply(plan.planId, plan.planHash, 'geo-nested-create');
+  assert.equal(result.phase, 'written_unverified'); assert.equal(result.error, 'readback_mismatch');
+  assert.deepEqual(result.errorDetails, { fields: { groups_targetings: 'readback_mismatch' } });
+  const next = await ops.plan({ kind: 'update', entity: 'plans', id: 3, payload: { name: 'Rename' } });
+  await assert.rejects(ops.apply(next.planId, next.planHash, 'geo-fenced-update'), { code: 'unresolved_write_blocks_new_mutation' });
+  available = true;
+  const restarted = new Operations(new Store(store.root, store.owner, { codec: store.codec }), api);
+  const receipt = await restarted.reconcile('geo-nested-create');
+  assert.equal(receipt.phase, 'verified'); assert.equal(receipt.errorDetails, undefined);
+  assert.deepEqual(receipt.children, [{ entity: 'groups', objectId: 4, children: [{ entity: 'banners', objectId: 5 }] }]);
+  assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'other-geo-create-id'), receipt);
+  assert.equal(writes, 1);
 });
 test('nested verification rejects conflicting aliases, foreign parents and incomplete child inventories', async t => {
   for (const mode of ['conflicting_alias', 'foreign_parent', 'truncated', 'extra', 'duplicate', 'ambiguous']) {

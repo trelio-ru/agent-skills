@@ -19,6 +19,10 @@ API diagnostics содержат только HTTP status и до 32 top-level �
 Разбираются лишь validation `fields/items/errors`, никогда message, URL,
 request body или произвольный JSON. Stored paths повторно проверяются перед
 receipt persistence; дополнительная диагностика не отменяет write fence.
+Read-back и полный before/preflight snapshot нормализуют только порядок
+уникальных male/female в targetings.sex и home/work в
+targetings.geo.local_geo.loc_type. Изменённый состав, duplicates, неизвестные
+значения, другие массивы и ключи/типы полного snapshot остаются exact.
 Credential-поля и отражённые secret/token
 значения исключаются; raw response/message/URL не сохраняются в receipt.
 Read-back mismatch сообщает лишь static field code с уровнем объекта, без
