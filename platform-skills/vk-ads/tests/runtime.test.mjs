@@ -11,6 +11,11 @@ import { Api, safeApiErrorDetails, apiValidationDetails } from '../scripts/api.m
 import { Operations, prepare, matches } from '../scripts/operations.mjs';
 import { input } from '../scripts/form.mjs';
 import { argumentsOf, configureWorker, setupStatus } from '../scripts/trelio-vk-ads.mjs';
+// The provider matrix intentionally invokes this portable entrypoint on all
+// three OS. Register the separate suites here too, so new modules cannot be
+// checked only by a local file-specific command and silently miss hosted CI.
+import './diagnostics.test.mjs';
+import './audience-operations.test.mjs';
 
 const owner = () => ({ account: crypto.randomUUID(), binding: 'a'.repeat(64), company: crypto.randomUUID(), member: crypto.randomUUID() });
 const auth = () => ({ mode: 'client', groups: 'ad_groups', client_id: 'synthetic-client', client_secret: 'synthetic-only-secret', agency_client: '' });
@@ -201,6 +206,25 @@ test('rejected writes retain safe API reasons across restart without replay', as
   assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'rejected-create'), receipt);
   assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'another-rejected-id'), receipt);
   assert.equal(writes, 1); // A useful reason must never turn a receipt into replay authority.
+});
+test('audience DELETE durable claim survives encrypted store restart and recovers only by exact GET', async t => {
+  const store = await fixture(t); let deleted = false, deletes = 0;
+  const api = new Api(auth(), { fetcher: async (url, options) => {
+    if (options.method === 'DELETE') { deletes++; deleted = true; throw Error('lost delete response'); }
+    assert.equal(options.method, 'GET');
+    if (url.pathname.endsWith('/segments/10.json')) return json(deleted ? {} :
+      { id: 10, name: 'Synthetic deletion', pass_condition: 1, relations_count: 1, campaign_ids: [] }, deleted ? 404 : 200);
+    assert.ok(url.pathname.endsWith('/segments/10/relations.json'));
+    return json({ items: [{ id: 20, object_type: 'segment', object_id: 50 }] });
+  } }); api.access = 'synthetic-token';
+  const ops = new Operations(store, api), plan = await ops.plan({ kind: 'audience', entity: 'segments', action: 'delete', id: 10 });
+  assert.equal((await ops.apply(plan.planId, plan.planHash, 'durable-audience-delete')).phase, 'unknown');
+  const restartedStore = new Store(store.root, store.owner, { codec: store.codec }), restarted = new Operations(restartedStore, api);
+  assert.equal((await restartedStore.read()).operations['durable-audience-delete'].phase, 'unknown');
+  assert.equal((await restarted.reconcile('durable-audience-delete')).phase, 'verified');
+  assert.equal((await restartedStore.read()).operations['durable-audience-delete'].phase, 'verified');
+  assert.equal((await restarted.apply(plan.planId, plan.planHash, 'different-delete-operation')).phase, 'verified');
+  assert.equal(deletes, 1);
 });
 test('agency auth selects a per-client token privately and cached tokens avoid token issuance', async () => {
   const api = new Api({ ...auth(), mode: 'agency', agency_client: 'synthetic-agency-client' }, { fetcher: async (_url, opts) => {

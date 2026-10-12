@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 export const SKILL = 'vk-ads';
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export class Fault extends Error {
   constructor(code, details = {}) { super(code); this.code = code; this.details = details; }
@@ -33,7 +33,12 @@ export function configRoot(env = process.env) {
 }
 export function storagePath(root, owner) { return path.join(root, 'integrations', SKILL, 'accounts', owner.account); }
 export function scope(owner) { return hash(stable(owner)); }
-export function id(value) { check(/^[1-9]\d{0,9}$/.test(String(value)) && Number(value) <= 2147483647, 'object_id_invalid'); return Number(value); }
+export function id(value) {
+  // JSON arrays such as [123] also stringify to "123". They are not scalar
+  // references and must not silently select an advertising object or source.
+  check(['number', 'string'].includes(typeof value) && /^[1-9]\d{0,9}$/.test(String(value)) && Number(value) <= 2147483647, 'object_id_invalid');
+  return Number(value);
+}
 export function date(value) {
   check(/^\d{4}-\d{2}-\d{2}$/.test(value), 'date_invalid');
   const parsed = new Date(`${value}T00:00:00Z`);

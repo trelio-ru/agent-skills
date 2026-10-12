@@ -56,6 +56,12 @@ object_id/названию. Положительные и stop-фразы ост
 параметры, bare expires unit и expansion не интерпретируются. Metadata snapshot
 проверяется повторно, CSV/error lines не читаются; bounds и partial coverage
 сохраняются по диагностическому контракту.
+Audience/goal writes следуют [управлению](platform-skills/vk-ads/references/audience-management.md):
+closed specs, complete parent snapshot, safe projection/opaque params digest,
+один dispatch и GET-only recovery. Source IDs/goal IDs не выбираются по имени;
+async deletion/403/partial list не превращаются в verified absence. Потерянный
+create ID не угадывается. Hosted VK entrypoint регистрирует все отдельные
+diagnostics/audience regression suites на каждой обязательной OS.
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.
