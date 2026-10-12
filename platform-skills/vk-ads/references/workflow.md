@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.1.1, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.2.0, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -45,7 +45,7 @@ approved обновление → read-back → approved очистка. Product
 | `catalog --name regions` / `interests` | справочники targeting |
 | `stats --entity plans --ids 123 --from 2026-01-01 --to 2026-01-31` | daily base, до 200 ID, период до 365 дней |
 | `audiences --id 123` / `audiences --limit 500` | состав источников и условия сегмента либо bounded список, без персональных идентификаторов |
-| `sources --type counters|users-lists --id 123` | метаданные exact источника; без id – bounded список |
+| `sources --type counters|users-lists|search-phrases --id 123` | метаданные exact источника; без id – bounded список |
 | `counter-goals --id 123` | цели exact Top@Mail.ru counter_id, не внутреннего ID источника |
 | `placements --group 123` | автоматическая карта выбранных pads по exact пакету и дереву площадок |
 | `optimization --group 123` | группа/родитель/пакет, проверка явной Top goal привязки, без предположения о наследовании |

@@ -60,7 +60,7 @@ Linux в этой версии не поддерживает credential storage 
 - `catalog --name packages|patterns|fields|regions|interests`
 - `stats --entity … --ids … --from YYYY-MM-DD --to YYYY-MM-DD`
 
-Аудитория и доставка: `audiences --id …`, `sources --type counters|users-lists`,
+Аудитория и доставка: `audiences --id …`, `sources --type counters|users-lists|search-phrases`,
 `counter-goals --id …`, `placements --group …`, `optimization --group …`.
 Перед первым использованием этих команд прочитай `reference --name diagnostics`.
 Runtime сам сопоставляет выбранные IDs со структурой сегмента, метаданными

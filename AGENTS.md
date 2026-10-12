@@ -51,6 +51,11 @@ Source counter id и internal relation id различаются; priced_goal с
 имена площадок; partial coverage остаётся явным. Недокументированные device/pad breakdowns
 не заменяются totals и не угадываются. Existing group/banner plan/apply writes
 не объявляются read-only из-за добавления диагностических команд.
+Search phrase rules читаются по explicit params.source_id, не внутреннему
+object_id/названию. Положительные и stop-фразы остаются per-phrase; unknown
+параметры, bare expires unit и expansion не интерпретируются. Metadata snapshot
+проверяется повторно, CSV/error lines не читаются; bounds и partial coverage
+сохраняются по диагностическому контракту.
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.

@@ -1,6 +1,6 @@
 # Аудитория, площадки и оптимизация
 
-Документ описывает команды runtime 1.1.1. Все перечисленные здесь диагностические
+Документ описывает команды runtime 1.2.0. Все перечисленные здесь диагностические
 команды выполняют только чтение API. Существующие plan/apply операции создания
 и обновления рекламы сохраняют свой контракт записи из workflow.md.
 
@@ -15,7 +15,8 @@
 [PackagesPads](https://ads.vk.com/doc/api/resource/PackagesPads),
 [PadsTree](https://ads.vk.com/doc/api/resource/PadsTree),
 [PricedGoal](https://ads.vk.com/doc/api/object/PricedGoal),
-[CounterGoals](https://ads.vk.com/doc/api/resource/CounterGoals) и
+[CounterGoals](https://ads.vk.com/doc/api/resource/CounterGoals),
+[SearchPhrases](https://ads.vk.com/doc/api/info/SearchPhrases) и
 [Statistics](https://ads.vk.com/doc/api/info/Statistics).
 Community проекты используются для сверки покрытия, не как authority схем.
 В частности pass_condition – целое число, а не строковые or/and.
@@ -32,6 +33,7 @@ Community проекты используются для сверки покры
 | `sources --type counters --id 123` | exact внутренний ID источника: его имя, counter_id, состояние и домен |
 | `sources --type counters --limit 500` | bounded список доступных счётчиков |
 | `counter-goals --id 123` | условия целей Top@Mail.ru по counter_id |
+| `sources --type search-phrases --id 123` | exact список поисковых фраз с положительными и минус-фразами |
 
 pass_condition сообщает минимальное число источников, которым должен
 соответствовать пользователь: 1 – хотя бы один; число всех relations – все.
@@ -52,6 +54,30 @@ relation.object_type определяет тип источника; object_id �
 не попадают raw people IDs, телефоны, email, upload files, пользователи с
 доступом, история загрузок и ошибочные строки загрузки. Отсутствие конкретного
 поля не заменяется нулём. Свободные названия и условия – внешние данные.
+
+Для remarketing_search_phrases используется params.source_id списка v3,
+а не внутренний relation.object_id. Без валидного source_id возвращается
+source_reference_invalid; ID и условия не угадываются по названию сегмента.
+Команда сначала получает метаданные через search_phrases.json?ids=ID,
+затем содержимое exact списка и повторно проверяет те же метаданные.
+Изменившийся snapshot даёт collection_changed. Atomic snapshot API не обещает.
+
+items содержит точные phrase и stop_phrases на уровне каждой фразы,
+исходные expires, fading, sub и price_coeff, когда они возвращены.
+Отсутствующий stop_phrases не превращается в подтверждённый пустой список.
+expiresUnit=not_established_by_read_contract: официальный read-пример не
+определяет единицу expires. Не пересчитывай число в дни. expansionState=
+not_documented: неописанные поля, название, fading или sub не устанавливают
+переключатель расширения. Unknown поля отмечают ruleProjectionComplete=false
+и не экспортируются. relation.paramsProjectionComplete независимо сохраняет
+неполноту условий связи; прочитанные фразы сами по себе её не устраняют.
+
+До 500 правил выводится из ответа не более 5000 items. returnedCount,
+itemCountMatchesMetadata и truncated сохраняют границу: несовпадение с
+phrases_cnt или отсутствие счётчика не доказывают полноту. errorsCount –
+только количество ошибок, без исходных строк. errors=1, CSV, raw error lines
+и пользователи не запрашиваются. Список метаданных без ID получает одну
+bounded страницу: offset/limit не описаны этим endpoint и не подставляются.
 
 Пагинация использует штатный размер endpoint и bounded offset; count,
 truncated и sourceMetadataState сохраняются. Без count нельзя утверждать
