@@ -33,6 +33,7 @@ test('audience describes source rules and resolves metadata without fetching peo
   assert.equal(result.relations.items[1].source.name, 'Nested segment');
   assert.equal(result.membership.includesPersonalIdentifiers, false); assert.equal(calls.length, 4);
   assert.ok(!JSON.stringify(result).includes('private')); assert.equal(Object.hasOwn(result.relations.items[0].params, 'people'), false);
+  assert.equal(result.relations.items[0].paramsProjectionComplete, false);
 });
 
 test('source projection rejects malformed selected metadata rather than exposing nested personal fields', async () => {

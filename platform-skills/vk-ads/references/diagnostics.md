@@ -43,6 +43,8 @@ relation.object_type определяет тип источника; object_id �
 явно отмечаются lookup_limit или type_not_supported. Permission/transport
 ошибка одного источника остаётся его sourceMetadataState и не означает,
 что источник пуст или отсутствует.
+Неописанные параметры источника не выводятся; paramsProjectionComplete=false
+явно отмечает неполное описание условия и запрещает считать его разобранным.
 
 Списки пользователей возвращают entries_count/ids_count/matched_ids_count,
 когда API их предоставил. users_count означает число людей с доступом к

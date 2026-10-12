@@ -16,7 +16,7 @@ export function project(value, fields) {
   check(value && typeof value === 'object' && !Array.isArray(value), 'response_invalid');
   return Object.fromEntries(fields.filter(k => Object.hasOwn(value, k)).map(k => {
     const v = value[k];
-    if (k === 'options') { check(v && typeof v === 'object' && !Array.isArray(v), 'response_invalid'); return [k, v]; }
+    if (k === 'options') { check(v === null || v && typeof v === 'object' && !Array.isArray(v), 'response_invalid'); return [k, v]; }
     if (k === 'priced_goal' && v !== null) return [k, project(v, ['source_id', 'name'])];
     check(v === null || typeof v === 'boolean' || typeof v === 'number' && Number.isFinite(v) ||
       typeof v === 'string' && v.length <= 4096 || Array.isArray(v) && v.length <= 5000 &&
@@ -26,7 +26,13 @@ export function project(value, fields) {
 }
 export function relationMetadata(value) {
   const result = project(value, ['id', 'object_id', 'object_type']);
-  if (value.params !== undefined) result.params = project(value.params, RELATION_PARAMS);
+  if (value.params !== undefined) {
+    result.params = value.params === null ? null : project(value.params, RELATION_PARAMS);
+    // Unsupported parameter keys must not silently turn a partial rule into a
+    // complete audience description. Preserve only the completeness flag, not
+    // unknown keys or values that can contain identifiers of real people.
+    result.paramsProjectionComplete = value.params === null || Object.keys(value.params).every(k => RELATION_PARAMS.includes(k));
+  }
   return result;
 }
 export function sourceDefinition(type) { check(Object.hasOwn(SOURCES, type), 'audience_source_type_unsupported'); return SOURCES[type]; }
@@ -135,7 +141,7 @@ export async function placements(api, groupId) {
   const group = await api.get('groups', id(groupId), ['id', 'package_id', 'targetings']);
   check(id(group.id) === id(groupId), 'readback_mismatch'); const pkg = await packageInfo(api, group.package_id);
   const selected = group.targetings?.pads;
-  check(selected === undefined || Array.isArray(selected) && selected.length <= 200 && new Set(selected.map(id)).size === selected.length, 'pads_invalid');
+  check(selected === undefined || selected === null || Array.isArray(selected) && selected.length <= 200 && new Set(selected.map(id)).size === selected.length, 'pads_invalid');
   const ids = selected?.map(id) || [], paths = new Map(); let treeComplete = String(pkg.pads_tree_id) === '0';
   if (pkg.pads_tree_id !== undefined && String(pkg.pads_tree_id) !== '0') {
     const page = await collection(api, '/api/v2/pads_trees.json', { _id: id(pkg.pads_tree_id), fields: 'id,tree' }, 500);
