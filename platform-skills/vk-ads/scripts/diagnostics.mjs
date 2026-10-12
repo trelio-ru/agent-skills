@@ -184,6 +184,7 @@ export async function placements(api, groupId) {
     note: 'Tree paths describe allowed placements; they do not identify where impressions actually occurred' };
 }
 const EVENT_TYPES = { 0: 'impressions', 1: 'clicks', 7: 'conversion', 30: 'app_install', 41: 'vk_community_event', 43: 'vk_mini_app_event', 51: 'lead_form', 1013: 'full_video_view', 1017: 'video_10_seconds' };
+const PAID_EVENTS = { 0: 'impressions_1000', 1: 'clicks', 7: 'conversion', 1013: 'full_video_view', 1017: 'video_10_seconds' };
 export async function optimization(api, groupId) {
   const group = await api.get('groups', id(groupId), ['id', 'ad_plan_id', 'package_id', 'objective', 'autobidding_mode', 'priced_goal']);
   check(id(group.id) === id(groupId), 'readback_mismatch'); const pkg = await packageInfo(api, group.package_id);
@@ -193,6 +194,13 @@ export async function optimization(api, groupId) {
   const result = { group: project(group, ['id', 'ad_plan_id', 'package_id', 'objective', 'autobidding_mode', 'priced_goal']),
     parent, package: project(pkg, ['id', 'name', 'objective', 'priced_event_type', 'paid_event_type']),
     optimizedEvent: Object.hasOwn(EVENT_TYPES, pkg.priced_event_type) ? EVENT_TYPES[pkg.priced_event_type] : 'unknown', bindingState: 'not_configured',
+    // Keep the first release's field as an explicitly scoped compatibility
+    // alias. Package event codes are not a decoded effective group strategy;
+    // paid_event_type describes billing and must not become optimization data.
+    optimizedEventScope: 'package_priced_event_type',
+    paidEvent: Object.hasOwn(PAID_EVENTS, pkg.paid_event_type) ? PAID_EVENTS[pkg.paid_event_type] : 'unknown',
+    strategy: { groupAutobiddingMode: group.autobidding_mode ?? null, parentAutobiddingMode: parent?.autobidding_mode ?? null,
+      effectiveGoalInterpretation: 'not_established_by_package_codes' },
     note: 'A configured goal is not evidence of a real registration or of the event firing on the website' };
   const goal = group.priced_goal;
   if (!Object.hasOwn(group, 'priced_goal')) { result.bindingState = 'group_goal_not_returned'; return result; }

@@ -86,6 +86,12 @@ description, paths и отдельные признаки metadataResolved/treeR
 родителя и пакета: objective, autobidding_mode, priced_goal,
 priced_event_type/paid_event_type. Имена известных типов событий берутся из
 официальной схемы; неизвестный код не трактуется как conversion.
+optimizedEvent имеет явный optimizedEventScope=package_priced_event_type:
+это характеристика пакета, не установленная effective стратегия группы.
+paidEvent отдельно описывает документированный код оплачиваемого события;
+неизвестное значение, включая недокументированный -1, остаётся unknown.
+strategy показывает реально прочитанные autobidding_mode группы/родителя.
+Эффективная цель не устанавливается только по тарифу или коду пакета.
 
 Пустой source_id/name группы даёт not_configured. Родительский priced_goal
 показывается отдельно; наследование и effective binding не угадываются.

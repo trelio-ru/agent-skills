@@ -125,12 +125,14 @@ test('missing package tree preserves independently readable pad names and explic
 
 test('absent group goal remains unknown even when the API returns an explicitly empty parent goal', async () => {
   const { api, calls } = fixture(url => {
-    if (url.pathname.endsWith('/ad_groups/1.json')) return { id: 1, ad_plan_id: 4, package_id: 2 };
+    if (url.pathname.endsWith('/ad_groups/1.json')) return { id: 1, ad_plan_id: 4, package_id: 2, autobidding_mode: 'max_goals' };
     if (url.pathname.endsWith('/ad_plans/4.json')) return { id: 4, priced_goal: { source_id: 0, name: '' } };
-    return { count: 1, items: [{ id: 2, priced_event_type: 1 }] };
+    return { count: 1, items: [{ id: 2, priced_event_type: 1, paid_event_type: -1 }] };
   });
   const result = await optimization(api, 1);
   assert.equal(result.bindingState, 'group_goal_not_returned'); assert.equal(result.optimizedEvent, 'clicks');
+  assert.equal(result.optimizedEventScope, 'package_priced_event_type'); assert.equal(result.paidEvent, 'unknown');
+  assert.equal(result.strategy.groupAutobiddingMode, 'max_goals'); assert.equal(result.strategy.effectiveGoalInterpretation, 'not_established_by_package_codes');
   assert.equal(Object.hasOwn(result.group, 'priced_goal'), false); assert.equal(result.parent.priced_goal.source_id, 0);
   assert.equal(calls.length, 3);
 });
