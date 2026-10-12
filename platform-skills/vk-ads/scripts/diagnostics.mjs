@@ -143,19 +143,35 @@ export async function placements(api, groupId) {
   const selected = group.targetings?.pads;
   check(selected === undefined || selected === null || Array.isArray(selected) && selected.length <= 200 && new Set(selected.map(id)).size === selected.length, 'pads_invalid');
   const ids = selected?.map(id) || [], paths = new Map(); let treeComplete = String(pkg.pads_tree_id) === '0';
+  let treeState = treeComplete ? 'flat' : 'not_declared';
   if (pkg.pads_tree_id !== undefined && String(pkg.pads_tree_id) !== '0') {
     const page = await collection(api, '/api/v2/pads_trees.json', { _id: id(pkg.pads_tree_id), fields: 'id,tree' }, 500);
     const found = page.items.filter(v => Number(v.id) === Number(pkg.pads_tree_id));
-    check(found.length === 1, 'pad_tree_not_resolved');
-    let tree = found[0].tree;
-    if (typeof tree === 'string') { try { tree = JSON.parse(tree); } catch { throw new Fault('pad_tree_invalid'); } }
-    for (const [key, value] of treePaths(tree)) paths.set(key, value); treeComplete = true;
+    check(found.length <= 1, 'pad_tree_not_resolved');
+    // Modern packages can reference a tree absent from this public dictionary.
+    // Keep that absence explicit, but still resolve the independent pad names;
+    // lack of hierarchy is not evidence that a placement is unknown or empty.
+    treeState = page.truncated ? 'not_returned_in_partial_dictionary' : 'not_returned';
+    if (found.length) {
+      let tree = found[0].tree;
+      if (typeof tree === 'string') { try { tree = JSON.parse(tree); } catch { throw new Fault('pad_tree_invalid'); } }
+      for (const [key, value] of treePaths(tree)) paths.set(key, value); treeComplete = true; treeState = 'resolved';
+    }
   }
   const page = ids.length ? await collection(api, '/api/v2/packages_pads.json',
     { _id__in: ids.join(','), fields: 'id,name,description,patterns' }, 1000) : { items: [], count: 0, truncated: false };
   const rows = ids.map(padId => {
     const matches = page.items.filter(v => Number(v.id) === padId);
-    return { id: padId, ...(matches.length === 1 ? project(matches[0], ['name', 'description', 'patterns']) : {}),
+    const metadata = matches.length === 1 ? project(matches[0], ['name', 'description']) : {};
+    // Pattern lists are optional and vary across packages. A new structured
+    // representation must not hide the available placement name or leak its
+    // unknown fields; expose only canonical numeric/string pattern references.
+    const patterns = matches[0]?.patterns;
+    if (typeof patterns === 'string' && patterns.length <= 4096 || Array.isArray(patterns) && patterns.length <= 5000 &&
+      patterns.every(v => typeof v === 'string' && v.length <= 4096 || typeof v === 'number' && Number.isFinite(v))) {
+      Object.assign(metadata, project({ patterns }, ['patterns']));
+    }
+    return { id: padId, ...metadata,
       paths: paths.get(padId) || [], metadataResolved: matches.length === 1, treeResolved: paths.has(padId) };
   });
   const defaults = pkg.options?.targetings?.pads?.defaults;
@@ -164,7 +180,7 @@ export async function placements(api, groupId) {
   const safeDefaults = Array.isArray(defaults) && defaults.length <= 200 && defaults.every(v => /^[1-9]\d{0,9}$/.test(String(v)) && Number(v) <= 2147483647) ? defaults.map(id) : null;
   return { groupId: id(groupId), packageId: id(pkg.id), treeId: pkg.pads_tree_id ?? null,
     selectedPads: rows, explicitSelection: ids.length > 0, dictionaryTruncated: page.truncated,
-    treeComplete, packageDefaults: safeDefaults,
+    treeComplete, treeState, packageDefaults: safeDefaults,
     note: 'Tree paths describe allowed placements; they do not identify where impressions actually occurred' };
 }
 const EVENT_TYPES = { 0: 'impressions', 1: 'clicks', 7: 'conversion', 30: 'app_install', 41: 'vk_community_event', 43: 'vk_mini_app_event', 51: 'lead_form', 1013: 'full_video_view', 1017: 'video_10_seconds' };
@@ -173,11 +189,13 @@ export async function optimization(api, groupId) {
   check(id(group.id) === id(groupId), 'readback_mismatch'); const pkg = await packageInfo(api, group.package_id);
   const parent = group.ad_plan_id ? project(await api.get('plans', id(group.ad_plan_id), ['id', 'objective', 'autobidding_mode', 'priced_goal']),
     ['id', 'objective', 'autobidding_mode', 'priced_goal']) : null;
+  if (parent) check(id(parent.id) === id(group.ad_plan_id), 'readback_mismatch');
   const result = { group: project(group, ['id', 'ad_plan_id', 'package_id', 'objective', 'autobidding_mode', 'priced_goal']),
     parent, package: project(pkg, ['id', 'name', 'objective', 'priced_event_type', 'paid_event_type']),
     optimizedEvent: Object.hasOwn(EVENT_TYPES, pkg.priced_event_type) ? EVENT_TYPES[pkg.priced_event_type] : 'unknown', bindingState: 'not_configured',
     note: 'A configured goal is not evidence of a real registration or of the event firing on the website' };
   const goal = group.priced_goal;
+  if (!Object.hasOwn(group, 'priced_goal')) { result.bindingState = 'group_goal_not_returned'; return result; }
   // Report the actual group and parent values separately. An empty group goal
   // does not prove inheritance, and a parent goal must not become a guessed
   // effective conversion binding in this diagnostic.

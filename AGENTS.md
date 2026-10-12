@@ -46,7 +46,9 @@ source metadata повторно проецируется без users/upload hi
 фактическую дистрибуцию. Missing count/неизвестные IDs остаются явными.
 Source counter id и internal relation id различаются; priced_goal сверяется
 с condition:substr, а не display name. Родительская цель не становится
-предполагаемой effective целью группы. Недокументированные device/pad breakdowns
+предполагаемой effective целью группы. Отсутствующее поле priced_goal – пробел
+чтения, не пустая настройка. Не возвращённое дерево не скрывает независимые
+имена площадок; partial coverage остаётся явным. Недокументированные device/pad breakdowns
 не заменяются totals и не угадываются. Existing group/banner plan/apply writes
 не объявляются read-only из-за добавления диагностических команд.
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
