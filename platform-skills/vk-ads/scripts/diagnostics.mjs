@@ -167,16 +167,35 @@ export async function searchPhrases(api, listId) {
   const count = countOf(before.phrases_cnt), contentCount = countOf(page.count);
   check(contentCount === null || contentCount >= page.items.length, 'response_invalid');
   const countMatches = count === null ? null : count === page.items.length;
+  // The source's JSON write schema defines list-level stop_phrases separately
+  // from the per-phrase read rows. When the same root field is returned, project
+  // it explicitly. Do not treat empty per-phrase arrays as evidence that
+  // the source's declared exclusions are absent. Read the exact known
+  // root field when returned; never derive its words from the list title.
+  const declaredStops = countOf(before.stop_phrases_cnt), hasGlobalStops = Object.hasOwn(page, 'stop_phrases');
+  const validGlobalStops = hasGlobalStops && Array.isArray(page.stop_phrases) && page.stop_phrases.length <= 5000 &&
+    page.stop_phrases.every(v => typeof v === 'string' && v.length <= 4096);
+  const globalStops = validGlobalStops ? page.stop_phrases.slice(0, 500) : null;
+  const globalCountMatches = validGlobalStops && declaredStops !== null ? declaredStops === page.stop_phrases.length : null;
+  const globalComplete = validGlobalStops && globalCountMatches === true && globalStops.length === page.stop_phrases.length;
+  const globalState = !hasGlobalStops ? 'not_returned' : !validGlobalStops ? 'representation_not_supported'
+    : globalStops.length < page.stop_phrases.length ? 'bounded' : globalCountMatches === false ? 'metadata_count_mismatch'
+    : globalComplete ? 'resolved' : 'returned_without_count';
   return { ...before, items, returnedCount: page.items.length,
-    truncated: page.items.length > items.length || countMatches !== true || contentCount !== null && contentCount !== page.items.length,
+    truncated: page.items.length > items.length || countMatches !== true || contentCount !== null && contentCount !== page.items.length ||
+      validGlobalStops && globalStops.length < page.stop_phrases.length,
     errorsCount: countOf(page.errors_cnt ?? before.errors_cnt),
     itemCountMatchesMetadata: countMatches,
-    ruleProjectionComplete: Object.keys(page).every(k => ['items', 'count', 'errors_cnt'].includes(k)) && items.every(v => v.ruleProjectionComplete),
+    ruleProjectionComplete: Object.keys(page).every(k => ['items', 'count', 'errors_cnt', 'stop_phrases'].includes(k)) &&
+      (!hasGlobalStops || validGlobalStops) && items.every(v => v.ruleProjectionComplete),
+    declaredStopPhraseCount: declaredStops,
+    globalStopPhrases: globalStops, globalStopPhrasesState: globalState,
+    globalStopPhraseCoverageComplete: globalComplete,
     // The official read example returns a bare expires number but does not
     // define its unit. Keep raw expires/fading/sub, without deriving days or
     // inventing an expansion switch from the name or substring.
     expiresUnit: 'not_established_by_read_contract', expansionState: 'not_documented',
-    stopPhraseScope: 'per_phrase_as_returned',
+    stopPhraseScope: 'per_phrase_as_returned', globalStopPhraseScope: 'source_list_as_returned',
     note: 'Phrase and stop_phrases are source rules, not personal audience members; source title does not establish these rules' };
 }
 export async function counterGoals(api, counterId) {

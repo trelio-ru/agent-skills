@@ -88,6 +88,9 @@ explicit params.source_id, закрытые поля метаданных/пра
 Неописанные поля отмечают неполноту без экспорта их названий/значений.
 CSV и errors=1 с исходными строками не читаются; максимум 500 правил вывода.
 Bare expires не получает выдуманную единицу, expansion не выводится из имени.
+Root stop_phrases читается лишь как bounded массив строк, отдельно от
+per-phrase stops и с проверкой declared count. Неописанные объекты не
+экспортируются; отсутствие/неполное покрытие не подменяются пустыми правилами.
 Audience/goal writes используют тот же scoped journal, persisted unknown до
 dispatch и единственный POST/DELETE. Полные неописанные params transiently
 хешируются: в plan/receipt идут только safe projection и opaque digest, без

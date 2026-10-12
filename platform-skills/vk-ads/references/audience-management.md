@@ -1,6 +1,6 @@
 # Управление аудиторией и явной целью
 
-Runtime 1.3.0. Перед первой такой записью прочитай `reference --name
+Runtime 1.3.1. Перед первой такой записью прочитай `reference --name
 audience-management` и общий workflow. Аргументы добавляются только к current
 signed localAction. Все операции используют прежние `plan --file`, scoped hash,
 `apply --plan --hash --operation`, encrypted receipts и GET-only reconcile.

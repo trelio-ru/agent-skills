@@ -241,3 +241,34 @@ test('search phrase contents enforce bounded output, valid phrase types and expl
     await assert.rejects(sources(invalid.api, 'search-phrases', 40), { code: 'response_invalid' });
   }
 });
+
+test('list-level exclusions are read independently of empty per-phrase arrays, without title inference or unknown field export', async () => {
+  const { api, calls } = fixture(url => url.pathname.endsWith('/search_phrases.json') ?
+    { items: [{ id: 40, name: 'Title must not set exclusions', phrases_cnt: 2, stop_phrases_cnt: 3 }] } :
+    { items: [{ phrase: 'synthetic cleaning', stop_phrases: [] }, { phrase: 'synthetic service', stop_phrases: [] }],
+      stop_phrases: ['synthetic jobs', 'synthetic salary', 'synthetic vacancy'], unknown: ['must-not-escape'] });
+  const result = await sources(api, 'search-phrases', 40);
+  assert.deepEqual(result.globalStopPhrases, ['synthetic jobs', 'synthetic salary', 'synthetic vacancy']);
+  assert.equal(result.globalStopPhrasesState, 'resolved'); assert.equal(result.globalStopPhraseCoverageComplete, true);
+  assert.equal(result.declaredStopPhraseCount, 3); assert.equal(result.stopPhraseScope, 'per_phrase_as_returned');
+  assert.equal(result.globalStopPhraseScope, 'source_list_as_returned'); assert.equal(result.ruleProjectionComplete, false);
+  assert.ok(!JSON.stringify(result).includes('must-not-escape')); assert.ok(calls.every(v => !v.searchParams.has('errors')));
+  assert.deepEqual(result.items[0].stop_phrases, []); assert.equal(result.truncated, false);
+});
+
+test('missing, unsupported and incomplete global exclusions keep exact blockers instead of becoming an empty source rule', async () => {
+  for (const [payload, expectedState] of [[{}, 'not_returned'], [{ stop_phrases: [] }, 'metadata_count_mismatch'],
+    [{ stop_phrases: [{ private: 'must-not-escape' }] }, 'representation_not_supported'],
+    [{ stop_phrases: ['synthetic jobs'] }, 'metadata_count_mismatch']]) {
+    const { api } = fixture(url => url.pathname.endsWith('/search_phrases.json') ?
+      { items: [{ id: 40, phrases_cnt: 1, stop_phrases_cnt: 2 }] } : { items: [{ phrase: 'synthetic', stop_phrases: [] }], ...payload });
+    const result = await sources(api, 'search-phrases', 40);
+    assert.equal(result.globalStopPhrasesState, expectedState); assert.equal(result.globalStopPhraseCoverageComplete, false);
+    assert.ok(!JSON.stringify(result).includes('must-not-escape'));
+    if (expectedState === 'not_returned') assert.equal(result.globalStopPhrases, null);
+  }
+  const bound = fixture(url => url.pathname.endsWith('/search_phrases.json') ? { items: [{ id: 40, phrases_cnt: 1, stop_phrases_cnt: 501 }] } :
+    { items: [{ phrase: 'synthetic' }], stop_phrases: Array.from({ length: 501 }, (_, i) => `synthetic ${i}`) });
+  const result = await sources(bound.api, 'search-phrases', 40);
+  assert.equal(result.globalStopPhrases.length, 500); assert.equal(result.globalStopPhrasesState, 'bounded'); assert.equal(result.truncated, true);
+});
