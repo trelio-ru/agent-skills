@@ -184,3 +184,60 @@ test('CLI exposes bounded diagnostic commands without raw paths, credential fiel
   assert.throws(() => argumentsOf(['audiences', '--file', '/private/data']), { code: 'command_invalid' });
   assert.throws(() => argumentsOf(['sources', '--fields', 'users']), { code: 'command_invalid' });
 });
+
+test('search phrase source resolves the explicit list reference and preserves positive/minus rules without title inference', async () => {
+  const { api, calls } = fixture(url => {
+    if (url.pathname.endsWith('/segments/10.json')) return { id: 10, name: 'Not the rules', relations_count: 1 };
+    if (url.pathname.endsWith('/relations.json')) return { items: [{ id: 5, object_id: 30, object_type: 'remarketing_search_phrases',
+      params: { source_id: 40, type: 'positive', undocumented_rule: 'must not escape' } }] };
+    if (url.pathname === '/api/v3/search_phrases.json') {
+      assert.equal(url.searchParams.get('ids'), '40'); assert.equal(url.searchParams.has('offset'), false);
+      return { items: [{ id: 40, name: 'Title claiming 99 phrases and expansion', phrases_cnt: 1, stop_phrases_cnt: 2, status: 'ready', users: ['private'] }] };
+    }
+    assert.equal(url.pathname, '/api/v3/search_phrases/40.json'); assert.equal(url.searchParams.has('errors'), false);
+    return { errors_cnt: 0, items: [{ phrase: 'synthetic cleaning', stop_phrases: ['synthetic jobs', 'synthetic salary'],
+      expires: 7200, fading: 'inverse', sub: 'synthetic cleaning', price_coeff: 1 }] };
+  });
+  const result = await audience(api, 10), relation = result.relations.items[0], source = relation.source;
+  assert.equal(relation.sourceMetadataState, 'resolved'); assert.equal(relation.paramsProjectionComplete, false);
+  assert.equal(relation.object_id, 30); assert.equal(source.id, 40);
+  assert.deepEqual(source.items[0].stop_phrases, ['synthetic jobs', 'synthetic salary']); assert.equal(source.items[0].phrase, 'synthetic cleaning');
+  assert.equal(source.items[0].expires, 7200); assert.equal(source.expiresUnit, 'not_established_by_read_contract');
+  assert.equal(source.expansionState, 'not_documented'); assert.equal(source.truncated, false); assert.equal(calls.length, 5);
+  assert.ok(!JSON.stringify(result).includes('private')); assert.ok(!JSON.stringify(result).includes('must not escape'));
+});
+
+test('search phrase projection retains unknown coverage and counts without exporting errors, users or arbitrary source properties', async () => {
+  const { api } = fixture(url => url.pathname.endsWith('/search_phrases.json') ? { items: [{ id: 40, name: 'Synthetic', phrases_cnt: 2 }] } :
+    { errors_cnt: 1, users: ['private'], error_lines: ['private'], items: [{ phrase: 'synthetic', stop_phrases: [], expires: 7, expansion: { identifiers: ['private'] }, source_line: 'private' }] });
+  const result = await sources(api, 'search-phrases', 40);
+  assert.equal(result.errorsCount, 1); assert.equal(result.ruleProjectionComplete, false); assert.equal(result.items[0].ruleProjectionComplete, false);
+  assert.equal(result.truncated, true); assert.equal(result.itemCountMatchesMetadata, false); assert.ok(!JSON.stringify(result).includes('private'));
+  const lists = await sources(api, 'search-phrases'); assert.equal(lists.truncated, true); assert.equal(lists.count, null);
+  const absent = fixture(() => ({ items: [] })); await assert.rejects(sources(absent.api, 'search-phrases', 40));
+  const wrong = fixture(() => ({ items: [{ id: 41 }] })); await assert.rejects(sources(wrong.api, 'search-phrases', 40), { code: 'search_phrase_list_not_resolved' });
+});
+
+test('search phrase reads refuse hybrid snapshots and mark missing references without guessing internal object ids', async () => {
+  let metadataReads = 0;
+  const changing = fixture(url => url.pathname.endsWith('/search_phrases.json') ?
+    { items: [{ id: 40, phrases_cnt: 1, updated: String(++metadataReads) }] } : { items: [{ phrase: 'synthetic' }] });
+  await assert.rejects(sources(changing.api, 'search-phrases', 40), { code: 'collection_changed' });
+  const { api, calls } = fixture(url => url.pathname.endsWith('/segments/10.json') ? { id: 10, relations_count: 1 } :
+    { items: [{ id: 5, object_id: 30, object_type: 'remarketing_search_phrases', params: { type: 'positive' } }] });
+  const result = await audience(api, 10);
+  assert.equal(result.relations.items[0].sourceMetadataState, 'source_reference_invalid'); assert.equal(calls.length, 2);
+});
+
+test('search phrase contents enforce bounded output, valid phrase types and explicit missing counts', async () => {
+  const bounded = fixture(url => url.pathname.endsWith('/search_phrases.json') ? { items: [{ id: 40, phrases_cnt: 501 }] } :
+    { items: Array.from({ length: 501 }, (_, i) => ({ phrase: `synthetic ${i}` })) });
+  const result = await sources(bounded.api, 'search-phrases', 40);
+  assert.equal(result.items.length, 500); assert.equal(result.returnedCount, 501); assert.equal(result.truncated, true);
+  const missingCount = fixture(url => url.pathname.endsWith('/search_phrases.json') ? { items: [{ id: 40 }] } : { items: [{ phrase: 'synthetic' }] });
+  assert.equal((await sources(missingCount.api, 'search-phrases', 40)).truncated, true);
+  for (const rule of [{ phrase: { email: 'private' } }, { phrase: 'synthetic', stop_phrases: [123] }]) {
+    const invalid = fixture(url => url.pathname.endsWith('/search_phrases.json') ? { items: [{ id: 40 }] } : { items: [rule] });
+    await assert.rejects(sources(invalid.api, 'search-phrases', 40), { code: 'response_invalid' });
+  }
+});

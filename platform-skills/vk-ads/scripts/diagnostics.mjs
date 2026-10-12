@@ -1,4 +1,4 @@
-import { check, id, Fault } from './core.mjs';
+import { check, id, Fault, stable } from './core.mjs';
 
 // Audience endpoints may expose account owners, upload history and original
 // user identifiers when fields are broadened. Request and project only public
@@ -10,6 +10,8 @@ const SOURCES = {
 export const SEGMENT_FIELDS = ['id', 'name', 'pass_condition', 'relations_count', 'campaign_ids', 'flags', 'created', 'updated'];
 export const RELATION_PARAMS = ['source_id', 'goal_id', 'left', 'right', 'type', 'event_id', 'max_count', 'reach', 'source_type', 'game'];
 const GOAL_FIELDS = ['id', 'name', 'condition', 'substr', 'goal_type', 'value'];
+const SEARCH_FIELDS = ['id', 'name', 'status', 'phrases_cnt', 'stop_phrases_cnt', 'errors_cnt', 'created', 'updated', 'category'];
+const PHRASE_FIELDS = ['phrase', 'stop_phrases', 'price_coeff', 'expires', 'fading', 'sub'];
 const PACKAGE_FIELDS = ['id', 'name', 'description', 'objective', 'pads_tree_id', 'options', 'priced_event_type', 'paid_event_type', 'status'];
 
 export function project(value, fields) {
@@ -84,17 +86,24 @@ export async function audience(api, segmentId) {
   const items = relations.items.map(relationMetadata);
   const cache = new Map();
   for (const item of items) {
-    const family = { remarketing_counter: 'counters', remarketing_users_list: 'users-lists', segment: 'segments' };
+    const family = { remarketing_counter: 'counters', remarketing_users_list: 'users-lists', segment: 'segments', remarketing_search_phrases: 'search-phrases' };
     const type = Object.hasOwn(family, item.object_type) ? family[item.object_type] : undefined;
     item.sourceMetadataState = 'type_not_supported';
-    if (!type || !/^[1-9]\d{0,9}$/.test(String(item.object_id)) || Number(item.object_id) > 2147483647) continue;
-    const sourceId = id(item.object_id);
-    const key = `${type}:${item.object_id}`;
+    if (!type) continue;
+    // Search phrase relations have an internal object_id distinct from the
+    // list addressed by the v3 API. Use the explicit source_id; an absent or
+    // malformed reference is not permission to guess from object_id/name.
+    const pointer = type === 'search-phrases' ? item.params?.source_id : item.object_id;
+    if (!/^[1-9]\d{0,9}$/.test(String(pointer)) || Number(pointer) > 2147483647) {
+      item.sourceMetadataState = 'source_reference_invalid'; continue;
+    }
+    const sourceId = id(pointer);
+    const key = `${type}:${sourceId}`;
     if (!cache.has(key)) {
       if (cache.size >= 20) { item.sourceMetadataState = 'lookup_limit'; continue; }
       try {
         const source = type === 'segments' ? project(await api.request('GET', `/api/v2/remarketing/segments/${id(item.object_id)}.json`,
-          { query: { fields: SEGMENT_FIELDS.join(',') } }), SEGMENT_FIELDS) : await sources(api, type, item.object_id);
+          { query: { fields: SEGMENT_FIELDS.join(',') } }), SEGMENT_FIELDS) : await sources(api, type, sourceId);
         check(id(source.id) === sourceId, 'readback_mismatch'); cache.set(key, { source, sourceMetadataState: 'resolved' });
       } catch (error) { cache.set(key, { sourceMetadataState: error.code || 'source_read_failed' }); }
     }
@@ -109,6 +118,7 @@ export async function audience(api, segmentId) {
       interpretation: 'Rules and source references only; not a list of people' } };
 }
 export async function sources(api, type, objectId, maximum = 500) {
+  if (type === 'search-phrases') return objectId === undefined ? searchPhraseLists(api, maximum) : searchPhrases(api, objectId);
   const definition = sourceDefinition(type), query = { fields: definition.fields.join(',') };
   if (objectId !== undefined) {
     const result = project(await api.request('GET', `${definition.route}/${id(objectId)}.json`, { query }), definition.fields);
@@ -116,6 +126,58 @@ export async function sources(api, type, objectId, maximum = 500) {
   }
   const page = await collection(api, `${definition.route}.json`, query, maximum);
   return { ...page, items: page.items.map(v => project(v, definition.fields)) };
+}
+
+// This v3 endpoint documents ids, not offset/limit pagination. Read only one
+// bounded metadata response; never send the campaign-list pagination scheme or
+// claim a complete inventory when the endpoint supplies no count.
+export async function searchPhraseLists(api, maximum = 500, listId) {
+  check(Number.isInteger(maximum) && maximum > 0 && maximum <= 5000, 'list_limit_invalid');
+  const query = listId === undefined ? {} : { ids: id(listId) };
+  const page = await api.request('GET', '/api/v3/search_phrases.json', { query });
+  check(Array.isArray(page.items) && page.items.length <= 5000, 'response_invalid');
+  const items = page.items.slice(0, maximum).map(v => project(v, SEARCH_FIELDS));
+  const seen = new Set();
+  for (const item of items) { const key = id(item.id); check(!seen.has(key), 'collection_changed'); seen.add(key); }
+  if (listId !== undefined) {
+    check(page.items.length === 1 && id(items[0]?.id) === id(listId), 'search_phrase_list_not_resolved');
+    return items[0];
+  }
+  const count = countOf(page.count);
+  check(count === null || count >= page.items.length, 'response_invalid');
+  return { items, count, truncated: page.items.length > maximum || count === null || items.length !== count };
+}
+
+export async function searchPhrases(api, listId) {
+  const sourceId = id(listId), before = await searchPhraseLists(api, 1, sourceId);
+  const page = await api.request('GET', `/api/v3/search_phrases/${sourceId}.json`);
+  check(Array.isArray(page.items) && page.items.length <= 5000, 'response_invalid');
+  const items = page.items.slice(0, 500).map(value => {
+    const result = project(value, PHRASE_FIELDS);
+    check(typeof result.phrase === 'string' && result.phrase.length > 0 &&
+      (result.stop_phrases === undefined || Array.isArray(result.stop_phrases) && result.stop_phrases.every(v => typeof v === 'string')), 'response_invalid');
+    // Neither unknown field names nor original error/file rows leave this
+    // projection. Their presence still prevents a claim of decoded full rules.
+    return { ...result, ruleProjectionComplete: Object.keys(value).every(k => PHRASE_FIELDS.includes(k)) };
+  });
+  // An edit between metadata and contents must not yield a convincing hybrid
+  // audience rule. This is an optimistic consistency check, not atomic API CAS.
+  const after = await searchPhraseLists(api, 1, sourceId);
+  check(stable(before) === stable(after), 'collection_changed');
+  const count = countOf(before.phrases_cnt), contentCount = countOf(page.count);
+  check(contentCount === null || contentCount >= page.items.length, 'response_invalid');
+  const countMatches = count === null ? null : count === page.items.length;
+  return { ...before, items, returnedCount: page.items.length,
+    truncated: page.items.length > items.length || countMatches !== true || contentCount !== null && contentCount !== page.items.length,
+    errorsCount: countOf(page.errors_cnt ?? before.errors_cnt),
+    itemCountMatchesMetadata: countMatches,
+    ruleProjectionComplete: Object.keys(page).every(k => ['items', 'count', 'errors_cnt'].includes(k)) && items.every(v => v.ruleProjectionComplete),
+    // The official read example returns a bare expires number but does not
+    // define its unit. Keep raw expires/fading/sub, without deriving days or
+    // inventing an expansion switch from the name or substring.
+    expiresUnit: 'not_established_by_read_contract', expansionState: 'not_documented',
+    stopPhraseScope: 'per_phrase_as_returned',
+    note: 'Phrase and stop_phrases are source rules, not personal audience members; source title does not establish these rules' };
 }
 export async function counterGoals(api, counterId) {
   const page = await collection(api, `/api/v2/remarketing/counters/${id(counterId)}/goals.json`,
