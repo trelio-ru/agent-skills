@@ -2311,40 +2311,40 @@ def reply_header(message: Message, name: str, *, required: bool = False) -> str:
 
 def reply_message_ids(message: Message, name: str, *, required: bool = False) -> list[str]:
     value = reply_header(message, name, required=required)
-    # RFC CFWS comments can surround identifiers. Strip balanced comments only,
-    # respecting escapes and a nesting cap; do not use a greedy regex that could
-    # turn malformed input into a different, apparently valid parent identity.
-    text, depth, escaped = [], 0, False
-    for char in value:
-        if depth:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == "(":
-                depth += 1
+    # Consume CFWS only between complete identifiers. Parentheses inside a
+    # no-fold domain literal are identity bytes, not comments; stripping them
+    # globally could alter the parent. Balanced comments have an explicit cap.
+    ids, position = [], 0
+    while position < len(value):
+        if value[position].isspace():
+            position += 1
+            continue
+        if value[position] == "(":
+            depth, escaped = 1, False
+            position += 1
+            while position < len(value) and depth:
+                char = value[position]
+                position += 1
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
                 if depth > 10:
                     raise MailboxError("reply_invalid_message_ids")
-            elif char == ")":
-                depth -= 1
-                if not depth:
-                    text.append(" ")
-        elif char == "(":
-            depth = 1
-        else:
-            text.append(char)
-    if depth:
-        raise MailboxError("reply_invalid_message_ids")
-    remaining = "".join(text).strip()
-    ids = []
-    while remaining:
-        match = MESSAGE_ID_PATTERN.match(remaining)
+            if depth:
+                raise MailboxError("reply_invalid_message_ids")
+            continue
+        match = MESSAGE_ID_PATTERN.match(value, position)
         if not match:
             raise MailboxError("reply_invalid_message_ids")
         ids.append(match.group())
         if len(ids) > MAX_REPLY_REFERENCES:
             raise MailboxError("reply_reference_limit")
-        remaining = remaining[match.end():].lstrip()
+        position = match.end()
     if required and not ids:
         raise MailboxError("reply_missing_message_id")
     return ids

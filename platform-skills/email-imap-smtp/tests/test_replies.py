@@ -125,6 +125,12 @@ class ReplyTests(unittest.TestCase):
                                  b'<root@example.com> (old (nested))\r\n\t<root@example.com> <parent@example.com>')
         self.assertEqual(self.preview()["plan"]["headers"]["References"], "<root@example.com> <parent@example.com>")
 
+    def test_domain_literal_parentheses_are_identity_bytes_not_comments(self):
+        self.raw = SOURCE.replace(b'<parent@example.com>', b'<parent@[a(b)c]>')
+        result = self.preview()
+        self.assertEqual(result["plan"]["headers"]["In-Reply-To"], "<parent@[a(b)c]>")
+        self.assertTrue(result["plan"]["headers"]["References"].endswith("<parent@[a(b)c]>"))
+
     def test_invalid_sources_are_rejected_without_smtp_or_source_text_in_error(self):
         cases = [
             SOURCE.replace(b'Message-ID: <parent@example.com>\r\n', b''),
