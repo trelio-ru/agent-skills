@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.0.8, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.1.0, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -44,6 +44,11 @@ approved обновление → read-back → approved очистка. Product
 | `catalog --name fields` | роли/ограничения полей |
 | `catalog --name regions` / `interests` | справочники targeting |
 | `stats --entity plans --ids 123 --from 2026-01-01 --to 2026-01-31` | daily base, до 200 ID, период до 365 дней |
+| `audiences --id 123` / `audiences --limit 500` | состав источников и условия сегмента либо bounded список, без персональных идентификаторов |
+| `sources --type counters|users-lists --id 123` | метаданные exact источника; без id – bounded список |
+| `counter-goals --id 123` | цели exact Top@Mail.ru counter_id, не внутреннего ID источника |
+| `placements --group 123` | автоматическая карта выбранных pads по exact пакету и дереву площадок |
+| `optimization --group 123` | группа/родитель/пакет, проверка явной Top goal привязки, без предположения о наследовании |
 | `plan --file /absolute/spec.json` | exact scoped hash; срок 30 минут |
 | `apply --plan UUID --hash HASH --operation stable-operation-id` | один dispatch, persisted receipt, read-back |
 | `receipt --operation stable-operation-id` | сохранённый результат без новой записи/API |
@@ -60,8 +65,13 @@ approved обновление → read-back → approved очистка. Product
 404/405 возвращаются как blocker. Чтение catalog не утверждает completeness.
 Поля `ad_groups`/`campaigns` – create-only children и не запрашиваются как
 обычные scalar fields. Баннеры существующей группы перечисляются отдельно.
-В v1 нет счетов, пополнений, платежей, refunds, автоматического бюджета,
+В этой версии нет счетов, пополнений, платежей, refunds, автоматического бюджета,
 audience CRUD, PII лидов, пикселей, генерации изображений или фонового scheduler.
+Аудиторная диагностика, ограничения статистики и текущая граница управления
+описаны в [контракте диагностики](diagnostics.md). Таргетинг с положительными/
+отрицательными ID сегментов (исключениями) и список pads уже можно менять через
+обычный groups update с полной сохранённой секцией targetings; banners update
+также является записью. Этот релиз не добавляет CRUD сегментов или загрузку людей.
 
 ## Спецификации
 

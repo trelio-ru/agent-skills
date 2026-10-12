@@ -40,6 +40,15 @@ Read-back mismatch сообщает только static field identity без с
 optimistic snapshot остаются exact. Только пустой targetings.segments и
 отсутствующий ключ segments эквивалентны после очистки фильтра; null, другие
 типы, непустой массив и отсутствующие остальные ключи не нормализуются.
+Диагностика аудиторий/размещений следует [контракту](platform-skills/vk-ads/references/diagnostics.md):
+source metadata повторно проецируется без users/upload history/идентификаторов
+людей; nested segments не обходятся рекурсивно. Карта pads не доказывает
+фактическую дистрибуцию. Missing count/неизвестные IDs остаются явными.
+Source counter id и internal relation id различаются; priced_goal сверяется
+с condition:substr, а не display name. Родительская цель не становится
+предполагаемой effective целью группы. Недокументированные device/pad breakdowns
+не заменяются totals и не угадываются. Existing group/banner plan/apply writes
+не объявляются read-only из-за добавления диагностических команд.
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.
