@@ -152,11 +152,34 @@ export class Api {
     // This remains one bounded page, not an exhaustive catalogue download.
     return this.request('GET', CATALOG[name]);
   }
-  async stats(entity, ids, from, to) {
+  async stats(entity, ids, from, to, options = {}) {
     check(['plans', 'groups', 'banners'].includes(entity) && ids.length > 0 && ids.length <= 200, 'statistics_ids_invalid');
+    check(new Set(ids.map(id)).size === ids.length && Object.keys(options).every(k =>
+      ['family', 'period', 'metrics', 'attribution', 'conversionType', 'breakdown'].includes(k)), 'statistics_options_invalid');
     date(from); date(to); check(from <= to && (Date.parse(to) - Date.parse(from)) / 86400000 < 365, 'statistics_dates_invalid');
-    return this.request('GET', `/api/v2/statistics/${this.resource(entity)}/day.json`,
-      { query: { id: ids.map(id).join(','), date_from: from, date_to: to, metrics: 'base' } });
+    // The official v2/v3 Statistics contract lists metric sets and goal types,
+    // but no placement/device breakdown argument. Reject that request locally
+    // rather than inventing dimensions or implying a zero report from totals.
+    check(!options.breakdown || options.breakdown === 'none', 'statistics_breakdown_not_documented');
+    const family = options.family || 'general', period = options.period || 'day';
+    check(['general', 'goals', 'inapp'].includes(family), 'statistics_family_invalid');
+    check(family === 'general' || entity !== 'groups' || this.auth.groups === 'ad_groups', 'statistics_resource_not_documented');
+    check(['day', 'summary'].includes(period) && (family === 'general' || period === 'day'), 'statistics_period_invalid');
+    const query = { id: ids.map(id).join(','), date_from: from, date_to: to };
+    if (options.attribution) { check(['conversion', 'impression'].includes(options.attribution), 'statistics_attribution_invalid'); query.attribution = options.attribution; }
+    if (family === 'general') {
+      check(!options.conversionType, 'statistics_options_invalid');
+      const metrics = (options.metrics || 'base').split(',');
+      check(metrics.length <= 14 && new Set(metrics).size === metrics.length && metrics.every(v =>
+        ['all', 'base', 'events', 'video', 'carousel', 'ad_offers', 'uniques', 'uniques_video', 'tps', 'romi', 'playable', 'custom_event', 'social_network'].includes(v)), 'statistics_metrics_invalid');
+      query.metrics = metrics.join(',');
+    } else {
+      check(!options.metrics, 'statistics_options_invalid');
+      const kinds = (options.conversionType || 'postclick').split(',');
+      check(kinds.length <= 3 && new Set(kinds).size === kinds.length && kinds.every(v => ['postclick', 'postview', 'total'].includes(v)), 'statistics_conversion_type_invalid');
+      query.conversion_type = kinds.join(',');
+    }
+    return this.request('GET', `/api/v2/statistics/${family === 'general' ? '' : `${family}/`}${this.resource(entity)}/${period}.json`, { query });
   }
 }
 export async function boundedResponse(response, maximum = 2 * 1024 * 1024) {

@@ -74,6 +74,16 @@ secure_storage_unsupported, plaintext fallback отсутствует. Защи�
 Публичный package не содержит application identity, credentials/real fixtures,
 телеметрии или third-party hosted service; только свой клиент фиксированного VK API.
 
+Audience diagnostics запрашивает и повторно проецирует закрытые списки полей:
+метаданные сегмента, структурные params источников, имена/типы/агрегированные
+размеры списков, состояние счётчика и условия цели. users, owners, история
+загрузок, raw identifiers, upload errors с содержимым строки и файлы не выводятся.
+Вложенные сегменты не раскрываются рекурсивно; максимум 20 exact source lookups,
+500 relations, 250 страниц и 5000 объектов. Missing count не доказывает полноту.
+Дерево площадок ограничено 5000 узлами/12 уровнями. API/CLI response byte bounds
+остаются прежними. Новые diagnostic commands выполняют только GET; они не
+активируют рекламу, не устанавливают пиксель и не отправляют идентификаторы людей.
+
 Классификация: marketing campaign management/performance; runtime не читает
 банковские счета, balance/billing, платежи, зарплаты, налоговые/инвестиционные
 сведения. Данные расхода рекламы – метрики согласованного размещения. Добавление

@@ -9,6 +9,7 @@ import { Store } from './storage.mjs';
 import { Api } from './api.mjs';
 import { input } from './form.mjs';
 import { Operations } from './operations.mjs';
+import { segments, audience, sources, counterGoals, placements, optimization } from './diagnostics.mjs';
 
 export function argumentsOf(args) {
   const [command, ...rest] = args; const flags = {};
@@ -18,7 +19,9 @@ export function argumentsOf(args) {
   }
   const allowed = { doctor: [], configure: [], reference: ['name'], 'setup-status': ['operation', 'wait-ms'],
     list: ['entity', 'parent', 'limit', 'status'], get: ['entity', 'id', 'fields'], catalog: ['name'],
-    stats: ['entity', 'ids', 'from', 'to'], plan: ['file'], apply: ['plan', 'hash', 'operation'],
+    stats: ['entity', 'ids', 'from', 'to', 'family', 'period', 'metrics', 'attribution', 'conversion-type', 'breakdown'],
+    audiences: ['id', 'limit'], sources: ['type', 'id', 'limit'], 'counter-goals': ['id'], placements: ['group'], optimization: ['group'],
+    plan: ['file'], apply: ['plan', 'hash', 'operation'],
     receipt: ['operation'], reconcile: ['operation'], 'accept-unknown': ['operation', 'confirm'], reset: ['confirm'], 'recover-lock': ['confirm'], '__configure-worker': ['operation'],
     '__trelio_accounts_import': [] }[command];
   check(allowed && Object.keys(flags).every(k => allowed.includes(k)), 'command_invalid');
@@ -77,7 +80,7 @@ export async function main(args = process.argv.slice(2), env = process.env) {
   if (command === '__trelio_accounts_import') return { schemaVersion: 1, accounts: [] };
   const owner = identity(env);
   if (command === 'reference') {
-    check(['workflow', 'security'].includes(flags.name), 'reference_invalid');
+    check(['workflow', 'security', 'diagnostics'].includes(flags.name), 'reference_invalid');
     return { markdown: await fs.readFile(new URL(`../references/${flags.name}.md`, import.meta.url), 'utf8') };
   }
   const store = new Store(configRoot(env), owner);
@@ -156,7 +159,14 @@ export async function main(args = process.argv.slice(2), env = process.env) {
       return api.get(flags.entity, flags.id, fields);
     }
     if (command === 'catalog') return api.catalog(flags.name);
-    if (command === 'stats') return api.stats(flags.entity, (flags.ids || '').split(','), flags.from, flags.to);
+    if (command === 'audiences') return flags.id ? audience(api, flags.id) : segments(api, Number(flags.limit || 500));
+    if (command === 'sources') return sources(api, flags.type, flags.id, Number(flags.limit || 500));
+    if (command === 'counter-goals') return counterGoals(api, flags.id);
+    if (command === 'placements') return placements(api, flags.group);
+    if (command === 'optimization') return optimization(api, flags.group);
+    if (command === 'stats') return api.stats(flags.entity, (flags.ids || '').split(','), flags.from, flags.to,
+      { family: flags.family, period: flags.period, metrics: flags.metrics, attribution: flags.attribution,
+        conversionType: flags['conversion-type'], breakdown: flags.breakdown });
     if (command === 'plan') {
       check(path.isAbsolute(flags.file || ''), 'plan_file_invalid'); const stat = await fs.lstat(flags.file);
       check(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 200000, 'plan_file_invalid');
