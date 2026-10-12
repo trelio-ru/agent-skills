@@ -108,6 +108,35 @@ test('optimization resolves Top counter id separately from internal source id an
   assert.ok(!JSON.stringify(result).includes('private')); assert.equal(calls.length, 5);
 });
 
+test('missing package tree preserves independently readable pad names and explicit incomplete coverage', async () => {
+  const { api } = fixture(url => {
+    if (url.pathname.endsWith('/ad_groups/1.json')) return { id: 1, package_id: 2, targetings: { pads: [11] } };
+    if (url.pathname.endsWith('/packages.json')) return { count: 1, items: [{ id: 2, pads_tree_id: 3 }] };
+    if (url.pathname.endsWith('/pads_trees.json')) return { count: 0, items: [] };
+    if (url.pathname.endsWith('/packages_pads.json')) return { count: 1, items: [{ id: 11, name: 'Synthetic placement', description: 'Feed', patterns: [{ private: 'must not escape' }] }] };
+    throw new Error('Unexpected route');
+  });
+  const result = await placements(api, 1);
+  assert.equal(result.treeState, 'not_returned'); assert.equal(result.treeComplete, false);
+  assert.equal(result.selectedPads[0].name, 'Synthetic placement'); assert.equal(result.selectedPads[0].metadataResolved, true);
+  assert.deepEqual(result.selectedPads[0].paths, []); assert.equal(result.selectedPads[0].treeResolved, false);
+  assert.equal(Object.hasOwn(result.selectedPads[0], 'patterns'), false); assert.ok(!JSON.stringify(result).includes('private'));
+});
+
+test('absent group goal remains unknown even when the API returns an explicitly empty parent goal', async () => {
+  const { api, calls } = fixture(url => {
+    if (url.pathname.endsWith('/ad_groups/1.json')) return { id: 1, ad_plan_id: 4, package_id: 2, autobidding_mode: 'max_goals' };
+    if (url.pathname.endsWith('/ad_plans/4.json')) return { id: 4, priced_goal: { source_id: 0, name: '' } };
+    return { count: 1, items: [{ id: 2, priced_event_type: 1, paid_event_type: -1 }] };
+  });
+  const result = await optimization(api, 1);
+  assert.equal(result.bindingState, 'group_goal_not_returned'); assert.equal(result.optimizedEvent, 'clicks');
+  assert.equal(result.optimizedEventScope, 'package_priced_event_type'); assert.equal(result.paidEvent, 'unknown');
+  assert.equal(result.strategy.groupAutobiddingMode, 'max_goals'); assert.equal(result.strategy.effectiveGoalInterpretation, 'not_established_by_package_codes');
+  assert.equal(Object.hasOwn(result.group, 'priced_goal'), false); assert.equal(result.parent.priced_goal.source_id, 0);
+  assert.equal(calls.length, 3);
+});
+
 test('empty group goal never inherits an unverified parent binding or becomes a registration claim', async () => {
   const { api, calls } = fixture(url => {
     if (url.pathname.endsWith('/ad_groups/1.json')) return { id: 1, ad_plan_id: 4, package_id: 2, priced_goal: { source_id: 0, name: '' } };

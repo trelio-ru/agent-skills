@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.1.0, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.1.1, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
