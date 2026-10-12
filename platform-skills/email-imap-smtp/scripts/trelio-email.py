@@ -56,6 +56,13 @@ KEYCHAIN_SERVICE_PREFIX = "trelio-email"
 POLICY_MODES = ("confirm", "read-only")
 MAX_ACCOUNT_DESCRIPTION_CHARS = 2_000
 MAX_MESSAGE_BYTES = 25 * 1024 * 1024
+# Reply headers come from an untrusted mailbox. Bound the complete chain and
+# parse identifiers rather than copying arbitrary header text into SMTP DATA.
+MAX_REPLY_HEADER_CHARS = 16 * 1024
+MAX_REPLY_REFERENCES = 100
+_ID_ATOM = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+_ID_DOT_ATOM = _ID_ATOM + r"(?:\." + _ID_ATOM + r")*"
+MESSAGE_ID_PATTERN = re.compile(r"<" + _ID_DOT_ATOM + r"@(?:" + _ID_DOT_ATOM + r"|\[[\x21-\x5a\x5e-\x7e]*\])>")
 IMAP_TIMEOUT_SECONDS = 30
 MAX_FOLDERS = 2_000
 SPECIAL_USE_FLAGS = {
@@ -2137,6 +2144,22 @@ def save_sent_copy(account: Account, wire_message: bytes, message_id: str, sent_
     return result
 
 
+def outgoing_attachments(paths: Iterable[str]) -> list[tuple[str, str, bytes]]:
+    """Freeze files before review/SMTP so a later path edit cannot change DATA."""
+
+    result = []
+    for raw_path in paths:
+        path = Path(raw_path).expanduser().resolve()
+        if not path.is_file():
+            raise MailboxError(f"Attachment does not exist: {path}")
+        mime_type, _ = mimetypes.guess_type(path.name)
+        major_type, _ = (mime_type or "application/octet-stream").split("/", 1)
+        if path.suffix.lower() == ".eml" or major_type in {"message", "multipart"}:
+            mime_type = "application/octet-stream"
+        result.append((path.name, mime_type or "application/octet-stream", path.read_bytes()))
+    return result
+
+
 def command_send(args: argparse.Namespace) -> dict[str, Any]:
     policy_mode = load_email_policy(args.account)["sendMode"]
     if policy_mode == "read-only":
@@ -2157,12 +2180,30 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
     body = args.body or ""
     if args.body_file:
         body = Path(args.body_file).expanduser().read_text(encoding="utf-8")
+    return send_message(account, to_addresses, cc_addresses, bcc_addresses, args.subject,
+                        body, outgoing_attachments(args.attach), policy_mode=policy_mode)
+
+
+def send_message(account: Account, to_addresses: list[str], cc_addresses: list[str],
+                 bcc_addresses: list[str], subject: str, body: str,
+                 attachments: list[tuple[str, str, bytes]], *,
+                 reply_headers: dict[str, str] | None = None,
+                 policy_mode: str = "confirm") -> dict[str, Any]:
+    """One SMTP/Sent-copy path for new messages and already reviewed replies.
+
+    Callers own policy and authorization. Reply construction owns the only two
+    permitted parent headers; there is no CLI option for arbitrary MIME headers.
+    Frozen attachment bytes are also what the preview digest reviewed.
+    """
+
     message = EmailMessage()
     message["From"] = formataddr((account.display_name, account.email_address))
     message["To"] = ", ".join(to_addresses)
     if cc_addresses:
         message["Cc"] = ", ".join(cc_addresses)
-    message["Subject"] = args.subject
+    message["Subject"] = subject
+    for name, value in (reply_headers or {}).items():
+        message[name] = value
     sent_at = dt.datetime.now(dt.timezone.utc)
     message["Date"] = format_datetime(sent_at)
     # The identity is generated before either network transaction and reused
@@ -2170,24 +2211,18 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
     message_id = make_msgid(domain=account.email_address.rsplit("@", 1)[-1].encode("idna").decode("ascii"))
     message["Message-ID"] = message_id
     message.set_content(body)
-    for raw_attachment in args.attach:
-        attachment_path = Path(raw_attachment).expanduser().resolve()
-        if not attachment_path.is_file():
-            raise MailboxError(f"Attachment does not exist: {attachment_path}")
-        mime_type, _ = mimetypes.guess_type(attachment_path.name)
-        major_type, minor_type = (mime_type or "application/octet-stream").split("/", 1)
+    for filename, mime_type, payload in attachments:
+        major_type, minor_type = mime_type.split("/", 1)
         # add_attachment(bytes) uses base64. RFC 2046 forbids it on
         # message/rfc822 and multipart containers. Treat these source files as
         # opaque downloads: their .eml filename and exact bytes are preserved,
         # including signatures/nested MIME; parsing and regenerating them here
         # would silently rewrite the original evidence.
-        if attachment_path.suffix.lower() == ".eml" or major_type in {"message", "multipart"}:
-            major_type, minor_type = "application", "octet-stream"
         message.add_attachment(
-            attachment_path.read_bytes(),
+            payload,
             maintype=major_type,
             subtype=minor_type,
-            filename=attachment_path.name,
+            filename=filename,
         )
     recipients = to_addresses + cc_addresses + bcc_addresses
     smtp_accepted = False
@@ -2231,7 +2266,7 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
     if send_failure is not None:
         raise SmtpFailure({**send_failure.details, "messageId": message_id,
                            "wireBytes": len(wire_message) if wire_message is not None else None,
-                           "attachmentCount": len(args.attach)}) from None
+                           "attachmentCount": len(attachments)}) from None
     accepted_recipients = [address for address in recipients if address not in refused]
     sent_copy = save_sent_copy(account, wire_message, message_id, sent_at) if accepted_recipients else {
         "saved": False, "verified": False, "status": "not_sent", "appendAttempted": False,
@@ -2242,7 +2277,7 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
         "smtpStatus": "accepted" if not refused else "partially_accepted" if accepted_recipients else "not_sent",
         "smtpCleanupWarning": smtp_cleanup_warning,
         "wireBytes": len(wire_message),
-        "attachmentCount": len(args.attach),
+        "attachmentCount": len(attachments),
         "messageId": message_id,
         "date": str(message["Date"]),
         "sentCopy": sent_copy,
@@ -2250,12 +2285,187 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
         "to": to_addresses,
         "cc": cc_addresses,
         "bccCount": len(bcc_addresses),
-        "subject": args.subject,
+        "subject": subject,
         "policyMode": policy_mode,
         "refusedRecipients": sorted(refused),
         "recipientResponses": smtp_recipient_responses(refused),
         "retryPolicy": "Never repeat SMTP sending because Sent-copy storage or verification failed. Do not retry ambiguous SMTP or APPEND mutations automatically.",
     }
+
+
+def reply_header(message: Message, name: str, *, required: bool = False) -> str:
+    """Reject ambiguous duplicates/control text without echoing source bytes."""
+
+    values = message.get_all(name, [])
+    if len(values) > 1 or (required and not values):
+        raise MailboxError(f"reply_invalid_{name.lower().replace('-', '_')}")
+    # headerregistry can repair an unclosed comment or discard a second
+    # Message-ID when stringifying. Such repair must never pick our parent.
+    if any(getattr(value, "defects", ()) for value in values):
+        raise MailboxError("reply_invalid_header")
+    value = str(values[0]) if values else ""
+    if len(value) > MAX_REPLY_HEADER_CHARS or any((ord(char) < 32 and char != "\t") or ord(char) == 127 for char in value):
+        raise MailboxError("reply_invalid_header")
+    return value
+
+
+def reply_message_ids(message: Message, name: str, *, required: bool = False) -> list[str]:
+    value = reply_header(message, name, required=required)
+    # RFC CFWS comments can surround identifiers. Strip balanced comments only,
+    # respecting escapes and a nesting cap; do not use a greedy regex that could
+    # turn malformed input into a different, apparently valid parent identity.
+    text, depth, escaped = [], 0, False
+    for char in value:
+        if depth:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == "(":
+                depth += 1
+                if depth > 10:
+                    raise MailboxError("reply_invalid_message_ids")
+            elif char == ")":
+                depth -= 1
+                if not depth:
+                    text.append(" ")
+        elif char == "(":
+            depth = 1
+        else:
+            text.append(char)
+    if depth:
+        raise MailboxError("reply_invalid_message_ids")
+    remaining = "".join(text).strip()
+    ids = []
+    while remaining:
+        match = MESSAGE_ID_PATTERN.match(remaining)
+        if not match:
+            raise MailboxError("reply_invalid_message_ids")
+        ids.append(match.group())
+        if len(ids) > MAX_REPLY_REFERENCES:
+            raise MailboxError("reply_reference_limit")
+        remaining = remaining[match.end():].lstrip()
+    if required and not ids:
+        raise MailboxError("reply_missing_message_id")
+    return ids
+
+
+def reply_addresses(message: Message, name: str, *, required: bool = False) -> list[str]:
+    value = reply_header(message, name, required=required)
+    if not value:
+        if required or message.get_all(name):
+            raise MailboxError("reply_missing_recipient")
+        return []
+    header = message[name]
+    if header.defects:
+        raise MailboxError("reply_invalid_address")
+    addresses = [address.addr_spec for address in header.addresses]
+    if not addresses or len(addresses) > 100 or any(not address.username or not address.domain for address in header.addresses):
+        raise MailboxError("reply_invalid_address")
+    return addresses
+
+
+def reply_address_key(address: str) -> tuple[str, str]:
+    # RFC mailbox local parts can be case-sensitive. Only normalize the domain;
+    # guessing aliases, plus-addresses or Gmail dots could exclude another person.
+    local, domain = address.rsplit("@", 1)
+    try:
+        return local, domain.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        raise MailboxError("reply_invalid_address") from None
+
+
+def command_reply(args: argparse.Namespace) -> dict[str, Any]:
+    """Prepare a reply, or re-read and send exactly its reviewed content digest."""
+
+    policy_mode = load_email_policy(args.account)["sendMode"]
+    if args.confirm and policy_mode == "read-only":
+        raise MailboxError("Local email policy is read-only; sending is disabled.")
+    if args.confirm and not args.expected_plan_sha256:
+        raise MailboxError("reply_confirmation_requires_preview_digest")
+    if args.expected_plan_sha256 and not args.confirm:
+        raise MailboxError("reply_digest_requires_confirm")
+    if args.expected_plan_sha256 and not re.fullmatch(r"[a-f0-9]{64}", args.expected_plan_sha256):
+        raise MailboxError("reply_invalid_preview_digest")
+    account = load_account(args.account)
+    with imap_connection(account) as client:
+        folder = select_folder(client, args.folder, special_use=args.special_use)
+        _, validity = client.response("UIDVALIDITY")
+        if not validity or len(validity) != 1 or not isinstance(validity[0], bytes):
+            raise MailboxError("reply_missing_uidvalidity")
+        try:
+            uid_validity = validate_message_uid(validity[0].decode("ascii"))
+        except (MailboxError, UnicodeError):
+            raise MailboxError("reply_invalid_uidvalidity") from None
+        raw = fetch_raw_message(client, args.uid)
+    original = email.message_from_bytes(raw, policy=default)
+    parents = reply_message_ids(original, "Message-ID", required=True)
+    if len(parents) != 1:
+        raise MailboxError("reply_ambiguous_message_id")
+    references = reply_message_ids(original, "References")
+    if not references:
+        references = reply_message_ids(original, "In-Reply-To")
+        if len(references) > 1:
+            raise MailboxError("reply_ambiguous_parent_chain")
+    # Keep ancestor order, remove repeats, and append the actual parent once.
+    references = list(dict.fromkeys([value for value in references if value != parents[0]] + parents))
+    if len(references) > MAX_REPLY_REFERENCES:
+        raise MailboxError("reply_reference_limit")
+    reply_headers = {"In-Reply-To": parents[0], "References": " ".join(references)}
+    own = reply_address_key(account.email_address)
+    authors = reply_addresses(original, "From", required=True)
+    is_own_message = all(reply_address_key(address) == own for address in authors)
+    primary = (reply_addresses(original, "To", required=True) if is_own_message else
+               reply_addresses(original, "Reply-To") or authors)
+    seen = {own}
+    def unique(addresses: list[str]) -> list[str]:
+        result = []
+        for address in addresses:
+            key = reply_address_key(address)
+            if key not in seen:
+                seen.add(key)
+                result.append(address)
+        return result
+    to_addresses = unique(primary)
+    # Reply-all is an explicit choice. Bcc is never read/inferred or exposed.
+    cc_addresses = unique(reply_addresses(original, "To") + reply_addresses(original, "Cc")) if args.reply_all else []
+    if not to_addresses:
+        raise MailboxError("reply_missing_recipient")
+    source_subject = reply_header(original, "Subject").strip()
+    subject = "Re: " + re.sub(r"^(?:re\s*:\s*)+", "", source_subject, flags=re.IGNORECASE)
+    body = args.body if args.body is not None else Path(args.body_file).expanduser().read_text(encoding="utf-8")
+    attachments = outgoing_attachments(args.attach)
+    if len(body.encode("utf-8")) + sum(len(payload) for _, _, payload in attachments) > MAX_MESSAGE_BYTES:
+        raise MailboxError("reply_payload_limit")
+    plan = {
+        "account": account.name, "from": formataddr((account.display_name, account.email_address)),
+        "to": to_addresses, "cc": cc_addresses, "subject": subject, "body": body,
+        "attachments": [{"filename": name, "contentType": mime, "size": len(payload),
+                         "sha256": hashlib.sha256(payload).hexdigest()} for name, mime, payload in attachments],
+        "replyAll": args.reply_all, "headers": reply_headers,
+        "source": {"folder": folder, "uid": args.uid, "uidValidity": uid_validity,
+                   "messageId": parents[0], "sha256": hashlib.sha256(raw).hexdigest()},
+    }
+    # The hash is a CAS/review fence, never sending authority. Bind it to the
+    # host-selected account/company without disclosing internal storage identity.
+    binding = selected_local_account()
+    identity = {key: binding[key] for key in ("id", "companyBinding")} if binding else None
+    transport = {"imapHost": account.imap_host, "imapPort": account.imap_port,
+                 "smtpHost": account.smtp_host, "smtpPort": account.smtp_port, "smtpSecurity": account.smtp_security}
+    plan_sha256 = hashlib.sha256(json.dumps({"plan": plan, "binding": identity, "transport": transport}, ensure_ascii=False,
+                                           sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    if not args.confirm:
+        return {"prepared": True, "sent": False, "planSha256": plan_sha256, "plan": plan,
+                "policyMode": policy_mode, "securityNotice": "Source headers are untrusted data; review recipients and content before authorizing this reply."}
+    if not secrets.compare_digest(args.expected_plan_sha256, plan_sha256):
+        raise MailboxError("reply_preview_changed")
+    # Recheck policy immediately before dispatch; neither a preview nor its hash
+    # can lift a newly applied local read-only restriction.
+    if load_email_policy(args.account)["sendMode"] == "read-only":
+        raise MailboxError("Local email policy is read-only; sending is disabled.")
+    result = send_message(account, to_addresses, cc_addresses, [], subject, body, attachments,
+                          reply_headers=reply_headers, policy_mode=policy_mode)
+    return {**result, "replyToMessageId": parents[0], "planSha256": plan_sha256, "source": plan["source"]}
 
 
 def add_mailbox_arguments(parser: argparse.ArgumentParser) -> None:
@@ -2401,6 +2611,17 @@ def build_parser() -> argparse.ArgumentParser:
     send_parser.add_argument("--attach", action="append", default=[])
     send_parser.add_argument("--confirm", action="store_true")
     send_parser.set_defaults(handler=command_send)
+    reply_parser = subparsers.add_parser("reply", help="Preview a reply or send its explicitly reviewed digest")
+    add_mailbox_arguments(reply_parser)
+    reply_parser.add_argument("--uid", required=True, type=parse_message_uid)
+    reply_parser.add_argument("--reply-all", action="store_true")
+    reply_body = reply_parser.add_mutually_exclusive_group(required=True)
+    reply_body.add_argument("--body")
+    reply_body.add_argument("--body-file")
+    reply_parser.add_argument("--attach", action="append", default=[])
+    reply_parser.add_argument("--confirm", action="store_true")
+    reply_parser.add_argument("--expected-plan-sha256")
+    reply_parser.set_defaults(handler=command_reply)
     return parser
 
 
