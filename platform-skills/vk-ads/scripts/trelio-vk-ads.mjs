@@ -80,7 +80,7 @@ export async function main(args = process.argv.slice(2), env = process.env) {
   if (command === '__trelio_accounts_import') return { schemaVersion: 1, accounts: [] };
   const owner = identity(env);
   if (command === 'reference') {
-    check(['workflow', 'security', 'diagnostics'].includes(flags.name), 'reference_invalid');
+    check(['workflow', 'security', 'diagnostics', 'audience-management'].includes(flags.name), 'reference_invalid');
     return { markdown: await fs.readFile(new URL(`../references/${flags.name}.md`, import.meta.url), 'utf8') };
   }
   const store = new Store(configRoot(env), owner);

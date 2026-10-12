@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { check, data, hash, stable, scope, id, Fault } from './core.mjs';
 import { safeApiErrorDetails } from './api.mjs';
+import { managed, prepareManaged, preflightManaged, dispatchManaged, managedObjectId, managedResponse, verifyManaged } from './audience-operations.mjs';
 
 const COMMON = ['name', 'status', 'date_start', 'date_end', 'budget_limit', 'budget_limit_day', 'autobidding_mode'];
 const FIELDS = { plans: [...COMMON, 'objective', 'enable_utm', 'enable_offline_goals'],
@@ -51,6 +52,7 @@ export async function media(file, width, height) {
   return { file, width, height, sha256: hash(bytes), size: bytes.length, type, bytes };
 }
 export async function prepare(api, specification) {
+  if (specification && managed(specification)) return prepareManaged(api, specification);
   check(specification && ['create', 'update', 'url', 'upload'].includes(specification.kind), 'operation_invalid');
   const op = structuredClone(specification);
   if (op.kind === 'url') {
@@ -146,6 +148,7 @@ export class Operations {
       check(!Object.values(state.operations).some(r => ['unknown', 'written_unverified'].includes(r.phase)), 'unresolved_write_blocks_new_mutation');
       check(Object.keys(state.operations).length < 1000, 'receipt_store_full');
       const { op } = plan;
+      if (managed(op)) await preflightManaged(this.api, op);
       if (op.kind === 'update') {
         const current = await this.api.get(op.entity, op.id, ['id', ...Object.keys(op.payload)]);
         check(snapshot(current) === snapshot(op.before), 'object_changed_replan_required');
@@ -159,14 +162,15 @@ export class Operations {
       state.operations[operationId] = receipt; await this.store.write(state);
       try {
         let response;
-        if (op.kind === 'url') response = await this.api.request('POST', '/api/v2/urls.json', { body: { url: op.url } });
+        if (managed(op)) response = await dispatchManaged(this.api, op);
+        else if (op.kind === 'url') response = await this.api.request('POST', '/api/v2/urls.json', { body: { url: op.url } });
         else if (op.kind === 'upload') {
           const body = new FormData(); body.set('file', new Blob([upload.bytes], { type: upload.type }), `creative.${upload.type === 'video/mp4' ? 'mp4' : upload.type.split('/')[1]}`);
           body.set('data', JSON.stringify({ width: upload.width, height: upload.height }));
           response = await this.api.request('POST', `/api/v2/content/${upload.type === 'video/mp4' ? 'video' : 'static'}.json`, { body });
         } else response = await this.api.request('POST', this.api.endpoint(op.entity, op.kind === 'update' ? op.id : null), { body: op.payload });
-        receipt.objectId = op.kind === 'update' ? op.id : id(response.id);
-        receipt.response = response; receipt.phase = 'written_unverified'; await this.store.write(state);
+        receipt.objectId = managed(op) ? managedObjectId(op, response) : op.kind === 'update' ? op.id : id(response.id);
+        receipt.response = managed(op) ? managedResponse(op, response) : response; receipt.phase = 'written_unverified'; await this.store.write(state);
         await this.verify(plan, receipt); await this.store.write(state); return receipt;
       } catch (error) {
         // Once dispatched, even a crash before response persistence leaves an
@@ -184,6 +188,9 @@ export class Operations {
   }
   async verify(plan, receipt) {
     const { op } = plan;
+    if (managed(op)) {
+      receipt.observed = await verifyManaged(this.api, op, receipt.objectId); receipt.phase = 'verified'; return;
+    }
     if (op.kind === 'upload') { receipt.phase = 'uploaded_unverified'; receipt.nextAction = 'Verify this content ID through the created banner before activation'; return; }
     if (op.kind === 'url') {
       const current = await this.api.request('GET', `/api/v2/urls/${receipt.objectId}.json`);
@@ -262,7 +269,8 @@ export class Operations {
         const plan = state.plans[receipt.planId];
         // A lost create response has no trustworthy object ID. Do not guess a
         // similarly named object or turn absence in a list into permission to retry.
-        if (!receipt.objectId && plan.op.kind !== 'update') return { ...receipt, nextAction: 'Find the result in VK manually; do not repeat this creation' };
+        const knownTarget = plan.op.kind === 'update' || managed(plan.op) && (plan.op.kind === 'goal' || plan.op.action !== 'create');
+        if (!receipt.objectId && !knownTarget) return { ...receipt, nextAction: 'Find the result in VK manually; do not repeat this creation' };
         receipt.objectId ||= plan.op.id;
         try { await this.verify(plan, receipt); delete receipt.error; delete receipt.errorDetails; } catch (error) {
           receipt.error = error instanceof Fault ? error.code : 'readback_failed';

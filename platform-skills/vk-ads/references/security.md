@@ -88,6 +88,14 @@ explicit params.source_id, закрытые поля метаданных/пра
 Неописанные поля отмечают неполноту без экспорта их названий/значений.
 CSV и errors=1 с исходными строками не читаются; максимум 500 правил вывода.
 Bare expires не получает выдуманную единицу, expansion не выводится из имени.
+Audience/goal writes используют тот же scoped journal, persisted unknown до
+dispatch и единственный POST/DELETE. Полные неописанные params transiently
+хешируются: в plan/receipt идут только safe projection и opaque digest, без
+неизвестных ключей/значений или people. Mutation response повторно проецируется
+до assigned ID. Recovery known targets выполняет GET; create с потерянным ID
+не угадывается. 404 exact ранее прочитанного объекта и deleted отличаются от
+403/неполной выборки/async pending. Source, target и goal snapshots сохраняют
+read-back/optimistic guards; параметры auth, ACL и storage не меняются.
 
 Классификация: marketing campaign management/performance; runtime не читает
 банковские счета, balance/billing, платежи, зарплаты, налоговые/инвестиционные
