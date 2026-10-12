@@ -56,6 +56,10 @@ object_id/названию. Положительные и stop-фразы ост
 параметры, bare expires unit и expansion не интерпретируются. Metadata snapshot
 проверяется повторно, CSV/error lines не читаются; bounds и partial coverage
 сохраняются по диагностическому контракту.
+Общие stop_phrases источника и per-phrase stops не смешиваются; root поле
+проецируется отдельно и сверяется с declared count. Empty per-phrase rows
+не доказывают отсутствие общих исключений; missing/unknown/bounded coverage
+сохраняет явное состояние без title inference или нового угаданного endpoint.
 Audience/goal writes следуют [управлению](platform-skills/vk-ads/references/audience-management.md):
 closed specs, complete parent snapshot, safe projection/opaque params digest,
 один dispatch и GET-only recovery. Source IDs/goal IDs не выбираются по имени;

@@ -1,6 +1,6 @@
 # Аудитория, площадки и оптимизация
 
-Документ описывает команды runtime 1.3.0. Все перечисленные здесь диагностические
+Документ описывает команды runtime 1.3.1. Все перечисленные здесь диагностические
 команды выполняют только чтение API. Существующие plan/apply операции создания
 и обновления рекламы сохраняют свой контракт записи из workflow.md.
 
@@ -78,6 +78,23 @@ phrases_cnt или отсутствие счётчика не доказываю
 только количество ошибок, без исходных строк. errors=1, CSV, raw error lines
 и пользователи не запрашиваются. Список метаданных без ID получает одну
 bounded страницу: offset/limit не описаны этим endpoint и не подставляются.
+
+Общие исключения источника читаются отдельно: globalStopPhrases содержит
+только строковый root stop_phrases exact ответа того же GET, если поле вернулось.
+Это поле объявлено JSON-схемой списка для записи; read-пример показывает лишь
+per-phrase stops, поэтому отсутствие root поля не заменяется догадкой о новом
+endpoint или словами из имени. Пустые stop_phrases у всех items не доказывают,
+что общих исключений нет. declaredStopPhraseCount сохраняет метаданные списка.
+
+globalStopPhrasesState=resolved и globalStopPhraseCoverageComplete=true требуют
+точного совпадения с объявленным количеством и отсутствия обрезания.
+not_returned даёт null; representation_not_supported скрывает неописанные
+объекты/идентификаторы; metadata_count_mismatch, returned_without_count и bounded
+оставляют покрытие неполным. До 500 общих строк из массива до 5000;
+bounded устанавливает truncated=true. globalStopPhraseScope=source_list_as_returned
+отделён от stopPhraseScope=per_phrase_as_returned. Обычный truncated описывает
+границу коллекций; сам по себе он не означает разобранные все правила.
+Unknown поля и relation.paramsProjectionComplete остаются независимыми.
 
 Пагинация использует штатный размер endpoint и bounded offset; count,
 truncated и sourceMetadataState сохраняются. Без count нельзя утверждать
