@@ -17,6 +17,8 @@ account/folder/UID, адресаты и MIME-заголовки вычисляю
 
 Plan содержит From, To/Cc, тему, полный текст, filename/type/size/SHA-256 файлов,
 два заголовка цепочки и источник folder/UID/UIDVALIDITY/Message-ID/SHA-256.
+Сохранённая [подпись ящика](email-signatures.md) включена в полный `plan.body`;
+её effective hash и выбранное отключение для одного ответа входят в plan.
 После проверки точных адресатов, текста и файлов отправка повторяет исходную
 команду с `--confirm --expected-plan-sha256 HASH`. Прямая команда оператора
 отправить уже указанный точный ответ не требует второго согласования: агент
@@ -24,7 +26,7 @@ Plan содержит From, To/Cc, тему, полный текст, filename/t
 
 Runtime заново читает оригинал через EXAMINE/BODY.PEEK, текст и файлы. Digest
 связывает полный plan, host-selected account/company binding и transport settings.
-Изменение любого из них даёт `reply_preview_changed` до SMTP. UIDVALIDITY
+Изменение любого из них, включая подпись, даёт `reply_preview_changed` до SMTP. UIDVALIDITY
 предотвращает принятие нового объекта после повторного использования UID.
 Файлы загружаются один раз для текущего вызова; MIME использует эти же bytes.
 Digest – fence проверенного содержимого, не разрешение и не idempotency key.

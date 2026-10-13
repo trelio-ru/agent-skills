@@ -55,6 +55,7 @@ POLICIES_DIR = CONFIG_DIR / "policies"
 KEYCHAIN_SERVICE_PREFIX = "trelio-email"
 POLICY_MODES = ("confirm", "read-only")
 MAX_ACCOUNT_DESCRIPTION_CHARS = 2_000
+MAX_SIGNATURE_BYTES = 16 * 1024
 MAX_MESSAGE_BYTES = 25 * 1024 * 1024
 # Reply headers come from an untrusted mailbox. Bound the complete chain and
 # parse identifiers rather than copying arbitrary header text into SMTP DATA.
@@ -101,9 +102,10 @@ EMAIL_SETUP_PROVIDERS = {
     },
 }
 MAX_PASSWORD_CHARS = 2_048
-# URL encoding expands Unicode to as many as twelve bytes per character. Allow
-# the bounded description and password together, while retaining a hard cap.
-MAX_PROMPT_BODY_BYTES = 64 * 1024
+# URL encoding expands Unicode to as many as twelve bytes per character.
+# Include a full 16 KiB signature with the existing description/password and
+# transport fields; individual validators still impose their tighter limits.
+MAX_PROMPT_BODY_BYTES = 128 * 1024
 BROWSER_LOAD_TIMEOUT_SECONDS = 8
 BROWSER_INPUT_TIMEOUT_SECONDS = 5 * 60
 _NATIVE_RUNTIME = None
@@ -261,6 +263,9 @@ class Account:
     # An optional local routing hint, separate from the sender's display name.
     # Keeping a default preserves existing account constructors and TOML files.
     description: str = ""
+    # Provider-specific message content stays with the configured mailbox,
+    # not in the host's shared account comment or company working rules.
+    signature: str = ""
 
 
 def ensure_private_directory(path: Path) -> None:
@@ -355,6 +360,53 @@ def normalize_account_description(value: Any) -> str:
     return normalized
 
 
+def normalize_signature(value: Any) -> str:
+    """Validate persisted and submitted plain text through the same boundary.
+
+    A signature is outgoing content, never HTML, a header, or sending authority.
+    Normalize line endings for portable TOML/MIME and bound UTF-8 bytes; errors
+    omit personal contact details even when a hand-edited configuration is bad.
+    """
+
+    if not isinstance(value, str):
+        raise MailboxError("Email signature must be text.")
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    if any((ord(char) < 32 and char not in "\n\t") or ord(char) == 127 for char in normalized):
+        raise MailboxError("Email signature contains unsupported control characters.")
+    normalized = normalized.strip()
+    try:
+        encoded = normalized.encode("utf-8")
+    except UnicodeError:
+        raise MailboxError("Email signature must be valid UTF-8 text.") from None
+    if len(encoded) > MAX_SIGNATURE_BYTES:
+        raise MailboxError(f"Email signature must contain at most {MAX_SIGNATURE_BYTES} UTF-8 bytes.")
+    return normalized
+
+
+def signature_sha256(signature: str) -> str:
+    return hashlib.sha256(normalize_signature(signature).encode("utf-8")).hexdigest()
+
+
+def body_with_signature(body: str, signature: str) -> str:
+    """Append one exact signature block without changing an unsigned body.
+
+    Recognize only the complete current signature as a separate final paragraph.
+    A name/phone mentioned in prose or quoted history must not suppress the
+    actual closing. Returning an already signed body also keeps reviewed text
+    safe when the caller uses a preview as input to a later invocation.
+    """
+
+    signature = normalize_signature(signature)
+    if not signature:
+        return body
+    comparable = body.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
+    if comparable == signature or comparable.endswith("\n\n" + signature):
+        return body
+    if not body.strip():
+        return signature
+    return body.rstrip("\r\n") + "\n\n" + signature
+
+
 def load_raw_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
         return {"accounts": {}}
@@ -381,6 +433,7 @@ def write_raw_config(data: dict[str, Any]) -> None:
             "email",
             "display_name",
             "description",
+            "signature",
             "username",
             "imap_host",
             "imap_port",
@@ -389,11 +442,11 @@ def write_raw_config(data: dict[str, Any]) -> None:
             "smtp_security",
             "credential_store",
         ):
-            # Legacy rows lack this optional field. Every configuration rewrite
-            # must retain descriptions for all accounts, including unrelated ones.
+            # Older rows lack the optional content fields. Every rewrite must
+            # retain descriptions/signatures for all accounts, not just its target.
             value = (
-                normalize_account_description(item.get(key, ""))
-                if key == "description" else item[key]
+                normalize_account_description(item.get(key, "")) if key == "description"
+                else normalize_signature(item.get(key, "")) if key == "signature" else item[key]
             )
             lines.append(f"{key} = {value if isinstance(value, int) else toml_string(str(value))}")
         lines.append("")
@@ -422,6 +475,7 @@ def load_account(name: str) -> Account:
             smtp_security=str(raw.get("smtp_security", "ssl")).strip().lower(),
             credential_store=str(raw.get("credential_store", "file")).strip().lower(),
             description=normalize_account_description(raw.get("description", "")),
+            signature=normalize_signature(raw.get("signature", "")),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise MailboxError(f'Account "{normalized_name}" has an invalid configuration: {error}') from error
@@ -520,6 +574,9 @@ def browser_password_page(
             field("display_name", "Имя отправителя (необязательно)", account.display_name, extra='maxlength="256"'),
             f'<label>Описание ящика (необязательно, без секретов)<textarea name="description" '
             f'maxlength="{MAX_ACCOUNT_DESCRIPTION_CHARS}" rows="3" {"readonly" if selected_local_account() else ""}>{html.escape(account.description)}</textarea></label>',
+            f'<label>Подпись в конце письма (необязательно)<textarea name="signature" '
+            f'maxlength="{MAX_SIGNATURE_BYTES}" rows="4">{html.escape(account.signature)}</textarea></label>'
+            '<small>Обычный текст. Добавляется в новые письма и ответы из этого ящика. Пустое поле убирает подпись.</small>',
             field("imap_host", "Сервер IMAP", account.imap_host, extra='maxlength="253" required'),
             field("imap_port", "Порт IMAP TLS", account.imap_port, "number", 'min="1" max="65535" required'),
             field("smtp_host", "Сервер SMTP", account.smtp_host, extra='maxlength="253" required'),
@@ -1042,6 +1099,7 @@ def configure_account(name: str, fields: dict[str, str]) -> Account:
     return Account(
         name=name, email_address=values["email"], username=values["username"] or values["email"],
         display_name=values["display_name"], description=normalize_account_description(fields.get("description", "")),
+        signature=normalize_signature(fields.get("signature", "")),
         imap_host=values["imap_host"], imap_port=ports["imap_port"],
         smtp_host=values["smtp_host"], smtp_port=ports["smtp_port"],
         smtp_security=security, credential_store="file",
@@ -1061,6 +1119,7 @@ class BrowserConfigureSession(BrowserPasswordSession):
             name=name, email_address=str(existing.get("email", "")),
             username=str(existing.get("username", "")), display_name=str(existing.get("display_name", "")),
             description=self.initial_description, imap_host=str(existing.get("imap_host", "")),
+            signature=normalize_signature(existing.get("signature", "")),
             imap_port=existing.get("imap_port", 993), smtp_host=str(existing.get("smtp_host", "")),
             smtp_port=existing.get("smtp_port", 587 if existing.get("smtp_security") == "starttls" else 465),
             smtp_security=str(existing.get("smtp_security", "ssl")), credential_store="file",
@@ -1070,12 +1129,15 @@ class BrowserConfigureSession(BrowserPasswordSession):
         return browser_password_page(self.account, configure=True, remaining_seconds=self.deadline - time.monotonic())
 
     def accept_fields(self, fields: dict[str, str]) -> None:
-        allowed = {"email", "username", "display_name", "description", "imap_host", "imap_port",
+        allowed = {"email", "username", "display_name", "description", "signature", "imap_host", "imap_port",
                    "smtp_host", "smtp_port", "smtp_security", "password"}
         if set(fields) - allowed or "email" not in fields or "password" not in fields:
             raise MailboxError("Проверьте поля формы.")
         candidate = configure_account(self.account.name, {
             **fields, "description": fields.get("description", "").strip() or self.initial_description,
+            # Older callers omit the additive field; the current browser sends
+            # an explicit empty value when the operator intentionally clears it.
+            "signature": fields.get("signature", self.account.signature),
         })
         raw_password = fields["password"]
         if not raw_password or len(raw_password) > MAX_PASSWORD_CHARS:
@@ -1316,6 +1378,9 @@ def prompt_configuration_terminal(args: argparse.Namespace, name: str, existing:
         smtp_security=smtp_security,
         credential_store="file",
         description=description,
+        # The opt-in single-line terminal flow must not erase a multiline
+        # signature on reconnect. Its own signature command edits it separately.
+        signature=normalize_signature(existing.get("signature", "")),
     )
     if candidate.smtp_security not in {"ssl", "starttls"}:
         raise MailboxError("SMTP security must be ssl or starttls.")
@@ -1366,6 +1431,7 @@ def command_configure(args: argparse.Namespace) -> dict[str, Any]:
         "email": candidate.email_address,
         "display_name": candidate.display_name,
         "description": candidate.description,
+        "signature": candidate.signature,
         "username": candidate.username,
         "imap_host": candidate.imap_host,
         "imap_port": candidate.imap_port,
@@ -2170,6 +2236,18 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm:
         raise MailboxError("Sending requires --confirm for this invocation.")
     account = load_account(args.account)
+    signature = "" if args.no_signature else account.signature
+    if signature:
+        # signature show is a credential-free review of the default closing.
+        # Bind dispatch to that exact setting so another local edit cannot add
+        # unreviewed content after the operator approved the complete letter.
+        if not args.expected_signature_sha256:
+            raise MailboxError("signature_review_required; read signature show before sending")
+    if args.expected_signature_sha256 is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", args.expected_signature_sha256):
+            raise MailboxError("invalid_signature_sha256")
+        if not secrets.compare_digest(args.expected_signature_sha256, signature_sha256(account.signature)):
+            raise MailboxError("signature_changed; review the current signature before sending")
     to_addresses = split_addresses(args.to)
     cc_addresses = split_addresses(args.cc)
     bcc_addresses = split_addresses(args.bcc)
@@ -2180,6 +2258,7 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
     body = args.body or ""
     if args.body_file:
         body = Path(args.body_file).expanduser().read_text(encoding="utf-8")
+    body = body_with_signature(body, signature)
     return send_message(account, to_addresses, cc_addresses, bcc_addresses, args.subject,
                         body, outgoing_attachments(args.attach), policy_mode=policy_mode)
 
@@ -2434,6 +2513,8 @@ def command_reply(args: argparse.Namespace) -> dict[str, Any]:
     source_subject = reply_header(original, "Subject").strip()
     subject = "Re: " + re.sub(r"^(?:re\s*:\s*)+", "", source_subject, flags=re.IGNORECASE)
     body = args.body if args.body is not None else Path(args.body_file).expanduser().read_text(encoding="utf-8")
+    signature = "" if args.no_signature else account.signature
+    body = body_with_signature(body, signature)
     attachments = outgoing_attachments(args.attach)
     if len(body.encode("utf-8")) + sum(len(payload) for _, _, payload in attachments) > MAX_MESSAGE_BYTES:
         raise MailboxError("reply_payload_limit")
@@ -2443,6 +2524,9 @@ def command_reply(args: argparse.Namespace) -> dict[str, Any]:
         "attachments": [{"filename": name, "contentType": mime, "size": len(payload),
                          "sha256": hashlib.sha256(payload).hexdigest()} for name, mime, payload in attachments],
         "replyAll": args.reply_all, "headers": reply_headers,
+        # The final body alone is insufficient if it already contained the
+        # closing: explicitly bind the setting and opt-out into the reply fence.
+        "signature": {"enabled": not args.no_signature, "sha256": signature_sha256(signature)},
         "source": {"folder": folder, "uid": args.uid, "uidValidity": uid_validity,
                    "messageId": parents[0], "sha256": hashlib.sha256(raw).hexdigest()},
     }
@@ -2514,6 +2598,45 @@ def command_description(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_signature(args: argparse.Namespace) -> dict[str, Any]:
+    """Change one configured mailbox's content without credentials or network.
+
+    Keep other accounts, identity, credential locators and read-only policy
+    intact. An absent account is an error rather than implicit configuration.
+    The host's selected mailbox remains the only target of the usual CLI route.
+    """
+
+    name = normalize_account_name(args.account)
+    data = load_raw_config()
+    account = data.get("accounts", {}).get(name)
+    if not isinstance(account, dict):
+        raise MailboxError(f'Account "{name}" is not configured. Run configure first.')
+    signature = normalize_signature(account.get("signature", ""))
+    if args.signature_command != "show":
+        value = ""
+        if args.signature_command == "set":
+            if args.text_file is not None:
+                # Bound the file before decoding; don't materialize an arbitrary
+                # large source merely to reject it after reading. Read bytes to
+                # apply the same portable line-ending normalization as --text.
+                with Path(args.text_file).expanduser().open("rb") as source:
+                    raw = source.read(MAX_SIGNATURE_BYTES + 1)
+                if len(raw) > MAX_SIGNATURE_BYTES:
+                    raise MailboxError("Email signature file exceeds the UTF-8 byte limit.")
+                try:
+                    value = raw.decode("utf-8")
+                except UnicodeError:
+                    raise MailboxError("Email signature file must be UTF-8 text.") from None
+            else:
+                value = args.text
+        signature = normalize_signature(value)
+        account["signature"] = signature
+        write_raw_config(data)
+    binding = selected_local_account()
+    return {"account": binding["id"] if binding else name, "signature": signature,
+            "signatureSha256": signature_sha256(signature)}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Trelio IMAP/SMTP mailbox CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2540,6 +2663,16 @@ def build_parser() -> argparse.ArgumentParser:
     configure_parser.set_defaults(handler=command_configure)
     accounts_parser = subparsers.add_parser("accounts", help="List configured accounts without secrets")
     accounts_parser.set_defaults(handler=command_accounts)
+    signature_parser = subparsers.add_parser("signature", help="Read, set or clear the mailbox's plain-text closing")
+    signature_subparsers = signature_parser.add_subparsers(dest="signature_command", required=True)
+    for action in ("show", "set", "clear"):
+        action_parser = signature_subparsers.add_parser(action)
+        action_parser.add_argument("--account", required=True)
+        if action == "set":
+            text = action_parser.add_mutually_exclusive_group(required=True)
+            text.add_argument("--text", help="Plain-text signature; no secrets")
+            text.add_argument("--text-file", help="UTF-8 signature file")
+        action_parser.set_defaults(handler=command_signature)
     description_parser = subparsers.add_parser(
         "description", help="Read, set or clear one account's local mailbox purpose without reconnecting"
     )
@@ -2610,6 +2743,8 @@ def build_parser() -> argparse.ArgumentParser:
     send_parser.add_argument("--body-file")
     send_parser.add_argument("--attach", action="append", default=[])
     send_parser.add_argument("--confirm", action="store_true")
+    send_parser.add_argument("--no-signature", action="store_true", help="Omit the saved signature for this letter")
+    send_parser.add_argument("--expected-signature-sha256", help="Exact signatureSha256 from signature show")
     send_parser.set_defaults(handler=command_send)
     reply_parser = subparsers.add_parser("reply", help="Preview a reply or send its explicitly reviewed digest")
     add_mailbox_arguments(reply_parser)
@@ -2621,6 +2756,7 @@ def build_parser() -> argparse.ArgumentParser:
     reply_parser.add_argument("--attach", action="append", default=[])
     reply_parser.add_argument("--confirm", action="store_true")
     reply_parser.add_argument("--expected-plan-sha256")
+    reply_parser.add_argument("--no-signature", action="store_true", help="Omit the saved signature for this reply")
     reply_parser.set_defaults(handler=command_reply)
     return parser
 
@@ -2671,7 +2807,7 @@ def main(*, _owned: bool = False) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        if not _owned and args.command not in {"accounts", "description", "policy"}:
+        if not _owned and args.command not in {"accounts", "description", "signature", "policy"}:
             terminal = args.command == "configure" and (
                 args.terminal_prompts or args.password_input == "terminal")
             if terminal and (not sys.stdin.isatty() or not sys.stderr.isatty()):
