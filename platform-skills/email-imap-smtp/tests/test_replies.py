@@ -73,6 +73,31 @@ class ReplyTests(unittest.TestCase):
         self.smtp.sendmail.assert_not_called()
         MODULE.save_sent_copy.assert_not_called()
 
+    def test_signature_is_in_preview_and_mime_once_and_changes_invalidate_review(self):
+        self.account = MODULE.replace(self.account, signature="С уважением,\nТестовый отправитель")
+        MODULE.load_account.return_value = self.account
+        preview = self.preview()
+        self.assertEqual(preview["plan"]["body"], "Ответ\n\n" + self.account.signature)
+        self.send(preview)
+        message = email.message_from_bytes(self.smtp.sendmail.call_args.args[2], policy=MODULE.default)
+        self.assertEqual(message.get_content().replace("\r\n", "\n"), preview["plan"]["body"] + "\n")
+        self.smtp.sendmail.reset_mock()
+        for signature in ("Новая подпись", ""):
+            MODULE.load_account.return_value = MODULE.replace(self.account, signature=signature)
+            with self.assertRaisesRegex(MODULE.MailboxError, "reply_preview_changed"):
+                self.send(preview)
+        self.smtp.sendmail.assert_not_called()
+
+    def test_signature_opt_out_is_reviewed_and_does_not_remove_existing_user_text(self):
+        self.account = MODULE.replace(self.account, signature="С уважением,\nТестовый отправитель")
+        MODULE.load_account.return_value = self.account
+        preview = self.preview("--no-signature")
+        self.assertEqual(preview["plan"]["body"], "Ответ")
+        with self.assertRaisesRegex(MODULE.MailboxError, "reply_preview_changed"):
+            self.send(preview)
+        self.send(preview, "--no-signature")
+        self.assertEqual(email.message_from_bytes(self.smtp.sendmail.call_args.args[2], policy=MODULE.default).get_content().strip(), "Ответ")
+
     def test_reply_all_deduplicates_domains_and_excludes_sender_and_bcc(self):
         result = self.preview("--reply-all")
         self.assertEqual(result["plan"]["to"], ["author@example.com"])

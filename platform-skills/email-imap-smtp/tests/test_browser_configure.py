@@ -143,6 +143,7 @@ class BrowserConfigureTests(unittest.TestCase):
             {"email": "missing-address"}, {"username": "bad\r\nlogin"},
             {"smtp_security": "plain"}, {"imap_host": "https://imap.example.com/path"},
             {"description": "я" * 2001}, {"password": ""}, {"password": "x" * 2049},
+            {"signature": "я" * 8193}, {"signature": "private-contact\x00"},
         ]
         for invalid in invalid_values:
             with self.subTest(fields=list(invalid)):
@@ -189,6 +190,26 @@ class BrowserConfigureTests(unittest.TestCase):
         self.assertEqual(session.account.smtp_host, "smtp.gmail.com")
         self.assertEqual(session.account.smtp_port, 465)
         self.assertEqual(session.password, "abcdefghijklmnop")
+
+    def test_signature_form_submission_persists_and_accepts_combined_unicode_limits(self):
+        # Test the real form POST and persistence, not only a mocked form result.
+        # Percent-encoded Unicode in all valid fields exceeds the former 64 KiB
+        # cap; the additive signature must not make those inputs unsaveable.
+        signature = "🧪" * (MODULE.MAX_SIGNATURE_BYTES // 4)
+        values = {**VALUES, "signature": signature, "description": "🧪" * 2000,
+                  "password": "🧪" * MODULE.MAX_PASSWORD_CHARS}
+        self.assertGreater(len(urllib.parse.urlencode(values)), 64 * 1024)
+
+        def browser(url):
+            self.assertEqual(request(url)[0], 200)
+            status, response, _ = request(url, values)
+            self.assertEqual(status, 200)
+            self.assertNotIn(signature, response)
+            self.assertNotIn(values["password"], response)
+
+        self.configure(browser)
+        self.assertEqual(MODULE.load_account("work").signature, signature)
+        self.assertEqual(self.store.call_args.args[1], values["password"])
 
     def test_mailru_yandex_defaults_do_not_inherit_google_password_rules(self):
         for domain, imap, smtp in [
