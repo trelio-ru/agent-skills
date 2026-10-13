@@ -18,7 +18,11 @@ class SignatureTests(unittest.TestCase):
         # Reuse only the synthetic storage/credential barriers, not the older
         # metadata tests themselves. Any accidental password/network call fails.
         description_tests.AccountDescriptionTests.setUp(self)
-        self.environment = mock.patch.dict(os.environ, {}, clear=True)
+        # Remove caller bindings without erasing SystemRoot/WINDIR required by
+        # the real Windows config-backup helper used on explicit reconnect.
+        self.environment = mock.patch.dict(os.environ, {
+            key: value for key, value in os.environ.items() if not key.startswith("TRELIO_")
+        }, clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
         self.signature = "С уважением,\nТестовый отправитель\n+7 (000) 000-00-00"
