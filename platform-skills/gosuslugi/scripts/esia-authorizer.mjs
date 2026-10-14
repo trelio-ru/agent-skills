@@ -27,6 +27,7 @@ export class EsiaAuthorizer {
     this.passwordSent = false;
     this.codeSent = false;
     this.roleSent = false;
+    this.personalRoleDeadline = null;
     this.roleChoiceRequired = false;
     this.completed = false;
     this.qrSent = false;
@@ -127,6 +128,34 @@ export class EsiaAuthorizer {
     await this.onPhase('authorized');
     return true;
   }
+  async reviewRole() {
+    // Inspect the existing bound page, never a new login transaction. Only
+    // fixed categories/counts leave the private broker; observations, account
+    // labels, URLs and inputs stay in the protected process protocol.
+    const state = await this.call('auth-state');
+    if (state.failed) throw new RuntimeError(state.failed, state);
+    if (state.returned) return { state: 'returned' };
+    if (this.roleSent) return { state: 'choice_dispatched' };
+    if (state.personalRolePending) return this.call('review-personal-role');
+    requireThat(state.atAuth, 'role_review_unavailable');
+    const { text, queries: q } = await this.observe();
+    const authFieldCount = q.login.count + q.password.count + q.code.count;
+    if (authFieldCount) return { state: 'authentication_fields_present' };
+    if ((q.checkboxes.fields || []).some(field => !field.checked &&
+      /согласи|согласен|персональн.{0,30}данн|пользовательск.{0,30}соглашени/i.test(field.label)) ||
+      /предостав.{0,120}(доступ|сведен|данн)|разреш.{0,80}(доступ|сведен|данн)|соглас.{0,80}(передач|обработ)/i.test(text))
+      return { state: 'unsupported_screen' };
+    if (!roleChallenge(text, false)) return { state: 'unsupported_screen' };
+    const personalCardCount = q.personal.count;
+    const result = { personalCardCount };
+    if (personalCardCount === 0) return { ...result, state: 'missing_card' };
+    if (personalCardCount !== 1) return { ...result, state: 'ambiguous_card' };
+    const item = q.personal.fields?.[0];
+    if (!item || item.length > 240 || ['html', 'body', 'main', 'section', 'h1', 'h2', 'h3'].includes(item.tag) ||
+      item.href && !officialUrl(item.href)) return { ...result, state: 'unsupported_card' };
+    if (item.disabled) return { ...result, state: 'disabled_card' };
+    return { ...result, state: 'personal_available' };
+  }
   async authenticate(credentials, requestedRole = 'personal') {
     await this.onPhase('authenticating');
     const end = Date.now() + 90000;
@@ -143,7 +172,14 @@ export class EsiaAuthorizer {
           // on the official identity chooser and cannot type or accept consent.
           this.roleSent = true;
           const choice = await this.call('choose-personal-role');
-          if (!choice.selected) return this.manual('role_choice_required', state.postCount);
+          if (!choice.selected) {
+            // A successful broker reply with selected=false proves that no
+            // click was dispatched. A fresh review/resume may inspect that same
+            // chooser later. An exception has no such proof: retain roleSent
+            // so an ambiguous click can never be repeated.
+            this.roleSent = false;
+            return this.manual('role_choice_required', state.postCount);
+          }
           this.roleChoiceRequired = false;
         }
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -233,6 +269,29 @@ export class EsiaAuthorizer {
         if (challenge === 'manual') {
           this.roleChoiceRequired = roleChallenge(current.text, q.login.count > 0 || hasPassword || hasCode);
           const item = q.personal.fields?.[0];
+          if (requestedRole === 'personal' && this.roleChoiceRequired) {
+            // The official role app paints "Войти как" before its asynchronous
+            // role-list request completes. An empty first observation is not an
+            // unexpected identity: keep observing this transaction for the same
+            // eight-second readiness budget used after the callback. The deadline
+            // belongs to the attempt, so resume cannot renew it indefinitely.
+            if (!this.roleSent && q.personal.count === 0) {
+              this.personalRoleDeadline ??= Date.now() + 8000;
+              if (Date.now() < this.personalRoleDeadline) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                continue;
+              }
+            }
+            // A dispatched identity click can leave the same chooser visible
+            // while navigation is pending. Sent means one action, not a newly
+            // required human choice: await the verified return without another
+            // click, credential input or reset of the original auth deadline.
+            if (this.roleSent) {
+              this.roleChoiceRequired = false;
+              await new Promise(resolve => setTimeout(resolve, 500));
+              continue;
+            }
+          }
           if (
             requestedRole === 'personal' &&
             this.roleChoiceRequired &&

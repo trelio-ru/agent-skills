@@ -19,6 +19,30 @@ function pendingPersonalRole(portal, hasReturned) {
   } catch { return false; }
 }
 
+async function reviewPendingPersonalRole(page) {
+  // This is a read-only projection of the official chooser. Never return its
+  // body, account names, links or auth fields to the CLI/model. The transaction
+  // and native permit are checked by the broker before and after observation.
+  const heading = page.getByRole('heading', { name: 'Войти как', exact: true }).filter({ visible: true });
+  const target = page.getByText(/(?:Физическое|Частное)\s+лицо/i).filter({ visible: true });
+  if (await page.locator('input,textarea,select').filter({ visible: true }).count())
+    return { state: 'authentication_fields_present' };
+  if (await heading.count() !== 1) return { state: 'unsupported_screen' };
+  const text = (await page.locator('body').innerText()).slice(0, 16000);
+  if (/captcha|капч|робот|восстановлен|смен[аи] пароля|заблокирован|push|подтвердите.*(телефон|приложени)|биометри|смс|sms|одноразов|соглас.{0,80}(передач|обработ)|оплат|плат[её]ж|подпис[аы]/i.test(text))
+    return { state: 'unsupported_screen' };
+  const personalCardCount = Math.min(await target.count(), 100);
+  const result = { personalCardCount };
+  if (personalCardCount === 0) return { ...result, state: 'missing_card' };
+  if (personalCardCount !== 1) return { ...result, state: 'ambiguous_card' };
+  const meta = await target.evaluate(node => ({ tag: node.tagName.toLowerCase(),
+    length: (node.textContent || '').trim().length, href: node.hasAttribute('href') ? node.href : null }));
+  if (['html', 'body', 'main', 'section', 'h1', 'h2', 'h3'].includes(meta.tag) ||
+    meta.length > 240 || meta.href && !officialUrl(meta.href)) return { ...result, state: 'unsupported_card' };
+  if (!await target.isEnabled()) return { ...result, state: 'disabled_card' };
+  return { ...result, state: 'personal_available' };
+}
+
 async function choosePendingPersonalRole(page, permit, beforeClick) {
   const url = page.url();
   const heading = page.getByRole('heading', { name: 'Войти как', exact: true }).filter({ visible: true });
@@ -214,6 +238,14 @@ export function createAuthorizationBroker({
     if (packet.command === 'choose-personal-role') {
       requireThat(pendingPersonalRole(portal, hasReturned), 'role_chooser_required');
       return choosePendingPersonalRole(portal.page, permit, onPersonalRoleChoice);
+    }
+    if (packet.command === 'review-personal-role') {
+      requireThat(pendingPersonalRole(portal, hasReturned), 'role_chooser_required');
+      const url = portal.page.url();
+      const result = await reviewPendingPersonalRole(portal.page);
+      await permit();
+      requireThat(portal.page.url() === url && pendingPersonalRole(portal, hasReturned), 'role_chooser_changed');
+      return result;
     }
     if (packet.command === 'complete') {
       requireThat(

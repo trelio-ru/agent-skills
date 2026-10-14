@@ -67,6 +67,8 @@ const state = () => {
       ? recovery.instruction
       : activeAuthorizer()?.manualReason === 'credentials_rejected'
       ? 'Госуслуги отклонили данные входа. Автоматический повтор запрещён; проверьте данные вручную или явно замените их через configure.'
+      : activeAuthorization() && activeAuthorizer()?.roleChoiceRequired
+      ? 'Сначала самостоятельно проверьте текущий экран через review-role этой auth-сессии. При personal_available выполните resume; ошибка неподходящей команды не требует действия пользователя.'
       : portal?.roleChoiceRequired && !activeAuthorization()
       ? 'Получите roles; выбирайте вариант только по указанию оператора. После выбора выполните resume.'
       : 'Продолжите ручную проверку в том же окне сервиса или Госуслуг, затем вызовите resume.',
@@ -418,6 +420,15 @@ try {
         finalError = null; finalHttpFailure = {}; reviewContext = null;
         respond(200, { ...state(), phase: 'authenticating' });
         if (delegatedPortal) void authenticateDelegated(); else void authenticate();
+        return;
+      }
+      if (packet.command === 'review-role') {
+        requireThat(Object.keys(packet).sort().join() === 'command,sessionId', 'role_review_invalid');
+        requireThat(!busy && activeAuthorization() && activeAuthorizer()?.roleChoiceRequired &&
+          phase === 'user_required', 'role_review_unavailable');
+        busy = true;
+        try { respond(200, { ...state(), roleReview: await activeAuthorizer().reviewRole() }); }
+        finally { busy = false; }
         return;
       }
       if (['roles', 'choose-role', 'snapshot', 'page'].includes(packet.command)) requireThat(!activeAuthorization(), 'external_browser_owned_by_caller');

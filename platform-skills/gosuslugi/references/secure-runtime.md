@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.5.1 объявляет signed host browser-session class
+Runtime 3.5.4 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -585,6 +585,34 @@ Windows user DACL проверяется штатным native primitive.
 не оказывается в argv, новый generic host/plugin ABI не требуется.
 
 ## Выбор роли
+
+В делегированном входе до callback заголовок «Войти как» может появиться раньше
+карточек: публичное приложение получает их отдельным запросом. При default
+`personal` и распознанном чистом chooser authorizer до восьми секунд наблюдает
+загрузку карточки в той же transaction. Deadline сохраняется при `resume` и
+не продлевает native lease. Неоднозначность, explicit manual intent и другие
+challenge не получают этого ожидания. После единственного отправленного клика
+остающийся chooser означает ожидание навигации до исходного auth deadline;
+повторного клика, ввода credentials и ложного ручного выбора нет.
+Regression моделирует отдельно задержку списка и задержку возврата после клика,
+включая настоящий headed browser с h2/button/h4/p структурой публичного chooser.
+
+`review-role --session AUTH_SESSION_ID` – свежий read-only осмотр exact
+делегированного экрана до вопроса человеку. Native permit, broker claim,
+company/account и исходная lease сохраняются. Ответ содержит только fixed
+`roleReview.state` и optional `personalCardCount` (0–100), без auth DOM, имён,
+URL/href, значений полей, cookies и сетевых тел. Осмотр не показывает окно,
+не меняет phase и не вызывает credential input/choice/resume автоматически.
+Он доступен только незанятому authorizer при `user_required` и установленном
+role chooser; ordinary `start` сохраняет `roles`/`choose-role`.
+`personal_available` разрешает штатный `resume` в пределах уже разрешённого
+default intent; `choice_dispatched` запрещает повтор. После callback broker
+отдельно проверяет официальный chooser без восстановления secret capability.
+`selected=false` штатного broker означает доказанную неотправку клика и
+позволяет свежий осмотр/продолжение. Исключение этого не доказывает: sent-флаг
+остаётся и повторная выборка не отправляет второй click.
+Отсутствующая карточка требует bounded ожидания/диагностики, а не просьбы
+выбрать её руками. Неоднозначность и настоящий challenge не угадываются.
 
 `start --confirm` по умолчанию использует физическое лицо. На подтверждённом экране
 выбора ЕСИА runtime один раз нажимает единственный visible/enabled элемент

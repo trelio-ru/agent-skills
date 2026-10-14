@@ -42,11 +42,7 @@ export async function waitForSessionChange(readStatus, options, {
     const complete = COMPLETE.has(state.phase);
     const timedOut = !changed && !complete && now() >= deadline;
     if (changed || complete || timedOut) {
-      return { ...state, wait: { changed, timedOut },
-        // These are provider arguments, not a new host route. The caller keeps
-        // the same signed localAction and any selected --local-account UUID.
-        ...(!complete ? { continuation: { arguments: ['wait', '--session', sessionId,
-          '--after-phase', state.phase, '--timeout-seconds', '30'] } } : {}) };
+      return withSessionContinuation({ ...state, wait: { changed, timedOut } });
     }
     await sleep(Math.min(500, Math.max(0, deadline - now())));
   }
@@ -58,6 +54,17 @@ export function withSessionContinuation(state) {
   // continuation of the same exact procedure, never permission to restart it.
   requireThat(state?.sessionId && /^[a-z][a-z_]{0,63}$/.test(state.phase || ''), 'local_state_invalid');
   if (COMPLETE.has(state.phase)) return state;
+  if (state.phase === 'user_required' && state.roleChoiceRequired &&
+    state.authorization?.status === 'user_required') {
+    // The next step is an independent fresh inspection, not a human question.
+    // A read-only review only suggests resume for the already-authorized
+    // default personal intent. Explicit organisation intent stays separate.
+    const review = state.roleReview?.state;
+    const command = review === 'personal_available' && state.loginRole === 'personal' ? 'resume'
+      : review ? 'wait' : 'review-role';
+    if (command !== 'wait') return { ...state, continuation: {
+      arguments: [command, '--session', state.sessionId] } };
+  }
   return { ...state, continuation: { arguments: ['wait', '--session', state.sessionId,
     '--after-phase', state.phase, '--timeout-seconds', '30'] } };
 }

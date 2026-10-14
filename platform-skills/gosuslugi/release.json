@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.3",
-    "summary": "Агент наблюдает завершение настройки и входа без обязательного сообщения «заполнил»."
+    "version": "4.5.4",
+    "summary": "Личный вход ждёт загрузки ролей; агент самостоятельно проверяет экран роли перед вопросом пользователю."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.3",
+    "version": "3.5.4",
     "minimumHostVersion": "3.7.1",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",
