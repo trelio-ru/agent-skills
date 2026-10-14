@@ -92,7 +92,7 @@ test("shared tooling and workflow changes retain the full regression gate", () =
   ]) {
     const selection = selectProviderRegressions([filePath]);
     assert.equal(selection.full, true, filePath);
-    assert.equal(selection.hostedMatrix.include.length, 30, filePath);
+    assert.equal(selection.hostedMatrix.include.length, 33, filePath);
     assert.ok(selection.selfHostedSkills.includes("vk-ads"), filePath);
     assert.ok(selection.selfHostedSkills.includes("document-facsimile"), filePath);
     assert.ok(selection.selfHostedSkills.includes("gosuslugi"), filePath);
@@ -101,6 +101,13 @@ test("shared tooling and workflow changes retain the full regression gate", () =
     assert.equal(selection.runTelegramContract, true, filePath);
     assert.equal(selection.runDodoStats, true, filePath);
   }
+});
+
+test("Avito's first runtime runs its actual parser and transport suite on every hosted OS", () => {
+  const selection = selectProviderRegressions(["platform-skills/avito-search/scripts/core.mjs"]);
+  assert.deepEqual(selection.selfHostedSkills, ["avito-search"]);
+  assert.equal(selection.hostedMatrix.include.length, 3);
+  assert.ok(selection.hostedMatrix.include.every(row => row.skill === "avito-search" && row.test_file === "platform-skills/avito-search/tests/runtime.test.mjs"));
 });
 
 test("instruction-only providers still run the shared instruction contracts", () => {

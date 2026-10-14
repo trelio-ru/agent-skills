@@ -15,6 +15,7 @@ PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 TELEGRAM_MTPROTO_TEST_APP_CREDENTIAL_JSON='{"api_id":"12345","api_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 
 FULL_SKILL_SET=(
+  avito-search
   vk-ads
   document-facsimile
   email-imap-smtp
@@ -36,7 +37,7 @@ print_usage() {
 
 is_supported_skill() {
   case "$1" in
-    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|russian-post-registered-mail)
+    avito-search|vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|russian-post-registered-mail)
       return 0
       ;;
     *)
@@ -116,7 +117,7 @@ node --test \
 # is tested. Instruction-only and Remote MCP providers have no package here.
 for skill in "${SELECTED_SKILLS[@]}"; do
   case "${skill}" in
-    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|gas-pravosudie|max-web|whatsapp-web|telegram-mtproto|telegram-web)
+    avito-search|vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|gas-pravosudie|max-web|whatsapp-web|telegram-mtproto|telegram-web)
       ;;
     *)
       continue
@@ -151,6 +152,7 @@ do
 done
 
 NODE_TESTS=()
+has_skill avito-search && NODE_TESTS+=(platform-skills/avito-search/tests/runtime.test.mjs)
 has_skill vk-ads && NODE_TESTS+=(platform-skills/vk-ads/tests/runtime.test.mjs)
 has_skill consultant-plus && NODE_TESTS+=(platform-skills/consultant-plus/tests/trelio-consultant-plus.test.mjs)
 has_skill gas-pravosudie && NODE_TESTS+=(platform-skills/gas-pravosudie/tests/runtime.test.mjs)

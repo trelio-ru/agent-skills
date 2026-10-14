@@ -11,6 +11,7 @@ import { pathToFileURL } from "node:url";
  * tooling or this workflow itself changed.
  */
 const PROVIDERS = Object.freeze({
+  "avito-search": { owner: "general", matrix: { language: "node", testFile: "platform-skills/avito-search/tests/runtime.test.mjs" } },
   "vk-ads": { owner: "general", matrix: { language: "node", testFile: "platform-skills/vk-ads/tests/runtime.test.mjs" } },
   "1c-edo": { owner: "general", matrix: { language: "python" } },
   "document-facsimile": { owner: "general", matrix: { language: "python" } },
@@ -68,6 +69,7 @@ const HOSTED_OPERATING_SYSTEMS = Object.freeze([
 
 // Preserve the former full self-hosted gate for shared infrastructure changes.
 const FULL_SELF_HOSTED_SKILLS = Object.freeze([
+  "avito-search",
   "vk-ads",
   "document-facsimile",
   "email-imap-smtp",
@@ -84,6 +86,7 @@ const FULL_SELF_HOSTED_SKILLS = Object.freeze([
 ]);
 
 const FULL_HOSTED_MATRIX_SKILLS = Object.freeze([
+  "avito-search",
   "vk-ads",
   "document-facsimile",
   "email-imap-smtp",

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "avito-search",
+    "version": "1.0.0",
+    "summary": "Поиск по Авито и просмотр публичных объявлений по ссылке или ID, без входа в аккаунт и отправки сообщений."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Общий секрет и вход в аккаунт не нужны. Навык читает публичные объявления через отдельный непостоянный браузерный context.",
+      "Авито может ограничить запросы с текущего IP или потребовать ручную проверку доступа."
+    ],
+    "configFields": [],
+    "secretFields": []
+  },
+  "runtime": {
+    "version": "1.0.0",
+    "minimumHostVersion": "3.4.0",
+    "entrypoint": {
+      "path": "trelio-avito.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network"
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "delegated-ephemeral",
+      "leaseMs": 1800000,
+      "manualAssist": true
+    },
+    "files": [
+      {
+        "source": "scripts/trelio-avito.mjs",
+        "path": "trelio-avito.mjs",
+        "mode": 493
+      },
+      {
+        "source": "scripts/core.mjs",
+        "path": "core.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/vendor/avito-api.mjs",
+        "path": "vendor/avito-api.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/vendor/avito-shopping-mcp-LICENSE.txt",
+        "path": "vendor/avito-shopping-mcp-LICENSE.txt",
+        "mode": 420
+      },
+      {
+        "source": "scripts/vendor/block-detection.mjs",
+        "path": "vendor/block-detection.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/vendor/errors.mjs",
+        "path": "vendor/errors.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/vendor/item-page.mjs",
+        "path": "vendor/item-page.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/vendor/json-fields.mjs",
+        "path": "vendor/json-fields.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/vendor/parsers.mjs",
+        "path": "vendor/parsers.mjs",
+        "mode": 420
+      }
+    ]
+  }
+}

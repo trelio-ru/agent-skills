@@ -17,6 +17,10 @@ Native DialogFolder исключается по constructor до чтения pe
 сводная строка архива не является чатовой принадлежностью либо history target.
 
 Для нескольких личных аккаунтов читай [общий контракт](docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов): каталог и company bindings принадлежат host, protected storage и вход – provider-у.
+Для Авито читай [контракт публичного поиска](platform-skills/avito-search/references/workflow.md):
+один поиск любых объявлений, непостоянный анонимный context без входа, общая
+очередь и сохранённая пауза после rate limit. Первый выпуск требует успешного
+живого поиска и чтения карточки; HTTP 429/439 не засчитывается как working smoke.
 Для VK Рекламы читай полный [workflow](platform-skills/vk-ads/references/workflow.md)
 и [security](platform-skills/vk-ads/references/security.md): paused creation,
 scoped планы, persisted receipts, read-back и запрет replay неизвестной записи.
