@@ -13,6 +13,7 @@ import { LEASE_MS, RUNTIME_VERSION, RuntimeError } from '../scripts/core.mjs';
 import { observeEsiaAuthorization, safeAuthorizationFailure } from '../scripts/playwright-client.mjs';
 import { EsiaAuthorizer } from '../scripts/esia-authorizer.mjs';
 import { authRpc } from '../scripts/auth-rpc.mjs';
+import { waitForSessionChange, withSessionContinuation } from '../scripts/session-wait.mjs';
 
 const supported = ['darwin', 'win32'].includes(process.platform);
 const identity = {
@@ -404,9 +405,14 @@ test('an accepted callback permits one bounded personal-role click but no earlie
       flow.callbackAccepted = true;
       assert.equal((await broker.handle({ ...packet, command: 'auth-state' })).personalRolePending, true);
       cards = 2;
+      assert.deepEqual(await broker.handle({ ...packet, command: 'review-personal-role' }),
+        { state: 'ambiguous_card', personalCardCount: 2 });
+      assert.equal(clicks, 0, 'review must not dispatch an identity choice');
       assert.deepEqual(await broker.handle({ ...packet, command: 'choose-personal-role' }), { selected: false });
       assert.equal(clicks, 0);
       cards = 1;
+      assert.deepEqual(await broker.handle({ ...packet, command: 'review-personal-role' }),
+        { state: 'personal_available', personalCardCount: 1 });
       assert.deepEqual(await broker.handle({ ...packet, command: 'choose-personal-role' }), { selected: true });
       assert.equal(marked, 1); assert.equal(clicks, 1);
       await assert.rejects(broker.handle({ ...packet, command: 'choose-personal-role' }), /role_chooser_required/);
@@ -488,6 +494,153 @@ test('post-callback personal role resumes through its single fixed action withou
   assert.deepEqual(calls, ['auth-state', 'choose-personal-role', 'auth-state', 'complete']);
   assert.deepEqual(phases, ['authenticating', 'authorized']);
   assert.equal(authorizer.roleSent, true);
+});
+
+test('pre-callback personal role waits for asynchronous cards and the dispatched navigation', async () => {
+  const phases = [], operations = [];
+  const authorizer = new EsiaAuthorizer({}, { permit: async () => {}, onPhase: async phase => phases.push(phase) });
+  let reads = 0, clicks = 0;
+  authorizer.call = async (command, packet) => {
+    if (command === 'auth-state') return { atAuth: true, returned: reads >= 4, postCount: 1 };
+    if (command === 'complete') return { returned: true };
+    assert.equal(command, 'auth-operation', 'a loading role chooser must not show a manual prompt');
+    operations.push(packet.operation);
+    if (packet.operation === 'observe') {
+      reads++;
+      // The public role application renders its heading before fetching cards.
+      // After the one click it can also retain that document during navigation.
+      const count = reads === 1 ? 0 : 1;
+      return { text: 'Войти как', queries: {
+        login: { count: 0 }, password: { count: 0 }, code: { count: 0 },
+        checkboxes: { count: 0, fields: [] }, personal: { count, fields: count ? [{
+          tag: 'p', length: 12, label: 'Частное лицо', disabled: false, href: null,
+        }] : [] },
+      } };
+    }
+    assert.equal(packet.operation, 'click', 'no credential input is needed on a role chooser');
+    clicks++;
+    assert.equal(packet.expectedLabel, 'Частное лицо');
+    return { ok: true };
+  };
+  assert.equal(await authorizer.authenticate({}), true);
+  assert.equal(clicks, 1, 'the same visible card after dispatch never authorizes a second click');
+  assert.equal(authorizer.roleSent, true);
+  assert.deepEqual(phases, ['authenticating', 'authorized']);
+  assert.ok(operations.filter(value => value === 'observe').length >= 4);
+});
+
+test('ambiguous or explicitly manual pre-callback roles still require the human', async () => {
+  for (const [requestedRole, count] of [['personal', 2], ['manual', 0]]) {
+    const authorizer = new EsiaAuthorizer({}, { permit: async () => {}, onPhase: async () => {} });
+    const calls = [];
+    authorizer.call = async (command, packet) => {
+      calls.push(command);
+      if (command === 'auth-state') return { atAuth: true, returned: false };
+      if (command === 'show') return {};
+      assert.equal(packet.operation, 'observe');
+      return { text: 'Войти как', queries: { login: { count: 0 }, password: { count: 0 },
+        code: { count: 0 }, checkboxes: { fields: [] }, personal: { count } } };
+    };
+    assert.equal(await authorizer.authenticate({}, requestedRole), false);
+    assert.equal(authorizer.manualReason, 'role_choice_required');
+    assert.equal(authorizer.roleSent, false);
+    assert.deepEqual(calls, ['auth-state', 'auth-operation', 'show']);
+  }
+});
+
+test('missing personal cards do not renew their readiness budget on resume', async () => {
+  const authorizer = new EsiaAuthorizer({}, { permit: async () => {}, onPhase: async () => {} });
+  authorizer.personalRoleDeadline = Date.now() - 1;
+  authorizer.call = async (command, packet) => {
+    if (command === 'auth-state') return { atAuth: true, returned: false };
+    if (command === 'show') return {};
+    assert.equal(packet.operation, 'observe');
+    return { text: 'Войти как', queries: { login: { count: 0 }, password: { count: 0 },
+      code: { count: 0 }, checkboxes: { fields: [] }, personal: { count: 0 } } };
+  };
+  const deadline = authorizer.personalRoleDeadline;
+  assert.equal(await authorizer.authenticate({}), false);
+  assert.equal(await authorizer.authenticate({}), false);
+  assert.equal(authorizer.personalRoleDeadline, deadline);
+  assert.equal(authorizer.manualReason, 'role_choice_required');
+  assert.equal(authorizer.roleSent, false);
+});
+
+test('role review freshly inspects the bound screen without exposing auth content or choosing an identity', async () => {
+  const authorizer = new EsiaAuthorizer({}, { permit: async () => {}, onPhase: async () => {} });
+  let count = 0, inputs = false, consent = false;
+  const calls = [];
+  authorizer.call = async (command, packet) => {
+    calls.push(command);
+    if (command === 'auth-state') return { atAuth: true, returned: false };
+    assert.equal(packet.operation, 'observe', 'review is read-only');
+    return { text: consent ? 'Войти как. Согласие на передачу данных' : 'Войти как. Синтетическое имя',
+      queries: { login: { count: inputs ? 1 : 0 }, password: { count: 0 }, code: { count: 0 },
+        checkboxes: { fields: [] }, personal: { count, fields: [{ tag: 'p', length: 12,
+          label: 'Синтетическое имя', disabled: false, href: null }] } } };
+  };
+  assert.deepEqual(await authorizer.reviewRole(), { state: 'missing_card', personalCardCount: 0 });
+  count = 1;
+  const ready = await authorizer.reviewRole();
+  assert.deepEqual(ready, { state: 'personal_available', personalCardCount: 1 });
+  assert.doesNotMatch(JSON.stringify(ready), /имя|label|text|href|password/i);
+  count = 2;
+  assert.deepEqual(await authorizer.reviewRole(), { state: 'ambiguous_card', personalCardCount: 2 });
+  inputs = true;
+  assert.deepEqual(await authorizer.reviewRole(), { state: 'authentication_fields_present' });
+  inputs = false; consent = true;
+  assert.deepEqual(await authorizer.reviewRole(), { state: 'unsupported_screen' });
+  assert.equal(authorizer.roleSent, false);
+  assert.deepEqual([...new Set(calls)], ['auth-state', 'auth-operation']);
+});
+
+test('post-callback review can resume a proven non-dispatch but never an ambiguous click', async () => {
+  for (const ambiguous of [false, true]) {
+    const authorizer = new EsiaAuthorizer({}, { permit: async () => {}, onPhase: async () => {} });
+    let attempts = 0, selected = false;
+    authorizer.call = async command => {
+      if (command === 'auth-state') return { returned: selected, personalRolePending: !selected };
+      if (command === 'choose-personal-role') {
+        attempts++;
+        if (ambiguous) throw new RuntimeError('operation_result_unknown');
+        if (attempts === 1) return { selected: false };
+        selected = true; return { selected: true };
+      }
+      if (command === 'review-personal-role') return { state: 'personal_available', personalCardCount: 1 };
+      if (command === 'show' || command === 'complete') return {};
+      throw new Error(`unexpected ${command}`);
+    };
+    if (ambiguous) {
+      await assert.rejects(authorizer.authenticate({}), /operation_result_unknown/);
+      assert.equal(authorizer.roleSent, true);
+      assert.deepEqual(await authorizer.reviewRole(), { state: 'choice_dispatched' });
+      assert.equal(attempts, 1);
+    } else {
+      assert.equal(await authorizer.authenticate({}), false);
+      assert.equal(authorizer.roleSent, false);
+      assert.deepEqual(await authorizer.reviewRole(), { state: 'personal_available', personalCardCount: 1 });
+      assert.equal(await authorizer.authenticate({}), true);
+      assert.equal(attempts, 2, 'only the second operation actually dispatches a click');
+    }
+  }
+});
+
+test('delegated role continuation first inspects the screen and resumes only the default personal intent', async () => {
+  const state = { sessionId: crypto.randomUUID(), phase: 'user_required', roleChoiceRequired: true,
+    loginRole: 'personal', authorization: { status: 'user_required' } };
+  assert.deepEqual(withSessionContinuation(state).continuation.arguments,
+    ['review-role', '--session', state.sessionId]);
+  const wait = await waitForSessionChange(async () => state, {
+    '--session': state.sessionId, '--after-phase': 'authenticating', '--timeout-seconds': '1',
+  });
+  assert.deepEqual(wait.continuation.arguments, ['review-role', '--session', state.sessionId]);
+  assert.deepEqual(withSessionContinuation({ ...state, roleReview: { state: 'personal_available' } }).continuation.arguments,
+    ['resume', '--session', state.sessionId]);
+  for (const reviewed of [
+    { ...state, loginRole: 'manual', roleReview: { state: 'personal_available' } },
+    { ...state, roleReview: { state: 'missing_card' } },
+    { ...state, roleReview: { state: 'choice_dispatched' } },
+  ]) assert.equal(withSessionContinuation(reviewed).continuation.arguments[0], 'wait');
 });
 
 test('client discovery is static and the SDK does not expose a secret or launch a browser', async () => {

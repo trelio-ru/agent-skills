@@ -150,6 +150,9 @@ test('ordinary portal chooses the QR password control before a page-wide manual 
   assert.equal(portal.qrSent, true);
 });
 test('personal is the default; alternative identity choice is explicit and cannot authorise security or legal actions', () => {
+  const session = '11111111-1111-4111-8111-111111111111';
+  assert.equal(parseArguments(['review-role', '--session', session]).command, 'review-role');
+  assert.throws(() => parseArguments(['review-role', '--session', session, '--confirm']), /unsupported_option/);
   assert.equal(loginRole(), 'personal'); assert.equal(loginRole('manual'), 'manual');
   for (const value of ['first', 'organisation', '', null]) assert.throws(() => loginRole(value), /login_role_invalid/);
   assert.equal(roleChallenge('Войти как частное лицо', false), true);
@@ -855,7 +858,7 @@ test('a submitted local form returns configured through wait after cleanup, with
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
   assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.7.1');
-  assert.equal(release.release.version, '4.5.3');
+  assert.equal(release.release.version, '4.5.4');
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: 'protected-snapshot',

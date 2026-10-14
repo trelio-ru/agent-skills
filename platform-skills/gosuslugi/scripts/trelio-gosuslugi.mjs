@@ -14,7 +14,7 @@ import { bootstrapBrowser, loadPlaywright, loginRole } from './browser.mjs';
 import { readAuthorization } from './transport.mjs';
 import { resolveRequestTitle } from './chat-title.mjs';
 
-const COMMANDS = ['client', 'doctor', 'bootstrap', 'authorize', 'start', 'wait', 'status', 'resume', 'roles', 'choose-role', 'snapshot', 'page', 'stop', 'configure', 'forget'];
+const COMMANDS = ['client', 'doctor', 'bootstrap', 'authorize', 'start', 'wait', 'status', 'resume', 'review-role', 'roles', 'choose-role', 'snapshot', 'page', 'stop', 'configure', 'forget'];
 export function parseArguments(args) {
   const [command = 'doctor', ...rest] = args;
   requireThat(COMMANDS.includes(command), 'unknown_command');
@@ -25,7 +25,7 @@ export function parseArguments(args) {
     options[flag] = ['--confirm', '--account-recovered'].includes(flag) ? true : rest.shift();
     requireThat(options[flag] !== undefined, 'option_value_required');
   }
-  const allowed = command === 'wait' ? ['--session', '--after-phase', '--timeout-seconds'] : ['status', 'roles', 'snapshot', 'stop'].includes(command) ? ['--session']
+  const allowed = command === 'wait' ? ['--session', '--after-phase', '--timeout-seconds'] : ['status', 'review-role', 'roles', 'snapshot', 'stop'].includes(command) ? ['--session']
     : command === 'resume' ? ['--session', '--account-recovered', '--confirm']
     : command === 'page' ? ['--session', '--navigate', '--click', '--input-file']
     : command === 'choose-role' ? ['--session', '--ref', '--confirm']
@@ -267,7 +267,7 @@ export async function run(args, statusTimeoutMs = 30000) {
     }
     throw new RuntimeError('shutdown_not_confirmed');
   }
-  return result;
+  return command === 'review-role' ? withSessionContinuation(result) : result;
 }
 
 if (process.argv[1] && await fs.realpath(process.argv[1]).catch(() => '') === fileURLToPath(import.meta.url)) {

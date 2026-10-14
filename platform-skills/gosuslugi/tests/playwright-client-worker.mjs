@@ -121,7 +121,16 @@ try {
             </script>`;
         } else body = `<a href="${(tracking ? postAuth : auth).href.replaceAll('&', '&amp;')}">Вход через ЕСИА</a>`;
       } else if (url.origin === 'https://roles.gosuslugi.ru' && index === 10) {
-        body = `<h1>Войти как</h1><button onclick='location.href=${JSON.stringify(callback)}'><span>Частное лицо</span></button><button>Индивидуальный предприниматель</button>`;
+        // The real app paints its h2 before loading cards from a separate
+        // request. Keep that interval and the delayed post-click navigation
+        // observable; an immediate synthetic card hid both regressions.
+        body = `<h2>Войти как</h2><app-role-list>
+          <button id="personal" hidden><h4>Тестовое лицо</h4><p>Частное лицо</p></button>
+          <button id="organisation" hidden>Индивидуальный предприниматель</button>
+          </app-role-list><script>
+          setTimeout(()=>document.querySelectorAll('button').forEach(button=>button.hidden=false),750);
+          document.querySelector('#personal').onclick=()=>setTimeout(()=>location.href=${JSON.stringify(callback)},1000);
+          </script>`;
       } else if (url.origin === 'https://esia.gosuslugi.ru') {
         // Some sites open an empty window before starting the OAuth request.
         // Its URL remains about:blank during the first network response; the

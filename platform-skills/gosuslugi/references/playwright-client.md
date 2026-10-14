@@ -278,6 +278,13 @@ failure или готовность собственного портала не
 - При CAPTCHA, SMS/push, consent или неожиданной роли пользователь продолжает
   в той же вкладке. `status`/`resume` работают с **auth session ID**, который
   вернул `authorize`, а не с browser session ID из `login.request`.
+  При непонятном выборе роли агент сначала сам выполняет свежий `review-role`
+  этой auth-сессии: только категория и число карточек, без auth DOM/имён/полей.
+  `personal_available` продолжает default вход через `resume`,
+  `choice_dispatched` ждёт callback без повтора. `missing_card` требует
+  ограниченного ожидания/осмотра, а не ручного выбора отсутствующей карточки.
+  `roles`/`choose-role` принадлежат браузеру `start`; ошибка
+  `external_browser_owned_by_caller` не доказывает обязательный ручной шаг.
 - При `credentials_required` используй отдельный штатный setup Госуслуг только
   по соответствующему запросу; не собирай пароль через сценарий/чат. Повреждённый
   vault и transport failure не разрешают повторную настройку.
