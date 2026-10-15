@@ -2,7 +2,10 @@
  * Example: Using scraper programmatically
  */
 
-import { AvitoScraper } from '../src/core/scraper.js';
+import { createRequire } from 'node:module';
+// Build with npm run build first. This development example still requires
+// the verified host identity; it is never executed during offline validation.
+const { AvitoScraper } = createRequire(import.meta.url)('../dist/trelio-avito.cjs');
 
 async function main() {
   const scraper = new AvitoScraper({
@@ -38,7 +41,7 @@ async function main() {
       console.log(`Images: ${details.images.length}`);
     }
   } catch (error) {
-    console.error('Error:', error);
+    console.error('The operation did not complete; inspect only safe runtime errors');
   } finally {
     await scraper.close();
   }
