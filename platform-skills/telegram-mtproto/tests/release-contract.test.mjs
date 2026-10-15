@@ -1,6 +1,5 @@
 import { registerInstructionGuideContract } from "../../tools/instruction-guide-contract.mjs";
 registerInstructionGuideContract(new URL("../", import.meta.url));
-import { readSkillInstructions } from "../../tools/read-skill-instructions.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -9,6 +8,15 @@ import test from "node:test";
 import { buildRuntimePackage } from "../../tools/build-runtime-package.mjs";
 
 const repositoryRoot = new URL("../../../", import.meta.url);
+// The complete provider tree is vendored into the private identity build.
+// Keep corpus assembly in this provider test: a new public-only helper outside
+// that tree would make the exact reviewed snapshot fail in its release contour.
+// The shared artifact contract above independently verifies the original hashes.
+const skillRoot = new URL("../", import.meta.url);
+const guideMap = JSON.parse(await readFile(new URL("scripts/instruction-guides/map.json", skillRoot), "utf8"));
+const guideParts = await Promise.all(guideMap.sections.map(async section =>
+  await readFile(new URL(`scripts/instruction-guides/${section.file}`, skillRoot), "utf8") + (section.sourceSuffix ?? "")));
+const mainInstructions = await readFile(new URL("SKILL.md", skillRoot), "utf8");
 const [
   connectionDocs,
   skillInstructions,
@@ -16,7 +24,7 @@ const [
   runtimeSource,
 ] = await Promise.all([
   readFile(new URL("docs/telegram-mtproto-message-workflows.md", repositoryRoot), "utf8"),
-  readSkillInstructions(new URL("platform-skills/telegram-mtproto/", repositoryRoot)),
+  guideParts.join("") + "\n" + mainInstructions,
   readFile(new URL("platform-skills/telegram-mtproto/release.json", repositoryRoot), "utf8"),
   readFile(new URL("platform-skills/telegram-mtproto/scripts/trelio-telegram.py", repositoryRoot), "utf8"),
 ]);

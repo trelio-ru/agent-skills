@@ -51,6 +51,8 @@ Public tag не собирает пакет с таким input. Production arti
 guarded publication явно указывает исходный приватный repository. Это отдельная
 сборочная граница, а не разрешение вести две независимо изменяемые реализации.
 Перед release сверяются файлы runtime, инструкции и manifest с exact public SHA.
+Provider tests должны выполняться и в private contour: новые helpers вне
+копируемого provider tree не становятся неявной зависимостью snapshot.
 
 Application identity намеренно извлекаема получателями установленного package;
 это не разрешает публиковать её в GitHub. Личные sessions, OTP, пароли и keys
