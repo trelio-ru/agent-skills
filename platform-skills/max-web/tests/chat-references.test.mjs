@@ -1,3 +1,4 @@
+import { readSkillInstructions } from "../../tools/read-skill-instructions.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -247,6 +248,6 @@ test("MAX task locator is canonical and cannot carry query, credentials or anoth
 });
 
 test("MAX instructions require immediate ambiguity inspection and stable task-scoped reuse", () => {
-  const skill = fs.readFileSync(new URL("../SKILL.md", import.meta.url), "utf8");
+  const skill = readSkillInstructions(new URL("../", import.meta.url));
   for (const expected of ["MAX_CHAT_AMBIGUOUS", "chatReference", "knownChats", "--context-ref", "не повторяй", "assist-stop"]) assert.ok(skill.includes(expected), expected);
 });

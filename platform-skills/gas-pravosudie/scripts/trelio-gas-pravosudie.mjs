@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { getInstructionGuides } from './instruction-guides.mjs';
 import { validateWaitOptions, waitForSessionChange, withSessionContinuation, finishedReceiptPhase } from './session-wait.mjs';
 
 import crypto from 'node:crypto';
@@ -242,6 +243,8 @@ async function doctor(directory, helper) {
 }
 
 export async function run(args, statusTimeoutMs = 30000) {
+  // Metadata only: do not initialize the native guardian or browser runtime.
+  if (args.length === 1 && args[0] === 'guides') return getInstructionGuides();
   const { command, options } = parseArguments(args);
   if (command === 'wait') return waitForSessionChange(remaining =>
     run(['status', '--session', options['--session']], remaining), options);

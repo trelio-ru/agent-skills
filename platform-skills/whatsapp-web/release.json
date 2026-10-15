@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "whatsapp-web",
-    "version": "2.2.2",
-    "summary": "Агент наблюдает завершение настройки и входа без обязательного сообщения «заполнил»."
+    "version": "2.3.0",
+    "summary": "Полные инструкции читаются отдельными частями из подписанного пакета. Правила безопасности и рабочих сценариев сохранены без потери текста."
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,7 +17,7 @@
     ]
   },
   "runtime": {
-    "version": "2.2.2",
+    "version": "2.3.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "scripts/trelio-whatsapp.mjs",
@@ -115,7 +115,31 @@
         "path": "scripts/private-directory.ps1",
         "mode": 420
       },
-      { "source": "scripts/session-wait.mjs", "path": "scripts/session-wait.mjs", "mode": 420 }
+      {
+        "source": "scripts/session-wait.mjs",
+        "path": "scripts/session-wait.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides.mjs",
+        "path": "scripts/instruction-guides.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-01.md",
+        "path": "scripts/instruction-guides/part-01.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-02.md",
+        "path": "scripts/instruction-guides/part-02.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-03.md",
+        "path": "scripts/instruction-guides/part-03.md",
+        "mode": 420
+      }
     ]
   }
 }

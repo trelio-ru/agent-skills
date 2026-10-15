@@ -87,4 +87,10 @@ Safety/approval/replay/callback/lease rules не удаляются ради р�
 `node platform-skills/tools/report-instruction-budget.mjs` проверяет существующие
 общие source без вывода текста. `--strict` возвращает nonzero при превышениях;
 его отчёт не является live read-back или разрешением переписать immutable release.
-Текущий [аудит](skill-instruction-budget-audit.md) сохраняет видимые исключения.
+Текущий [аудит](skill-instruction-budget-audit.md) охватывает все общие source.
+Release gate не допускает повторных превышений. Перед rollout общего delivery
+guard сначала выпусти совместимые provider-инструкции и packages, затем проверь
+полные live instructions/execution ответы (native и text-compatible), и лишь
+после этого выпускай backend/host guard. Зелёный source audit не меняет live
+releases. Потеря обязательного документа блокирует действие; одна ссылка на
+неупакованную справку не считается доставкой.

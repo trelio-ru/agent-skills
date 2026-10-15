@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-web",
-    "version": "2.5.0",
-    "summary": "Несколько личных аккаунтов с названиями и комментариями, выбором для каждой компании и сохранением существующих подключений."
+    "version": "2.6.0",
+    "summary": "Полные инструкции читаются отдельными частями из подписанного пакета. Правила безопасности и рабочих сценариев сохранены без потери текста."
   },
   "connection": {
     "schemaVersion": 1,
@@ -19,7 +19,7 @@
     ]
   },
   "runtime": {
-    "version": "2.5.0",
+    "version": "2.6.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram-web.mjs",
@@ -41,6 +41,26 @@
         "source": "scripts/trelio-telegram-web.mjs",
         "path": "trelio-telegram-web.mjs",
         "mode": 493
+      },
+      {
+        "source": "scripts/instruction-guides.mjs",
+        "path": "instruction-guides.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-01.md",
+        "path": "instruction-guides/part-01.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-02.md",
+        "path": "instruction-guides/part-02.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-03.md",
+        "path": "instruction-guides/part-03.md",
+        "mode": 420
       }
     ]
   }

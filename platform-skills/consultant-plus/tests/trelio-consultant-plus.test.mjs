@@ -129,31 +129,39 @@ test("runtime rejects invalid identity, browser and symlinked private paths", as
 test("skill keeps onboarding, browser handoff, workspace evidence, export and fallback decisions explicit", async () => {
   const instructions = await readInstructionBundle();
 
-  assert.match(instructions, /ask once whether the user wants this skill and has access/u);
-  assert.match(instructions, /`no_access`: do not ask about ConsultantPlus access again/u);
-  assert.match(instructions, /`unavailable_on_surface`.*do not\s+overwrite/su);
-  assert.match(instructions, /Codex in-app Browser/u);
-  assert.match(instructions, /Claude in Chrome/u);
-  assert.match(instructions, /visible browser surface as a temporary handoff/u);
-  assert.match(instructions, /hide or collapse the\s+in-app Browser side panel without closing its tab or session/su);
-  assert.match(instructions, /Continue routine search, navigation, bounded DOM reading, export and download\s+verification in the background/su);
-  assert.match(instructions, /Reopen it only when the user must act/u);
-  assert.match(instructions, /inactivity warning saying work \*\*will\*\* end.*`Продолжить работу`.*not proof of logout/su);
-  assert.match(instructions, /AX\/DOM click returns without removing the\s+warning.*fresh screenshot.*visual click.*recheck/su);
-  assert.match(instructions, /Do not report an access\s+blocker or ask the user to sign in from this warning alone/su);
-  assert.match(instructions, /without\s+asking for an extra confirmation/su);
-  assert.match(instructions, /supporting source files as required durable evidence.*substantive Agent Workspace result/su);
-  assert.match(instructions, /every exact ConsultantPlus source\s+that materially supports a conclusion/su);
-  assert.match(instructions, /Do not save exploratory search results, documents that\s+were opened but not relied upon/su);
-  assert.match(instructions, /label it as ConsultantPlus\s+commentary, not as a primary legal source/su);
-  assert.match(instructions, /Do not automatically attach every source to a user-facing\s+task comment/su);
-  assert.match(instructions, /Prefer DOCX/u);
-  assert.match(instructions, /Prefer PDF for forms/u);
-  assert.match(instructions, /Unicode text/u);
-  assert.match(instructions, /Do not bulk\s+export/su);
-  assert.match(instructions, /Never request, receive, store\s+or inspect a ConsultantPlus login/su);
-  assert.match(instructions, /independent legal source/u);
-  assert.match(instructions, /do not start one automatically/u);
-  assert.match(instructions, /it is not permission to switch\s+sources automatically/su);
-  assert.match(instructions, /Never enter the same protected ConsultantPlus system/u);
+  // Keep every pre-refactor security/evidence decision explicit while allowing
+  // concise phrasing. These assertions cover the main delivered text itself;
+  // the Markdown skill must not depend on inaccessible package references.
+  const decisions = [
+    /ask once\s+whether the user wants this skill and has access/u,
+    /`no_access`: do not repeat the access question/u,
+    /`unavailable_on_surface`[\s\S]*without changing saved state/u,
+    /Codex desktop: `codex-browser`[\s\S]*in-app Browser/u,
+    /Claude in Chrome/u,
+    /Show the browser only for required human/u,
+    /hide\s+or collapse[\s\S]*keeping exact tab\/profile\/session alive/u,
+    /Continue\s+search, navigation, bounded DOM reading, export and download verification[\s\S]*background/u,
+    /do not bring the window back unless the user must act/u,
+    /warning that work \*\*will\*\* end[\s\S]*Продолжить работу[\s\S]*not logout/u,
+    /AX\/DOM click[\s\S]*fresh screenshot[\s\S]*visual click[\s\S]*recheck/u,
+    /Never[\s\S]*request\s+sign-in or report an access blocker from that warning alone/u,
+    /Download\s+autonomously/u,
+    /Before Agent Workspace handoff\/submit, save every exact source materially/u,
+    /supporting conclusions, recommendations, controlling dates, quotes or edition/u,
+    /Exclude exploratory\/unrelied results/u,
+    /commentary[\s\S]*labeled commentary rather than primary source/u,
+    /Do not automatically attach\s+or publish all sources outside that Workspace/u,
+    /Prefer DOCX/u,
+    /PDF for forms/u,
+    /Unicode text/u,
+    /no bulk result-list,[\s\S]*all-edition or corpus exports/u,
+    /Never request, receive, store or inspect\s+login\/password, OTP, cookies, profile files or session tokens/u,
+    /independent public legal source/u,
+    /wait for explicit selection/u,
+    /not automatic switching/u,
+    /Never enter protected ConsultantPlus via alternate credentials/u,
+  ];
+  for (const decision of decisions) assert.match(instructions, decision);
+  assert.ok(Buffer.byteLength(instructions.trim()) <= 16384);
+
 });

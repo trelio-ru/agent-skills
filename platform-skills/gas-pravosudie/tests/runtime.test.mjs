@@ -1,3 +1,6 @@
+import { registerInstructionGuideContract } from "../../tools/instruction-guide-contract.mjs";
+registerInstructionGuideContract(new URL("../", import.meta.url));
+import { readSkillInstructions } from "../../tools/read-skill-instructions.mjs";
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -367,17 +370,17 @@ test('runtime release binds the common protected-snapshot contract', async () =>
   });
 });
 
-// Filing rules must be delivered in the main instruction projection, not only
-// in an optional signing reference. Otherwise an agent submitting a new claim
-// can legally enter the browser workflow without ever seeing the file checks.
+// The main projection gates every command on the complete signed corpus and
+// repeats the filing prerequisite. Relocated detail is mandatory, never an
+// optional reference that a submission workflow could skip.
 test('main instructions gate all filing workflows on document identity and verified page counts', async () => {
   // Git's native Windows checkout may use CRLF. Compare Markdown semantics,
   // not the platform's line-ending convention, before extracting a section.
-  const instructions = (await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8'))
+  const instructions = (readSkillInstructions(new URL('../', import.meta.url)))
     .replace(/\r\n?/gu, '\n');
   const preparation = instructions.split('## Подготовка файлов для любой судебной подачи\n')[1]
     ?.split('\n## ')[0];
-  assert.ok(preparation, 'file preparation must be in the delivered main instructions');
+  assert.ok(preparation, 'file preparation must be in the mandatory signed instructions');
   assert.match(preparation, /новому обращению[\s\S]*существующее дело[\s\S]*участников дела/u);
   assert.match(preparation, /до подписания, загрузки и финальной/u);
   assert.match(preparation, /самостоятельный документ[\s\S]*отдельным файлом/u);
@@ -392,7 +395,7 @@ test('main instructions gate all filing workflows on document identity and verif
 // submit a corrected claim. Retain both the signature fence and the final UI
 // comparison so a valid local name cannot mask a stale portal upload label.
 test('filing preparation protects signed bytes and verifies the actual uploaded document names', async () => {
-  const instructions = (await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8'))
+  const instructions = (readSkillInstructions(new URL('../', import.meta.url)))
     .replace(/\r\n?/gu, '\n');
   const preparation = instructions.split('## Подготовка файлов для любой судебной подачи\n')[1]
     ?.split('\n## ')[0];

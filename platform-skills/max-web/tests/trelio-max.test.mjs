@@ -1,3 +1,6 @@
+import { registerInstructionGuideContract } from "../../tools/instruction-guide-contract.mjs";
+registerInstructionGuideContract(new URL("../", import.meta.url));
+import { readSkillInstructions } from "../../tools/read-skill-instructions.mjs";
 import './assist-control-shutdown.test.mjs';
 import './http-errors.test.mjs';
 import './chat-references.test.mjs';
@@ -751,10 +754,7 @@ test("MAX login handoff keeps a bounded timeout when the window is not closed", 
 });
 
 test("MAX skill tells the owner to close the login window and requires a fresh probe", () => {
-  const skillSource = fs.readFileSync(
-    new URL("../SKILL.md", import.meta.url),
-    "utf8",
-  );
+  const skillSource = readSkillInstructions(new URL("../", import.meta.url));
 
   assert.match(skillSource, /После входа в MAX закройте окно\./u);
   assert.match(skillSource, /сразу\s+выполни один (?:свежий|fresh) `probe`/u);
@@ -2087,7 +2087,7 @@ test("MAX selects a document without provider ID or author by the complete read 
 });
 
 test("MAX download instructions distinguish provider identity from snapshot metadata", () => {
-  const instructions = fs.readFileSync(new URL("../SKILL.md", import.meta.url), "utf8");
+  const instructions = readSkillInstructions(new URL("../", import.meta.url));
   assert.match(instructions, /providerMessageId=null/u);
   assert.match(instructions, /messageKey.*локальный хеш/u);
   assert.match(instructions, /весь.*message\.text/u);
