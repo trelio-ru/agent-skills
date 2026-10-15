@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { getInstructionGuides } from '../scripts/instruction-guides.mjs';
 import { parseArguments, run } from '../scripts/trelio-gosuslugi.mjs';
@@ -37,7 +38,9 @@ test('guides work before identity, browser binding or native credential access',
     const bytes = await fs.readFile(guide.path);
     assert.equal(hash(bytes), guide.sha256, name);
     assert.equal(bytes.length, guide.sizeBytes, name);
-    assert.ok(manifest.runtime.files.some(file => guide.path.endsWith('/' + file.path)), name);
+    // Manifest paths are POSIX; the guide intentionally returns a native OS
+    // path. Resolve the signed path before exact comparison on Windows/macOS.
+    assert.ok(manifest.runtime.files.some(file => guide.path === fileURLToPath(new URL(file.path, root))), name);
   }
   assert.doesNotMatch(JSON.stringify(result), /token|password|cookie|authorization_code/iu);
 });
