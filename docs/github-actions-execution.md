@@ -20,3 +20,19 @@ Windows VM требует отдельного прямого разрешени
 Network errors проходят минимум три безопасных повтора с растущей паузой.
 Перед повтором неоднозначной mutation проверяется её фактический результат.
 Подмена artifact локальной сборкой, изменение immutable tag и обход CAS запрещены.
+
+## Выбор provider проверок
+
+Изменения внутри provider выбирают только его обязательные OS и shared
+instruction/package contracts. Новые Node providers регистрируют `ci.json`
+в своей папке: schemaVersion, language=node, testFile под tests/ и prepareFile
+под development/. Общие selector/workflow/executor для добавления не меняются.
+Регистрация не может переопределить прежний маршрут или выбрать соседний
+provider, symlink, shell command либо внешний path. Preparation выполняется
+exact Node argv с shell=false. Package mode не устанавливает browser fixtures.
+
+Изменение `ci.json` или provider-owned preparation остаётся в scope этого
+provider. Изменение общей логики в `platform-skills/tools/**` или общего
+workflow запускает полный набор, включая новые регистрации. Это сохраняет
+защиту от незаметного отключения чужих проверок без полного прогона на каждый
+новый навык. Unknown provider и malformed registration завершаются fail-closed.

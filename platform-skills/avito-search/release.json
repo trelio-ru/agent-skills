@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "avito-search",
+    "version": "1.0.0",
+    "summary": "Поиск, карточки и пагинация Авито на основе Ascard/mcp-avito, с CLI/MCP и прокси."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Для публичного поиска не нужны аккаунт Авито и общий секрет. Прокси выбирается отдельно."
+    ],
+    "configFields": [],
+    "secretFields": []
+  },
+  "runtime": {
+    "version": "1.0.0",
+    "minimumHostVersion": "3.4.0",
+    "entrypoint": {
+      "path": "trelio-avito.cjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network",
+      "secret-checkout"
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "delegated-ephemeral",
+      "leaseMs": 1800000,
+      "manualAssist": true
+    },
+    "files": [
+      {
+        "source": "dist/trelio-avito.cjs",
+        "path": "trelio-avito.cjs",
+        "mode": 493
+      },
+      {
+        "source": "dist/THIRD-PARTY-NOTICES.txt",
+        "path": "THIRD-PARTY-NOTICES.txt",
+        "mode": 420
+      },
+      {
+        "source": "upstream/README.md",
+        "path": "upstream/README.md",
+        "mode": 420
+      },
+      {
+        "source": "upstream/package.json",
+        "path": "upstream/package.json",
+        "mode": 420
+      },
+      {
+        "source": "upstream-manifest.json",
+        "path": "upstream-manifest.json",
+        "mode": 420
+      },
+      {
+        "source": "references/workflow.md",
+        "path": "references/workflow.md",
+        "mode": 420
+      }
+    ]
+  }
+}

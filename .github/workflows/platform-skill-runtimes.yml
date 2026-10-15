@@ -149,6 +149,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Prepare provider-owned source and fixture tooling
+        run: >-
+          node platform-skills/tools/prepare-provider.mjs
+          --skill ${{ matrix.skill }} --mode prepare-test
       - name: Validate deterministic runtime package
         env:
           # This value only proves package composition in CI. It is not the
@@ -302,6 +306,11 @@ jobs:
               return;
             }
             core.info(`Reused exact green PR evidence for ${context.sha}.`);
+      - name: Prepare registered provider source for the signed package
+        if: steps.tag.outputs.release_kind == 'runtime'
+        run: >-
+          node platform-skills/tools/prepare-provider.mjs
+          --skill ${{ steps.tag.outputs.skill_directory_id }} --mode prepare-package
       - name: Build exact package bytes
         if: steps.tag.outputs.release_kind == 'runtime'
         run: >-

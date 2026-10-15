@@ -30,6 +30,13 @@ FULL_SKILL_SET=(
   dodostats-drinkitstats
 )
 
+# Data-only provider registration extends the default full set without another
+# edit to this shared executor. Parsing is validated before any command starts.
+REGISTERED_SKILLS="$(node "${SCRIPT_DIRECTORY}/prepare-provider.mjs" --mode list)"
+while IFS= read -r registered_skill; do
+  if [[ -n "${registered_skill}" ]]; then FULL_SKILL_SET+=("${registered_skill}"); fi
+done <<< "${REGISTERED_SKILLS}"
+
 print_usage() {
   echo "Usage: $0 [--all | --skills skill-a,skill-b]" >&2
 }
@@ -40,7 +47,8 @@ is_supported_skill() {
       return 0
       ;;
     *)
-      return 1
+      node "${SCRIPT_DIRECTORY}/prepare-provider.mjs" --skill "$1" --mode check
+      return "$?"
       ;;
   esac
 }
@@ -94,6 +102,11 @@ fi
 if has_skill gas-pravosudie; then
   node platform-skills/gas-pravosudie/development/build-storage-codec.mjs --check
 fi
+
+# New providers own preparation and the complete test entrypoint in ci.json.
+for skill in "${SELECTED_SKILLS[@]}"; do
+  node platform-skills/tools/prepare-provider.mjs --skill "${skill}" --mode test
+done
 
 if has_skill max-web; then
   npm ci --prefix platform-skills/max-web --ignore-scripts --no-audit --no-fund

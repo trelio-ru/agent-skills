@@ -42,6 +42,13 @@ node ops/scripts/publish_agent_skill_release.mjs \
 проверь каталог и выполни точный безопасный smoke. Source, tag и runtime bytes
 после выпуска не переписываются. Trelio/plugin/host release не создаётся.
 
+Для Авито перед generic package validation/build требуется provider build из
+exact lockfile: `npm ci --prefix platform-skills/avito-search --ignore-scripts`,
+затем `npm run typecheck --prefix platform-skills/avito-search` и
+`npm run build --prefix platform-skills/avito-search`. Ignored dist создаётся на
+runner, source и lockfile входят в PR. Политика live smoke и граница offline
+доказательств – [контракт provider](../platform-skills/avito-search/references/workflow.md).
+
 ## Telegram MTProto
 
 Его общий код и синтетические тесты публичны. Реальная Telegram application
