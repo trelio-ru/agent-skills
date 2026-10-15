@@ -127,3 +127,8 @@ private paths, packets и native stderr в diagnostic не включаются.
 PowerShell процесса до ACL/DPAPI; observer выдаёт только фиксированные имена
 стадий и не позволяет пропустить guards. Observation tests используют полный
 30-секундный wait и lease 120 секунд, чтобы проверять переход, а не скорость OS.
+Native roundtrip сообщает фиксированные стадии wrong-account, ACL и policy,
+без значений/путей. Синтетическая проверка Process policy использует Framework
+JSON/serialization и exact security cmdlet; discovery посторонних utility
+модулей не должен расходовать native deadline. Проверка неизменности policy
+до/после и все ACL/DPAPI assertions остаются обязательными.

@@ -1,3 +1,5 @@
+import { registerInstructionGuideContract } from "../../tools/instruction-guide-contract.mjs";
+registerInstructionGuideContract(new URL("../", import.meta.url));
 import './chat-title.test.mjs';
 import './http-host-fixture.mjs';
 import assert from 'node:assert/strict';
@@ -580,7 +582,7 @@ test('start reuses the running exact lease; new calls cannot renew or use a prev
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
   assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.7.1');
-  assert.equal(release.release.version, '2.3.7');
+  assert.equal(release.release.version, '2.4.0');
 });
 test('status and stop report a dead supervisor as closed without calling its stale control port', { skip: !supported }, async t => {
   const env = { TRELIO_CONFIG_HOME: nativeRoot, TRELIO_SKILL_ID: 't-bank', TRELIO_SKILL_COMPANY_ID: identity.company, TRELIO_SKILL_MEMBER_ID: identity.member };

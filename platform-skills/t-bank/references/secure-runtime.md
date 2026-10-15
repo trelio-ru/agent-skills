@@ -527,3 +527,15 @@ Status после cleanup сохраняет configured/forgotten/authorized к�
 credential fields. Отдельные human decisions и запрет replay сохраняются.
 Regression: submit без chat input, pending, новый challenge, ошибка/expiry,
 exact session и доставка wait module в signed package.
+
+## Доставка обязательных инструкций
+
+Команда `guides` возвращает точные native пути/размеры/SHA-256 обязательных
+частей из того же signed package. Она выполняется до identity/native/vault/
+browser IO, не открывает банковскую сессию и не подтверждает полномочий.
+Все части читаются целиком и по порядку до рабочих команд; неполнота блокирует
+действие. Исходный SKILL.md восстанавливается по SHA-256. Default read-only,
+прямое поручение без новых денежных лимитов, отсутствие sandbox, fresh OS
+unlock, callback/replay guards и исходный deadline не меняются. Проверяется
+материализованный artifact и duplicated MCP fixture с manifest; live personal
+layer проверяется отдельно до rollout общего delivery guard.

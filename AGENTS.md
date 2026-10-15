@@ -69,6 +69,9 @@ diagnostics/audience regression suites на каждой обязательно�
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.
+Windows cold-cache bootstrap WhatsApp также использует прямые Framework APIs
+без filesystem module discovery; owner/DACL до компиляции остаются обязательными.
+Native regression stages показывают только fixed names, не paths или pipe data.
 Для факсимиле читай [контракт](platform-skills/document-facsimile/references/workflow.md):
 один account на вариант подписи, обязательное ФИО, локальный PNG, atomic CAS,
 отдельное основание применения и визуальная проверка итогового документа.
@@ -188,8 +191,16 @@ process transport; CAPTCHA/HTTP block не разрешают retry или см�
 запрещён, включая открытые вкладки, диагностику и fallback после ошибки.
 
 Основная инструкция новой публикации ограничена 16 КиБ UTF-8 после trim;
-подробные сценарии остаются доступными в signed package. Не обрезай существующие
-инструкции: audit показывает отдельный migration debt. Госуслуги возвращают
-точные пути через guides до account/native/browser IO; обязательные сценарии
-читаются полностью до действия. Регрессия instruction-map восстанавливает все
-разделы прежней инструкции с точным SHA-256, кроме явного переноса relative links.
+подробные сценарии остаются доступными в signed package. `guides` возвращает
+точные native пути/размеры/SHA-256 до provider credential/native/browser IO;
+host admission и общий выбор account выполняются отдельно. Все части обязательны
+до рабочих команд, читаются отдельно и целиком. Неполный текст блокирует действие.
+Gosuslugi использует сценарную карту, остальные разделённые инструкции – все
+части по порядку. Регрессии реконструируют исходный SHA-256 с учётом только
+переноса относительных ссылок и LF/CRLF; проверяют материализованный package
+с настоящим CLI без identity/credentials, включая Python isolated mode.
+Markdown-навыки без package содержат полный компактный контракт в SKILL.md;
+сокращение проверяет каждый прежний safety/evidence/approval/replay сценарий.
+Общий CI блокирует превышение у любого текущего provider source. Полный MCP
+результат независимо ограничен 40 000 байтами на final backend/host boundary;
+offline envelope fixture не заменяет live проверку personal layers при выпуске.

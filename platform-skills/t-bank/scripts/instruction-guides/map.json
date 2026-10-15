@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "originalSha256": "9a8d3db4b01353d763eb67cb94228345928d0b94564fa31897d8ce6401b3ffa0",
+  "sections": [
+    {
+      "file": "part-01.md",
+      "bytes": 2942,
+      "sha256": "15997fa6a9586e68b16555420c7a9d950bd4efe6007e23a03d5b18b506b1c0e9",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-02.md",
+      "bytes": 7332,
+      "sha256": "a0a10765dfce19a77ac81f092c47d1258b43741c36fa6ce2de293bb73b5f29c0",
+      "relocatedLinks": [
+        {
+          "from": "references/payment-workflow-boundaries.md",
+          "to": "../../references/payment-workflow-boundaries.md"
+        },
+        {
+          "from": "references/playwright-client.md",
+          "to": "../../references/playwright-client.md"
+        }
+      ],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-03.md",
+      "bytes": 5224,
+      "sha256": "865536d6f3c5b4fa2c3ec70e5d1cbf94a3816674cb27615cbc7b38eff4df572d",
+      "relocatedLinks": [
+        {
+          "from": "references/secure-runtime.md",
+          "to": "../../references/secure-runtime.md"
+        }
+      ]
+    }
+  ]
+}

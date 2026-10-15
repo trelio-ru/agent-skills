@@ -8,6 +8,7 @@
  * cannot invoke Trelio or another integration through this runtime.
  */
 
+import { getInstructionGuides } from './instruction-guides.mjs';
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -6091,6 +6092,8 @@ const executeBrowserCommand = async (page, options, readGuard) => {
 };
 
 const main = async () => {
+  // Exact metadata-only route precedes identity, session and browser access.
+  if (process.argv.length === 3 && process.argv[2] === 'guides') { output(await getInstructionGuides()); return; }
   if (process.argv[2] === "__trelio_accounts_import") { output(importExistingAccount()); return; }
   const options = parseArguments(process.argv.slice(2));
   if (options.command === "help") {

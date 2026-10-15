@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "originalSha256": "56bc3eca61eb39b08d084ea261296e16e63796f6e739a03ab713bfe3ca2e557c",
+  "sections": [
+    {
+      "file": "part-01.md",
+      "bytes": 4044,
+      "sha256": "7b574066cc5b6671aa029dad8cbe08e376babef6226b9ee1e25d28e4ca574b7f",
+      "relocatedLinks": [
+        {
+          "from": "../../docs/agent-skill-connections.md#email-device-storage",
+          "to": "../../../../docs/agent-skill-connections.md#email-device-storage"
+        }
+      ],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-02.md",
+      "bytes": 5403,
+      "sha256": "72550f7831de7028259bc283ee16ec14b8dde7aa393e9bbf727604d42c81c3ed",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-03.md",
+      "bytes": 7744,
+      "sha256": "77d5c44294e7cf159b56dfdfed56824f98ce0b523af319fb1e492ca0c78f21a1",
+      "relocatedLinks": [
+        {
+          "from": "../../docs/email-send-diagnostics.md",
+          "to": "../../../../docs/email-send-diagnostics.md"
+        }
+      ],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-04.md",
+      "bytes": 7222,
+      "sha256": "f317b0222270e4fa58bdc094fe6ceb5b8bb82845015766392265f542437b77f5",
+      "relocatedLinks": [
+        {
+          "from": "../../docs/email-replies.md",
+          "to": "../../../../docs/email-replies.md"
+        },
+        {
+          "from": "../../docs/email-signatures.md",
+          "to": "../../../../docs/email-signatures.md"
+        }
+      ],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-05.md",
+      "bytes": 3765,
+      "sha256": "8cb4550990fdef98a951b1239636211f77c008f8f5333caeb7da5ae3abf29531",
+      "relocatedLinks": []
+    }
+  ]
+}

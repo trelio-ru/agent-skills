@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.6.0",
-    "summary": "Несколько личных аккаунтов с названиями и комментариями, выбором для каждой компании и сохранением существующих подключений."
+    "version": "2.7.0",
+    "summary": "Полные инструкции читаются отдельными частями из подписанного пакета. Правила безопасности и рабочих сценариев сохранены без потери текста."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.6.0",
+    "version": "2.7.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
@@ -39,6 +39,41 @@
         "sourceEnvironment": "TRELIO_TELEGRAM_APP_CREDENTIAL_JSON",
         "releaseInputExposure": "package-recipient",
         "path": "telegram-app-credentials.json",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction_guides.py",
+        "path": "instruction_guides.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-01.md",
+        "path": "instruction-guides/part-01.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-02.md",
+        "path": "instruction-guides/part-02.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-03.md",
+        "path": "instruction-guides/part-03.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-04.md",
+        "path": "instruction-guides/part-04.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-05.md",
+        "path": "instruction-guides/part-05.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-06.md",
+        "path": "instruction-guides/part-06.md",
         "mode": 420
       }
     ]

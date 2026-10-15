@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.4.0",
-    "summary": "Своя подпись для каждого почтового ящика: автоматическое добавление в новые письма и ответы, настройка без переподключения и отправка без подписи по отдельному поручению."
+    "version": "2.5.0",
+    "summary": "Полные инструкции читаются отдельными частями из подписанного пакета. Правила безопасности и рабочих сценариев сохранены без потери текста."
   },
   "connection": null,
   "runtime": {
-    "version": "2.4.0",
+    "version": "2.5.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-email.py",
@@ -47,6 +47,36 @@
       {
         "source": "scripts/private-directory.ps1",
         "path": "private-directory.ps1",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction_guides.py",
+        "path": "instruction_guides.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-01.md",
+        "path": "instruction-guides/part-01.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-02.md",
+        "path": "instruction-guides/part-02.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-03.md",
+        "path": "instruction-guides/part-03.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-04.md",
+        "path": "instruction-guides/part-04.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-05.md",
+        "path": "instruction-guides/part-05.md",
         "mode": 420
       }
     ]

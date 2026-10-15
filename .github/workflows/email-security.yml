@@ -73,6 +73,8 @@ jobs:
           python3 -c "import os, platform, sys; machine=platform.machine().lower().replace('aarch64', 'arm64').replace('amd64', 'x64').replace('x86_64', 'x64'); expected=os.environ['EXPECTED_RUNNER_ARCHITECTURE'].lower(); assert sys.platform == os.environ['EXPECTED_NATIVE_PLATFORM'] and machine == expected, (sys.platform, machine, expected); print({'platform': sys.platform, 'architecture': machine, 'version': platform.python_version()})"
       - name: Validate deterministic package
         run: node platform-skills/tools/build-runtime-package.mjs --skill-dir platform-skills/email-imap-smtp --check
+      - name: Test signed instruction delivery before credential IO
+        run: node --test platform-skills/email-imap-smtp/tests/instruction-guides.test.mjs
       - name: Test email runtime and real native security
         if: vars.TRELIO_ACTIONS_RUNNER_MODE != 'self-hosted' || matrix.nativePlatform == 'win32'
         run: python -m unittest discover -s platform-skills/email-imap-smtp/tests -p "test_*.py"

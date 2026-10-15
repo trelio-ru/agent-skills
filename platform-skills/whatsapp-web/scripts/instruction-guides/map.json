@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "originalSha256": "2dbb1ce949eaa14cee5c6454b362c491ae8f2b20eb41b373175060e87af65ece",
+  "sections": [
+    {
+      "file": "part-01.md",
+      "bytes": 7697,
+      "sha256": "2b0c8753f911267376e6628d85a32a7ea522ea337bc3a66303aef80891228202",
+      "relocatedLinks": [
+        {
+          "from": "references/commands.md",
+          "to": "../../references/commands.md"
+        }
+      ],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-02.md",
+      "bytes": 7185,
+      "sha256": "59199ee51fa9869afcde0aaeb8af7e100a92e1f5806c429392e9c7220c63a3d6",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-03.md",
+      "bytes": 6287,
+      "sha256": "bd57214e3305ba10d17f506e638bd39a1140019decf8a0adb824d9f5a52bcc4c",
+      "relocatedLinks": []
+    }
+  ]
+}

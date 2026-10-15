@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "originalSha256": "5d3022d416972635e7f1bf865a67eb21501d00b6c1aa12b452c09e8dab56500c",
+  "sections": [
+    {
+      "file": "part-01.md",
+      "bytes": 6164,
+      "sha256": "bf97547eff30e5898ad22835c32480d52e5f7d44ca8213c0679c5b39b9cc09bd",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-02.md",
+      "bytes": 5607,
+      "sha256": "91865d42c1e4d7c5c1df97e8189dbdf65d479df1416a1d64cb9339b07323ce98",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-03.md",
+      "bytes": 7527,
+      "sha256": "285c98aa5d38e0e8a9a92cdfe23c2c54ebceb0b29c97dd15d56740f596ec179c",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-04.md",
+      "bytes": 1702,
+      "sha256": "2a95911a50b7ef578db0ac39fd4ee8b25cf811915c96f0bbbc799ea71fa57755",
+      "relocatedLinks": [
+        {
+          "from": "references/secure-runtime.md",
+          "to": "../../references/secure-runtime.md"
+        }
+      ]
+    }
+  ]
+}

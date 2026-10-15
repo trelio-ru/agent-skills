@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { getInstructionGuides } from './instruction-guides.mjs';
 import { validateWaitOptions, waitForSessionChange, withSessionContinuation, finishedReceiptPhase } from './session-wait.mjs';
 
 import crypto from 'node:crypto';
@@ -242,6 +243,8 @@ async function doctor(directory, helper) {
 }
 
 export async function run(args, statusTimeoutMs = 30000) {
+  // Metadata only: do not initialize the native guardian or browser runtime.
+  if (args.length === 1 && args[0] === 'guides') return getInstructionGuides();
   const { command, options } = parseArguments(args);
   if (command === 'wait') return waitForSessionChange(remaining =>
     run(['status', '--session', options['--session']], remaining), options);
@@ -397,7 +400,10 @@ export async function run(args, statusTimeoutMs = 30000) {
   return result;
 }
 
-if (process.argv[1] && await fs.realpath(process.argv[1]).catch(() => '') === fileURLToPath(import.meta.url)) {
+// Resolve both sides: Windows may normalize drive casing or an 8.3 alias in
+// argv while import.meta.url retains its spelling. The same signed file must
+// execute its CLI instead of silently exiting with an empty successful result.
+if (process.argv[1] && await fs.realpath(process.argv[1]).catch(() => '') === await fs.realpath(fileURLToPath(import.meta.url))) {
   try {
     process.stdout.write(`${JSON.stringify(await run(process.argv.slice(2)))}\n`);
   } catch (error) {

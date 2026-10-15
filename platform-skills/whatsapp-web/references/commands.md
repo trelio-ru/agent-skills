@@ -73,6 +73,12 @@ Runtime проверяет заголовок формата и hash содер�
 Windows в protocol mode, Linux, звонки, статусы, каналы, опросы, геолокация, фоновые задачи и
 отложенные отправки не входят в эту версию.
 
+Windows native cache создаётся через прямые Framework APIs без discovery
+filesystem cmdlets. Явные owner/DACL применяются при создании, до компиляции
+helper; существующий target и отсутствующий parent остаются ошибками.
+Cold-cache browser regression сообщает только фиксированные стадии native,
+launch, connect и guards, без путей, содержимого страницы или private pipes.
+
 `submitted` означает подачу. Ответ отправки и `result` содержат отдельные
 `serverAcknowledged`, `delivered`, `read`, `providerRejected` и числовой nullable
 `providerStatus`: 0 – ошибка, 1 – ожидание, 2 – сервер принял, 3 – доставлено,

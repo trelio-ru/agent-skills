@@ -1,3 +1,6 @@
+import { registerInstructionGuideContract } from "../../tools/instruction-guide-contract.mjs";
+registerInstructionGuideContract(new URL("../", import.meta.url));
+import { readSkillInstructions } from "../../tools/read-skill-instructions.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -13,7 +16,7 @@ const [
   runtimeSource,
 ] = await Promise.all([
   readFile(new URL("docs/telegram-mtproto-message-workflows.md", repositoryRoot), "utf8"),
-  readFile(new URL("platform-skills/telegram-mtproto/SKILL.md", repositoryRoot), "utf8"),
+  readSkillInstructions(new URL("platform-skills/telegram-mtproto/", repositoryRoot)),
   readFile(new URL("platform-skills/telegram-mtproto/release.json", repositoryRoot), "utf8"),
   readFile(new URL("platform-skills/telegram-mtproto/scripts/trelio-telegram.py", repositoryRoot), "utf8"),
 ]);
@@ -79,9 +82,9 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
   assert.match(runtimeSource, /MIN_SCHEDULE_LEAD_SECONDS = 60/u);
   assert.match(runtimeSource, /"scheduled"/u);
   assert.match(runtimeSource, /"--schedule-at"/u);
-  assert.equal(releaseManifest.release.version, "2.6.0");
+  assert.equal(releaseManifest.release.version, "2.7.0");
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.6.0");
+  assert.equal(releaseManifest.runtime.version, "2.7.0");
   assert.equal(releaseManifest.runtime.minimumHostVersion, "3.7.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),
@@ -145,6 +148,6 @@ test("Telegram package embeds only the declared distributable release input", ()
     Buffer.from(credentialFile.contentBase64, "base64").toString("utf8"),
     distributableInput,
   );
-  assert.equal(runtimePackage.files.length, 2);
+  assert.equal(runtimePackage.files.length, releaseManifest.runtime.files.length);
   assert.deepEqual(runtimePackage.capabilities, ["local-session", "network", "local-accounts-v1"]);
 });

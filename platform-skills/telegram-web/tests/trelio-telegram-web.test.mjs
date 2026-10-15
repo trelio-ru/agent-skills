@@ -1,3 +1,6 @@
+import { registerInstructionGuideContract } from "../../tools/instruction-guide-contract.mjs";
+registerInstructionGuideContract(new URL("../", import.meta.url));
+import { readSkillInstructions } from "../../tools/read-skill-instructions.mjs";
 import './http-errors.test.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -584,14 +587,14 @@ test("Telegram Web release manifest and instructions publish the global search c
     new URL("../release.json", import.meta.url),
     "utf8",
   ));
-  const skill = fs.readFileSync(new URL("../SKILL.md", import.meta.url), "utf8");
+  const skill = readSkillInstructions(new URL("../", import.meta.url));
   const docs = fs.readFileSync(
     new URL("../../../docs/telegram-web-agent-skill.md", import.meta.url),
     "utf8",
   );
 
-  assert.equal(release.release.version, "2.5.0");
-  assert.equal(release.runtime.version, "2.5.0");
+  assert.equal(release.release.version, "2.6.0");
+  assert.equal(release.runtime.version, "2.6.0");
   assert.equal(release.runtime.minimumHostVersion, "3.7.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -666,10 +669,7 @@ test("Telegram Web login always resolves to a visible mode before browser launch
 });
 
 test("Telegram Web skill tells the owner to close the login window and requires a fresh probe", () => {
-  const skillSource = fs.readFileSync(
-    new URL("../SKILL.md", import.meta.url),
-    "utf8",
-  );
+  const skillSource = readSkillInstructions(new URL("../", import.meta.url));
 
   assert.match(skillSource, /После входа в Telegram Web закройте окно\./u);
   assert.match(skillSource, /exact `login --headed`/u);

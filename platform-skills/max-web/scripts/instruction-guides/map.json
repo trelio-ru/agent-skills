@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "originalSha256": "30ae66457d50e576e706cc3524c97a592ce2493a0a5b73eeb6a3f4b3a1303c39",
+  "sections": [
+    {
+      "file": "part-01.md",
+      "bytes": 7389,
+      "sha256": "9e3ff3b1e1d821c33d4c138e86bd65ccd3379314f7ed90c5b09984adb656aa70",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-02.md",
+      "bytes": 3983,
+      "sha256": "4231d5e900b51ac3b59421d069ccfbe54ef76d8bc28db7bc5abd9a262d6dd376",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-03.md",
+      "bytes": 9495,
+      "sha256": "a02b61723abb4920ed41d790b5850b6d3f2c0aa59f4256c5be04ad6015b6e7b7",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-04.md",
+      "bytes": 6804,
+      "sha256": "002e735dd58abe8f88e069907967e8aef25f0b31a478d0e3a82ac1b837986c74",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-05.md",
+      "bytes": 1738,
+      "sha256": "d998e3605dc7b76cdedf513c4a7ba483f0c555cd999c8f49a54be117a8d58514",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-06.md",
+      "bytes": 8505,
+      "sha256": "41f46898205e8bf3cba9300dc845cd54b54cc7e866cfdea26f239b53f54e663c",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-07.md",
+      "bytes": 7962,
+      "sha256": "c3278c5ec4677b51cc1e67bb362b20151ea0084b2859117dd41fcd5e31ac0b77",
+      "relocatedLinks": [],
+      "sourceSuffix": "\n"
+    },
+    {
+      "file": "part-08.md",
+      "bytes": 494,
+      "sha256": "4df2263cbbfd1a902936313eaacbf540c914f4f928ecf33d011514c734bf4419",
+      "relocatedLinks": []
+    }
+  ]
+}

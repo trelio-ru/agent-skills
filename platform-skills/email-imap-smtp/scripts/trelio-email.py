@@ -2788,6 +2788,13 @@ def import_existing_accounts() -> dict[str, Any]:
 
 
 def main(*, _owned: bool = False) -> int:
+    if sys.argv[1:] == ["guides"]:
+        # Resolve only the signed sibling module, including Python -I mode.
+        spec = importlib.util.spec_from_file_location("instruction_guides", Path(__file__).resolve().with_name("instruction_guides.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        print(json.dumps(module.get_instruction_guides(), ensure_ascii=True))
+        return 0
     if sys.argv[1:] == ["__trelio_accounts_import"]:
         print(json.dumps(import_existing_accounts(), ensure_ascii=False))
         return 0
