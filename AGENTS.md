@@ -184,3 +184,5 @@ npm run build в provider; dist не коммитится. Chromium tests отк
 loopback fixtures. Live smoke требует отдельного разрешения на сайт и не
 подменяется fixture-результатом. Proxy credentials поступают только protected
 process transport; CAPTCHA/HTTP block не разрешают retry или смену transport.
+Доступ агента к Авито идёт только через штатный runtime навыка; browser use
+запрещён, включая открытые вкладки, диагностику и fallback после ошибки.

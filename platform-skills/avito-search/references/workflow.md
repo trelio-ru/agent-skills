@@ -75,6 +75,21 @@ JSON/table/file используют одну bounded projection: 96 KiB string 
 Browser-generated ресурсы ограничены provider/CDN/CAPTCHA origins; запрещены
 private account/messenger routes, downloads и произвольный transport агента.
 
+### Запрет browser use
+
+Доступ агента к Авито разрешён только через штатный signed runtime навыка.
+Агенту запрещены browser/computer-use инструменты, чтение уже открытых вкладок
+Авито, прямые Playwright/Puppeteer/CDP и управление браузером через UI.
+Запрет действует при обычной работе, диагностике и восстановлении после ошибок;
+недоступность runtime, CAPTCHA, HTTP block или неудобный результат не разрешают
+перейти на browser use либо другой transport.
+
+Внутренний Playwright runtime сохраняет описанные выше session/lease/network
+ограничения. Пользователь может сам выполнить ручную проверку в том же окне;
+агент использует только пассивное наблюдение, предоставленное runtime навыка.
+При недоступности или ошибке runtime агент сообщает точную причину и следующий
+шаг, не открывая Авито другими средствами.
+
 ## Проверки и предел подтверждения
 
 Provider-local ci.json регистрирует preparation и единый test entrypoint без
