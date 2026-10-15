@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-web",
-    "version": "2.6.0",
+    "version": "2.5.1",
     "summary": "Полные инструкции читаются отдельными частями из подписанного пакета. Правила безопасности и рабочих сценариев сохранены без потери текста."
   },
   "connection": {
@@ -19,7 +19,7 @@
     ]
   },
   "runtime": {
-    "version": "2.6.0",
+    "version": "2.5.1",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram-web.mjs",
