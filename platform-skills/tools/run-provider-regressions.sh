@@ -15,7 +15,6 @@ PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 TELEGRAM_MTPROTO_TEST_APP_CREDENTIAL_JSON='{"api_id":"12345","api_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 
 FULL_SKILL_SET=(
-  avito-search
   vk-ads
   document-facsimile
   email-imap-smtp
@@ -31,17 +30,25 @@ FULL_SKILL_SET=(
   dodostats-drinkitstats
 )
 
+# Data-only provider registration extends the default full set without another
+# edit to this shared executor. Parsing is validated before any command starts.
+REGISTERED_SKILLS="$(node "${SCRIPT_DIRECTORY}/prepare-provider.mjs" --mode list)"
+while IFS= read -r registered_skill; do
+  if [[ -n "${registered_skill}" ]]; then FULL_SKILL_SET+=("${registered_skill}"); fi
+done <<< "${REGISTERED_SKILLS}"
+
 print_usage() {
   echo "Usage: $0 [--all | --skills skill-a,skill-b]" >&2
 }
 
 is_supported_skill() {
   case "$1" in
-    avito-search|vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|russian-post-registered-mail)
+    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|russian-post-registered-mail)
       return 0
       ;;
     *)
-      return 1
+      node "${SCRIPT_DIRECTORY}/prepare-provider.mjs" --skill "$1" --mode check
+      return "$?"
       ;;
   esac
 }
@@ -96,13 +103,10 @@ if has_skill gas-pravosudie; then
   node platform-skills/gas-pravosudie/development/build-storage-codec.mjs --check
 fi
 
-if has_skill avito-search; then
-  npm ci --prefix platform-skills/avito-search --ignore-scripts --no-audit --no-fund
-  npm run typecheck --prefix platform-skills/avito-search
-  npm run build --prefix platform-skills/avito-search
-  (cd platform-skills/avito-search && npx playwright install chromium)
-  node --test platform-skills/avito-search/tests/ci.mjs
-fi
+# New providers own preparation and the complete test entrypoint in ci.json.
+for skill in "${SELECTED_SKILLS[@]}"; do
+  node platform-skills/tools/prepare-provider.mjs --skill "${skill}" --mode test
+done
 
 if has_skill max-web; then
   npm ci --prefix platform-skills/max-web --ignore-scripts --no-audit --no-fund
@@ -125,7 +129,7 @@ node --test \
 # is tested. Instruction-only and Remote MCP providers have no package here.
 for skill in "${SELECTED_SKILLS[@]}"; do
   case "${skill}" in
-    avito-search|vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|gas-pravosudie|max-web|whatsapp-web|telegram-mtproto|telegram-web)
+    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|gas-pravosudie|max-web|whatsapp-web|telegram-mtproto|telegram-web)
       ;;
     *)
       continue

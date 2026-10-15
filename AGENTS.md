@@ -172,6 +172,11 @@ clean merged worktree и ветку. Новая лицензия без реше
 Публикация исходников не разрешает перенос application identity; Telegram
 artifact собирается только в отдельном private release-контуре.
 
+Новый Node provider регистрирует ci.json внутри своей папки; подготовка и
+полный тестовый entrypoint принадлежат provider. Изменения такой регистрации
+выбирают только его OS. Изменение общего selector/workflow/executor сохраняет
+полный gate; [контракт](docs/github-actions-execution.md#выбор-provider-проверок).
+
 Для Авито читай [контракт](platform-skills/avito-search/references/workflow.md):
 все исходные слои Ascard поддерживаются в одном src, provenance — отдельный
 inventory. Перед generic package validation собери exact lockfile через

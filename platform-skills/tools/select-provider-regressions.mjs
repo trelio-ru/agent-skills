@@ -2,6 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { readProviderRegistrations } from "./provider-ci.mjs";
 import { pathToFileURL } from "node:url";
 
 /**
@@ -11,7 +12,6 @@ import { pathToFileURL } from "node:url";
  * tooling or this workflow itself changed.
  */
 const PROVIDERS = Object.freeze({
-  "avito-search": { owner: "general", matrix: { language: "node", testFile: "platform-skills/avito-search/tests/ci.mjs" } },
   "vk-ads": { owner: "general", matrix: { language: "node", testFile: "platform-skills/vk-ads/tests/runtime.test.mjs" } },
   "1c-edo": { owner: "general", matrix: { language: "python" } },
   "document-facsimile": { owner: "general", matrix: { language: "python" } },
@@ -69,7 +69,6 @@ const HOSTED_OPERATING_SYSTEMS = Object.freeze([
 
 // Preserve the former full self-hosted gate for shared infrastructure changes.
 const FULL_SELF_HOSTED_SKILLS = Object.freeze([
-  "avito-search",
   "vk-ads",
   "document-facsimile",
   "email-imap-smtp",
@@ -86,7 +85,6 @@ const FULL_SELF_HOSTED_SKILLS = Object.freeze([
 ]);
 
 const FULL_HOSTED_MATRIX_SKILLS = Object.freeze([
-  "avito-search",
   "vk-ads",
   "document-facsimile",
   "email-imap-smtp",
@@ -109,9 +107,9 @@ const providerFromPath = (filePath) => {
   return match?.[1] || null;
 };
 
-const buildHostedMatrix = (skills) => ({
+const buildHostedMatrix = (skills, providers) => ({
   include: skills.flatMap((skill) => {
-    const provider = PROVIDERS[skill];
+    const provider = providers[skill];
     if (!provider?.matrix) return [];
     return HOSTED_OPERATING_SYSTEMS.map((os) => ({
       os,
@@ -127,7 +125,14 @@ const buildHostedMatrix = (skills) => ({
  * tooling and this workflow retain the old full gate because they can change
  * package semantics or routing for every provider.
  */
-export const selectProviderRegressions = (rawFiles) => {
+export const selectProviderRegressions = (rawFiles, { registrations = readProviderRegistrations() } = {}) => {
+  // Registrations belong to provider directories, so adding one no longer
+  // changes this executable. Existing routes cannot be silently overridden.
+  for (const skill of Object.keys(registrations)) {
+    if (Object.hasOwn(PROVIDERS, skill)) throw new Error("Provider CI registration conflicts with a historical route.");
+  }
+  const providers = { ...PROVIDERS, ...registrations };
+  const registeredSkills = Object.keys(registrations).sort();
   const files = [...new Set(rawFiles.map(normalizePath).filter(Boolean))].sort();
   const full = files.some((filePath) => (
     filePath === ".github/workflows/platform-skill-runtimes.yml"
@@ -137,7 +142,7 @@ export const selectProviderRegressions = (rawFiles) => {
   const changedProviderIds = [...new Set(files.map(providerFromPath).filter(Boolean))]
     .filter((providerId) => providerId !== "tools")
     .sort();
-  const unknownProviderIds = changedProviderIds.filter((providerId) => !PROVIDERS[providerId]);
+  const unknownProviderIds = changedProviderIds.filter((providerId) => !providers[providerId]);
   if (unknownProviderIds.length > 0) {
     throw new Error(
       `Unknown provider directories require an explicit CI route: ${unknownProviderIds.join(", ")}`,
@@ -147,14 +152,14 @@ export const selectProviderRegressions = (rawFiles) => {
   // Dedicated workflows own provider-only changes. They rejoin this workflow
   // only for a shared change, when preserving the former broad gate is useful.
   const selectedSkills = full
-    ? Object.keys(PROVIDERS).filter((skill) => PROVIDERS[skill].owner === "general").sort()
-    : changedProviderIds.filter((skill) => PROVIDERS[skill].owner === "general");
-  const selfHostedSkills = full ? [...FULL_SELF_HOSTED_SKILLS] : [...selectedSkills];
+    ? Object.keys(providers).filter((skill) => providers[skill].owner === "general").sort()
+    : changedProviderIds.filter((skill) => providers[skill].owner === "general");
+  const selfHostedSkills = full ? [...FULL_SELF_HOSTED_SKILLS, ...registeredSkills] : [...selectedSkills];
   const hostedMatrixSkills = full
-    ? [...FULL_HOSTED_MATRIX_SKILLS]
-    : selectedSkills.filter((skill) => PROVIDERS[skill].matrix);
+    ? [...FULL_HOSTED_MATRIX_SKILLS, ...registeredSkills]
+    : selectedSkills.filter((skill) => providers[skill].matrix);
 
-  const hostedMatrix = buildHostedMatrix(hostedMatrixSkills);
+  const hostedMatrix = buildHostedMatrix(hostedMatrixSkills, providers);
   const hasWork = selfHostedSkills.length > 0;
   return {
     full,

@@ -77,6 +77,8 @@ private account/messenger routes, downloads и произвольный transpor
 
 ## Проверки и предел подтверждения
 
+Provider-local ci.json регистрирует preparation и единый test entrypoint без
+изменения общего selector/workflow для следующего навыка.
 Required hosted Ubuntu/macOS/Windows gates собирают exact lockfile, typecheck,
 package validation, runtime/schema/proxy/pagination tests и реальный Chromium
 только против loopback fixtures. Development/test origin нельзя передать через

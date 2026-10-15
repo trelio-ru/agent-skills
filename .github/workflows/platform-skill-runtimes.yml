@@ -149,16 +149,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Prepare locked Avito source without visiting the website
-        if: matrix.skill == 'avito-search'
-        run: |
-          npm ci --prefix platform-skills/avito-search --ignore-scripts --no-audit --no-fund
-          npm run typecheck --prefix platform-skills/avito-search
-          npm run build --prefix platform-skills/avito-search
-      - name: Install Chromium for loopback-only Avito fixtures
-        if: matrix.skill == 'avito-search'
-        working-directory: platform-skills/avito-search
-        run: npx playwright install --with-deps chromium
+      - name: Prepare provider-owned source and fixture tooling
+        run: >-
+          node platform-skills/tools/prepare-provider.mjs
+          --skill ${{ matrix.skill }} --mode prepare-test
       - name: Validate deterministic runtime package
         env:
           # This value only proves package composition in CI. It is not the
@@ -312,12 +306,11 @@ jobs:
               return;
             }
             core.info(`Reused exact green PR evidence for ${context.sha}.`);
-      - name: Build locked Avito source for the signed package
-        if: steps.tag.outputs.skill_directory_id == 'avito-search'
-        run: |
-          npm ci --prefix platform-skills/avito-search --ignore-scripts --no-audit --no-fund
-          npm run typecheck --prefix platform-skills/avito-search
-          npm run build --prefix platform-skills/avito-search
+      - name: Prepare registered provider source for the signed package
+        if: steps.tag.outputs.release_kind == 'runtime'
+        run: >-
+          node platform-skills/tools/prepare-provider.mjs
+          --skill ${{ steps.tag.outputs.skill_directory_id }} --mode prepare-package
       - name: Build exact package bytes
         if: steps.tag.outputs.release_kind == 'runtime'
         run: >-
