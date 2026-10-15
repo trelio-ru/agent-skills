@@ -13,25 +13,29 @@
       "heading": "## Личные аккаунты",
       "file": "references/accounts.md",
       "sha256": "3ce8e5795fc5b26c063169b868fa42cd1268cb572d6ae8ca4cd0dd12e3ad414a",
-      "bytes": 2145
+      "bytes": 2145,
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Основное правило",
       "file": "references/safety.md",
       "sha256": "8d57c69fe42b072ac04e7658362fb2d12f486fe8575dab881092254ba69a656d",
-      "bytes": 6839
+      "bytes": 6839,
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Защищённый runtime",
       "file": "references/runtime-commands.md",
       "sha256": "f7803aea6f1a561dbe1028404cf9929a42f9388934b88f75d7a542392d5b5d52",
-      "bytes": 15464
+      "bytes": 15464,
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Самостоятельная проверка экрана роли",
       "file": "references/role-review.md",
       "sha256": "1a8f85592de62ba27bcdd0e2b2914ffdc5cfc627812cded588b1e7f478c08baa",
-      "bytes": 1925
+      "bytes": 1925,
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Произвольные Playwright-сценарии и ЕСИА",
@@ -43,43 +47,50 @@
           "from": "(references/playwright-client.md)",
           "to": "(playwright-client.md)"
         }
-      ]
+      ],
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Форма обращения ПОС",
       "file": "references/pos-submission.md",
       "sha256": "b26b47d07a13760237054d198a522f6e1f2cc3b34851aedb80781d9391613c9a",
-      "bytes": 4338
+      "bytes": 4338,
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Маршрутизация",
       "file": "references/routing.md",
       "sha256": "8d62144780816f3db82c4d1933e051fd94a146017e2de18d4380b55655174460",
-      "bytes": 1098
+      "bytes": 1098,
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Авторизация",
       "file": "references/portal-authorization.md",
       "sha256": "8a83640e10591f465c9135b748e37263e24f213f75245eef86b026c6698e7527",
-      "bytes": 1496
+      "bytes": 1496,
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Непрерывная браузерная сессия",
       "file": "references/browser-lifecycle.md",
       "sha256": "fa015bc14b3510a4025625c3197912e4c69990f2118c5283bb7c2c35d4237985",
-      "bytes": 3835
+      "bytes": 3835,
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Госключ",
       "file": "references/goskey-signing.md",
       "sha256": "a470d62d4e86d940ee20d047c001f74c3d032230e2da1c56f25fcf40c4a2afcb",
-      "bytes": 5198
+      "bytes": 5198,
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Заявления на Госуслугах",
       "file": "references/portal-applications.md",
       "sha256": "733627b642d3cb00db5acbf5a073a8ccf751be323db650d702684f6c80e7625a",
-      "bytes": 1472
+      "bytes": 1472,
+      "sourceSuffix": "\n"
     },
     {
       "heading": "## Совместимость",

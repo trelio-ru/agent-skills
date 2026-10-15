@@ -14,9 +14,10 @@ test('short main instructions fit publication budget and all original safety sec
   const map = JSON.parse(await fs.readFile(new URL('references/instruction-map.json', root), 'utf8'));
   const recovered = [];
   for (const section of map.sections) {
-    const body = await fs.readFile(new URL(section.file, root), 'utf8');
+    const body = (await fs.readFile(new URL(section.file, root), 'utf8')).replace(/\r\n?/g, '\n');
     let exact = section.file === 'SKILL.md' ? body.split(/^## /m)[0] : body;
     for (const rewrite of section.relocatedLinks ?? []) exact = exact.replaceAll(rewrite.to, rewrite.from);
+    exact += section.sourceSuffix ?? '';
     assert.equal(hash(exact), section.sha256, section.heading);
     assert.equal(Buffer.byteLength(exact), section.bytes, section.heading);
     recovered.push(exact);

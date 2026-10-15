@@ -36,7 +36,7 @@
 через `guides` из того же signed package. Обязательные общие документы и
 сценарии ЕСИА, ПОС и Госключа читаются до действия. `instruction-map.json`
 и regression восстанавливают исходный SHA-256; учитываются только необходимые
-изменения относительных ссылок при переносе файлов. Account/OS unlock,
+изменения относительных ссылок и конечных пустых строк при переносе файлов. Account/OS unlock,
 callback/state, approvals, manual consent/signing, replay fences и lease
 не изменялись.
 
