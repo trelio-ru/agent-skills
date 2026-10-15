@@ -42,3 +42,8 @@ provider. Изменение общей логики в `platform-skills/tools/*
 workflow запускает полный набор, включая новые регистрации. Это сохраняет
 защиту от незаметного отключения чужих проверок без полного прогона на каждый
 новый навык. Unknown provider и malformed registration завершаются fail-closed.
+
+При полном удалении provider selector подтверждает отсутствие всего каталога
+в exact Git head PR. Его удалённые suites больше не запускаются, но общие
+instruction/package contracts остаются обязательными. Удаление одного ci.json
+при оставшихся source не считается полным удалением и завершается fail-closed.

@@ -1,4 +1,9 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { selectProviderRegressions } from "./select-provider-regressions.mjs";
@@ -92,7 +97,7 @@ test("shared tooling and workflow changes retain the full regression gate", () =
   ]) {
     const selection = selectProviderRegressions([filePath]);
     assert.equal(selection.full, true, filePath);
-    assert.equal(selection.hostedMatrix.include.length, 33, filePath);
+    assert.equal(selection.hostedMatrix.include.length, 30, filePath);
     assert.ok(selection.selfHostedSkills.includes("vk-ads"), filePath);
     assert.ok(selection.selfHostedSkills.includes("document-facsimile"), filePath);
     assert.ok(selection.selfHostedSkills.includes("gosuslugi"), filePath);
@@ -131,9 +136,79 @@ test("facsimile storage and DOCX regressions run on all three hosted operating s
 });
 
 
-test("Avito runs its complete locked-source and DOM entrypoint on every OS", () => {
-  const selection = selectProviderRegressions(["platform-skills/avito-search/src/core/scraper.ts"]);
-  assert.deepEqual(selection.selfHostedSkills, ["avito-search"]);
-  assert.equal(selection.hostedMatrix.include.length, 3);
-  assert.ok(selection.hostedMatrix.include.every(row => row.test_file === "platform-skills/avito-search/tests/ci.mjs"));
+test("a verified retired provider keeps shared contracts without scheduling missing suites", () => {
+  const files = ["platform-skills/retired-fixture/ci.json"];
+  const selection = selectProviderRegressions(files, { registrations: {}, removedProviderIds: ["retired-fixture"] });
+  assert.deepEqual(selection.removedProviderIds, ["retired-fixture"]);
+  assert.deepEqual(selection.selectedSkills, []);
+  assert.equal(selection.hasHostedMatrix, false);
+  assert.equal(selection.runPackageTool, true);
+  assert.equal(selection.runSourceTests, true);
+  assert.throws(() => selectProviderRegressions(files, { registrations: {} }), /Unknown provider/u);
+  assert.throws(() => selectProviderRegressions(["platform-skills/max-web/SKILL.md"], {
+    registrations: {}, removedProviderIds: ["max-web"],
+  }), /no current CI route/u);
+});
+
+test("the real CLI proves complete deletion from Git and rejects registration-only deletion", () => {
+  // macOS aliases /var to /private/var; the CLI's direct-entry comparison must
+  // receive the same physical path that Node resolves for import.meta.url.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "provider-removal-")));
+  try {
+    const tools = path.join(root, "platform-skills", "tools");
+    const hooks = path.join(root, "empty-hooks");
+    fs.mkdirSync(tools, { recursive: true });
+    fs.mkdirSync(hooks);
+    for (const file of ["select-provider-regressions.mjs", "provider-ci.mjs"]) {
+      fs.copyFileSync(fileURLToPath(new URL(file, import.meta.url)), path.join(tools, file));
+    }
+    for (const skill of ["retired-fixture", "partial-fixture"]) {
+      const directory = path.join(root, "platform-skills", skill);
+      fs.mkdirSync(path.join(directory, "tests"), { recursive: true });
+      fs.mkdirSync(path.join(directory, "development"));
+      fs.writeFileSync(path.join(directory, "SKILL.md"), "Fixture instruction\n");
+      fs.writeFileSync(path.join(directory, "tests/ci.mjs"), "// fixture\n");
+      fs.writeFileSync(path.join(directory, "development/prepare.mjs"), "// fixture\n");
+      fs.writeFileSync(path.join(directory, "ci.json"), JSON.stringify({
+        schemaVersion: 1, language: "node", testFile: "tests/ci.mjs", prepareFile: "development/prepare.mjs",
+      }));
+    }
+    // Use isolated hooks and explicit fixture identity: the regression must not
+    // invoke a developer's signing hooks or depend on their global Git config.
+    const git = (...args) => {
+      const result = spawnSync("git", [
+        "-c", `core.hooksPath=${hooks}`, "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false",
+        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...args,
+      ], { cwd: root, encoding: "utf8", windowsHide: true });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    const commit = () => { git("add", "-A"); git("commit", "-qm", "Fixture snapshot"); return git("rev-parse", "HEAD"); };
+    const select = (base, head) => spawnSync(process.execPath, [
+      path.join(tools, "select-provider-regressions.mjs"), "--base", base, "--head", head,
+    ], { cwd: root, encoding: "utf8", windowsHide: true });
+    git("init", "--quiet");
+    const base = commit();
+    fs.rmSync(path.join(root, "platform-skills/retired-fixture"), { recursive: true });
+    const retired = commit();
+    const accepted = select(base, retired);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    const plan = JSON.parse(accepted.stdout);
+    assert.deepEqual(plan.removedProviderIds, ["retired-fixture"]);
+    assert.equal(plan.runSourceTests, true);
+    assert.equal(plan.hasHostedMatrix, false);
+    fs.unlinkSync(path.join(root, "platform-skills/partial-fixture/ci.json"));
+    const partial = commit();
+    const denied = select(retired, partial);
+    assert.equal(denied.status, 1);
+    assert.match(denied.stderr, /Unknown provider directories require an explicit CI route: partial-fixture/u);
+    // Even a locally missing directory is not proof of retirement when the
+    // exact PR head still contains source after its registration was removed.
+    fs.rmSync(path.join(root, "platform-skills/partial-fixture"), { recursive: true });
+    const locallyMissing = select(retired, partial);
+    assert.equal(locallyMissing.status, 1);
+    assert.match(locallyMissing.stderr, /explicit CI route: partial-fixture/u);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
