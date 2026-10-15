@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "t-bank",
-    "version": "2.4.0",
+    "version": "2.3.8",
     "summary": "Полные инструкции читаются отдельными частями из подписанного пакета. Правила безопасности и рабочих сценариев сохранены без потери текста."
   },
   "connection": null,
   "runtime": {
-    "version": "1.4.0",
+    "version": "1.3.8",
     "minimumHostVersion": "3.7.1",
     "entrypoint": {
       "path": "scripts/trelio-t-bank.mjs",
