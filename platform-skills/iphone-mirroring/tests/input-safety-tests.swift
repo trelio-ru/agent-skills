@@ -249,10 +249,60 @@ private enum InputSafetyTests {
         precondition(!watchdogAdmission.accepts(owned: true, release: false))
         precondition(watchdogAdmission.accepts(owned: true, release: true))
 
-        for oldVersion: Int? in [nil, 1, 2, 999] {
+        // Проверяется тот же production down/pause/up, который использует
+        // guardian. Fake clock исключает HID и wall-clock flaky ожидания.
+        precondition(defaultLongPressMilliseconds == 800)
+        for milliseconds in [500, defaultLongPressMilliseconds, 1000] {
+            let duration = try longPressSeconds(milliseconds: milliseconds)
+            clock = 0
+            var events: [String] = []
+            try requireInputHoldBudget(duration: duration, elapsed: 0.2)
+            try performInputEventPair(duration: duration, press: {
+                events.append("down")
+            }, pause: {
+                precondition(events == ["down"])
+                clock += $0
+            }, release: {
+                precondition(clock == Double(milliseconds) / 1000)
+                events.append("up")
+            })
+            precondition(events == ["down", "up"])
+        }
+        for invalid: Int? in [nil, -1, 0, 499, 1001, Int.max] {
+            rejects("invalid_input_duration") { _ = try longPressSeconds(milliseconds: invalid) }
+        }
+        for code in ["input_user_active", "input_target_changed", "input_session_interrupted", "input_handoff_expired", "input_guard_disabled"] {
+            var events: [String] = []
+            rejects(code) {
+                try performInputEventPair(duration: 0.8, press: {
+                    events.append("down")
+                }, pause: { _ in
+                    throw InputSafetyError(code: code, message: "interrupted")
+                }, release: { events.append("up") })
+            }
+            precondition(events == ["down", "up"])
+        }
+        var events: [String] = []
+        rejects("input_target_changed") {
+            try performInputEventPair(duration: 0.8, press: {
+                throw InputSafetyError(code: "input_target_changed", message: "before down")
+            }, pause: { _ in events.append("wait") }, release: { events.append("up") })
+        }
+        precondition(events.isEmpty)
+        // Затянувшийся focus не разрешает урезанный жест. Предел handoff не
+        // растёт ради выбранной длительности, нажатие вообще не начинается.
+        for elapsed in [0.5, 1.6, Double.infinity, Double.nan, -1] {
+            rejects("input_handoff_expired") {
+                try requireInputHoldBudget(duration: 1, elapsed: elapsed)
+                events.append("down")
+            }
+            precondition(events.isEmpty)
+        }
+
+        for oldVersion: Int? in [nil, 1, 2, 3, 999] {
             rejects("session_runtime_changed") { try requireGuardedInputProtocol(oldVersion) }
         }
-        try requireGuardedInputProtocol(3)
+        try requireGuardedInputProtocol(4)
         // Настоящий замороженный процесс, а не mock timer: production boundary
         // обязана убить и reap-нуть его до разрешения восстановления фокуса.
         let stopped = Process()

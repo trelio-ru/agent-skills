@@ -72,7 +72,7 @@ private final class InputGuardian {
     }
 
     private func check() throws {
-        if now - started >= 1.6 { admission.cancel("input_handoff_expired") }
+        if now - started >= inputActionDeadline { admission.cancel("input_handoff_expired") }
         if !sessionHealthy() { admission.cancel("input_session_interrupted") }
         if let tap, !CGEvent.tapIsEnabled(tap: tap) { admission.cancel("input_guard_disabled") }
         if let code = admission.reason {
@@ -132,13 +132,14 @@ private final class InputGuardian {
         // Сохраняем только созданный нами release, никогда не пользовательские
         // клавиши/символы. Отмена между down/up завершает пару перед возвратом.
         releaseEvents.append(up)
-        try post(down)
-        try pause(duration)
-        try post(up, release: true)
-        releaseEvents.removeLast()
+        defer { releaseEvents.removeLast() }
+        try performInputEventPair(
+            duration: duration, press: { try post(down) }, pause: { try pause($0) },
+            release: { try? post(up, release: true) }
+        )
     }
 
-    private func click(_ count: Int, point: CGPoint) throws {
+    private func click(_ count: Int, point: CGPoint, duration: TimeInterval = 0.05) throws {
         for index in 1...count {
             guard let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
                   let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else {
@@ -147,7 +148,7 @@ private final class InputGuardian {
             down.flags = []; up.flags = []
             down.setIntegerValueField(.mouseEventClickState, value: Int64(index))
             up.setIntegerValueField(.mouseEventClickState, value: Int64(index))
-            try pair(down, up, duration: 0.05)
+            try pair(down, up, duration: duration)
             try pause(0.05)
         }
     }
@@ -236,10 +237,11 @@ private final class InputGuardian {
               CGDisplayVendorNumber(operation.displayID) == 0xEEEE,
               CGDisplayBounds(operation.displayID) == operation.virtualBounds,
               operation.virtualBounds.contains(operation.window.bounds),
-              operation.command == "tap" || operation.command == "scroll" || operation.command == "type-text" else {
+              operation.command == "tap" || operation.command == "long-press" || operation.command == "scroll" || operation.command == "type-text" else {
             throw InputSafetyError(code: "invalid_input_operation", message: "Недопустимая операция ввода.")
         }
         let chunks = operation.command == "type-text" ? try inputTextChunks(operation.text ?? "") : []
+        let holdDuration = operation.command == "long-press" ? try longPressSeconds(milliseconds: operation.durationMilliseconds) : nil
         let point = try normalizedInputPoint(window: operation.window, x: operation.x, y: operation.y)
         guard (1...2).contains(operation.count), (20...2000).contains(operation.pixels),
               operation.direction == "up" || operation.direction == "down" else {
@@ -308,6 +310,12 @@ private final class InputGuardian {
             try pause(0.05)
             switch operation.command {
             case "tap": try click(operation.count, point: point)
+            case "long-press":
+                // Проверяем остаток после активации/наведения и до mouseDown.
+                // Остальные проверки и run-loop cancellation остаются общими.
+                try requireInputHoldBudget(duration: holdDuration!, elapsed: now - started)
+                result["duration_ms"] = operation.durationMilliseconds!
+                try click(1, point: point, duration: holdDuration!)
             case "type-text":
                 try click(1, point: point)
                 try pause(0.05)

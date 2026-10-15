@@ -1212,6 +1212,7 @@ private let usage = """
   mirrorctl center --visible
   mirrorctl screenshot --output PATH [--session ID]
   mirrorctl click --x 0...1 --y 0...1 [--count 1|2] (--session ID | --visible)
+  mirrorctl long-press --x 0...1 --y 0...1 [--duration-ms 800 (500...1000)] --session ID
   mirrorctl scroll --direction up|down [--pixels 480] (--session ID | --visible)
   mirrorctl type-text --x 0...1 --y 0...1 --text TEXT --session ID
   mirrorctl home | app-switcher | spotlight (--session ID | --visible)
@@ -1236,10 +1237,10 @@ private func run() throws {
     }
 
     if runtimeOutputOptions.observe {
-        let observableCommands: Set<String> = ["click", "scroll", "type-text", "home", "app-switcher", "spotlight", "retry"]
+        let observableCommands: Set<String> = ["click", "long-press", "scroll", "type-text", "home", "app-switcher", "spotlight", "retry"]
         let startsSession = command == "session" && arguments.dropFirst().first == "start"
         guard startsSession || observableCommands.contains(command) else {
-            throw MirrorError.usage("--observe доступен для session start, click, scroll, type-text, home, app-switcher, spotlight и retry.")
+            throw MirrorError.usage("--observe доступен для session start, click, long-press, scroll, type-text, home, app-switcher, spotlight и retry.")
         }
     }
 
@@ -1317,6 +1318,31 @@ private func run() throws {
         let action = try clickNormalized(app: app, x: x, y: y, count: count)
         Thread.sleep(forTimeInterval: 0.5)
         emitActionResult(["action_result": action], arguments: arguments)
+
+    case "long-press":
+        guard let xText = option("--x", in: arguments), let x = Double(xText), x.isFinite, (0...1).contains(x),
+              let yText = option("--y", in: arguments), let y = Double(yText), y.isFinite, (0...1).contains(y) else {
+            throw MirrorError.usage("Для long-press нужны конечные --x и --y в диапазоне 0...1.")
+        }
+        // Ошибочный или пропущенный аргумент не подменяется default. Значения
+        // отделены от флагов и повторно проверяются supervisor-ом и guardian-ом.
+        let durationText = option("--duration-ms", in: arguments)
+            ?? (arguments.contains("--duration-ms") ? "" : String(defaultLongPressMilliseconds))
+        let milliseconds = Int(durationText)
+        _ = try longPressSeconds(milliseconds: milliseconds)
+        guard !arguments.contains("--count") else {
+            throw InputSafetyError(code: "unsupported_input_option", message: "Длительное нажатие выполняется один раз; --count не поддерживается.")
+        }
+        guard try inputMode(arguments: arguments) == .hidden else {
+            throw InputSafetyError(code: "hidden_session_required", message: "Длительное нажатие выполняется только внутри скрытой сессии.")
+        }
+        observationAfterAction = true
+        let action = try sendSupervisorRequest(
+            command: "long-press", arguments: arguments,
+            fields: ["x": x, "y": y, "durationMilliseconds": milliseconds!]
+        )
+        if runtimeOutputOptions.observe { Thread.sleep(forTimeInterval: 0.5) }
+        emitActionResult(["action_result": action], arguments: arguments, legacyStatus: false)
 
     case "scroll":
         guard let direction = option("--direction", in: arguments) else {
