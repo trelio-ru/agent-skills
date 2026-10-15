@@ -192,7 +192,9 @@ has_skill telegram-web && NODE_TESTS+=(platform-skills/telegram-web/tests/trelio
 has_skill dodostats-drinkitstats && NODE_TESTS+=(platform-skills/dodostats-drinkitstats/tests/remote-mcp-contract.test.mjs)
 
 if [[ "${#NODE_TESTS[@]}" -gt 0 ]]; then
-  node --test "${NODE_TESTS[@]}"
+  # The one interactive desktop and native watchdog timing are shared across
+  # selected providers. Keep the same per-file serialization as hosted jobs.
+  node --test --test-concurrency=1 "${NODE_TESTS[@]}"
 fi
 
 # Gosuslugi's two GUI fixtures share the real OS window manager. Keep their

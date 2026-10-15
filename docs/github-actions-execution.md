@@ -5,6 +5,12 @@
 Обязательные OS и native gates не сокращаются из-за локальной платформы.
 Зелёный exact SHA/OS не дублируется локальным полным прогоном.
 
+Node suites с native watchdog/headed browser исполняются последовательно по
+файлам (`--test-concurrency=1`) и в общей matrix, и в fallback. Они разделяют
+реальный desktop и часы внутри job; параллельные browser/native fixtures не
+должны искажать deadline proof. Набор assertions, тайм-ауты и native limits
+при этом не ослабляются.
+
 Tagged workflow собирает один artifact на `ubuntu-latest`; production signing
 не выполняется в GitHub. Telegram MTProto имеет отдельную приватную сборочную
 границу по [release-process.md](release-process.md).
