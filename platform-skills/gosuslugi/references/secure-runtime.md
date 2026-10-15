@@ -752,3 +752,22 @@ Status после cleanup сохраняет configured/forgotten/authorized к�
 credential fields. Отдельные human decisions и запрет replay сохраняются.
 Regression: submit без chat input, pending, новый challenge, ошибка/expiry,
 exact session и доставка wait module в signed package.
+
+
+## Доставка основной инструкции и сценариев
+
+Основная инструкция ограничена 16 КиБ UTF-8 и задаёт обязательную загрузку
+полных документов до рабочих действий. `guides` – read-only команда provider:
+возвращает закрытую карту путей, размеров и SHA-256 документов exact signed
+package; не принимает произвольный path и не читает vault, credentials или
+provider session. На внешней границе host сохраняется обычный local-account
+selector: сначала `account list`, затем подтверждённый bound/default аккаунт
+либо отдельно выбранная запись каталога. Создание metadata не выполняет вход.
+
+До рабочих команд читаются safety/accounts/runtime/browser/portalAuth/
+compatibility/routing; до ЕСИА, роли, ПОС, Госключа и иных заявлений – нужные
+сценарии. Недоступный/обрезанный/утраченный документ блокирует зависимое действие.
+Пути и digest не заменяют чтение. Package manifest включает все документы;
+новая команда не меняет auth/callback/replay/lease/consent mechanics, host
+minimum или storage scope. Старый полный текст восстанавливается regression
+из instruction-map с прежним SHA-256; relative links явно перенесены.
