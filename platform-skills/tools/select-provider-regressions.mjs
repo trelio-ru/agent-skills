@@ -125,7 +125,10 @@ const buildHostedMatrix = (skills, providers) => ({
  * tooling and this workflow retain the old full gate because they can change
  * package semantics or routing for every provider.
  */
-export const selectProviderRegressions = (rawFiles, { registrations = readProviderRegistrations() } = {}) => {
+export const selectProviderRegressions = (rawFiles, {
+  registrations = readProviderRegistrations(),
+  removedProviderIds = [],
+} = {}) => {
   // Registrations belong to provider directories, so adding one no longer
   // changes this executable. Existing routes cannot be silently overridden.
   for (const skill of Object.keys(registrations)) {
@@ -142,7 +145,15 @@ export const selectProviderRegressions = (rawFiles, { registrations = readProvid
   const changedProviderIds = [...new Set(files.map(providerFromPath).filter(Boolean))]
     .filter((providerId) => providerId !== "tools")
     .sort();
-  const unknownProviderIds = changedProviderIds.filter((providerId) => !providers[providerId]);
+  const removed = new Set(removedProviderIds);
+  // Only the Git-backed caller may establish complete retirement. A retained
+  // registration or unrelated ID must never suppress a current provider suite.
+  for (const providerId of removed) {
+    if (providers[providerId] || !changedProviderIds.includes(providerId)) {
+      throw new Error("Removed provider must be changed and have no current CI route.");
+    }
+  }
+  const unknownProviderIds = changedProviderIds.filter((providerId) => !providers[providerId] && !removed.has(providerId));
   if (unknownProviderIds.length > 0) {
     throw new Error(
       `Unknown provider directories require an explicit CI route: ${unknownProviderIds.join(", ")}`,
@@ -153,18 +164,19 @@ export const selectProviderRegressions = (rawFiles, { registrations = readProvid
   // only for a shared change, when preserving the former broad gate is useful.
   const selectedSkills = full
     ? Object.keys(providers).filter((skill) => providers[skill].owner === "general").sort()
-    : changedProviderIds.filter((skill) => providers[skill].owner === "general");
+    : changedProviderIds.filter((skill) => providers[skill]?.owner === "general");
   const selfHostedSkills = full ? [...FULL_SELF_HOSTED_SKILLS, ...registeredSkills] : [...selectedSkills];
   const hostedMatrixSkills = full
     ? [...FULL_HOSTED_MATRIX_SKILLS, ...registeredSkills]
     : selectedSkills.filter((skill) => providers[skill].matrix);
 
   const hostedMatrix = buildHostedMatrix(hostedMatrixSkills, providers);
-  const hasWork = selfHostedSkills.length > 0;
+  const hasWork = selfHostedSkills.length > 0 || removed.size > 0;
   return {
     full,
     files,
     changedProviderIds,
+    removedProviderIds: [...removed].sort(),
     selectedSkills,
     selfHostedSkills,
     hostedMatrix,
@@ -206,6 +218,23 @@ const readChangedFiles = (base, head) => {
   return result.stdout.split(/\r?\n/u).filter(Boolean);
 };
 
+const readRemovedProviderIds = (files, head) => {
+  // Read the committed tree, not filesystem existence or only diff status D:
+  // deleting ci.json while leaving any provider source must still fail closed.
+  // A rename to a new directory also leaves that new provider to normal routing.
+  const result = spawnSync(
+    "git",
+    ["ls-tree", "--name-only", "-z", `${head}:platform-skills`],
+    { encoding: "utf8", windowsHide: true },
+  );
+  if (result.error || result.status !== 0) {
+    throw new Error("Unable to verify provider directories in the pull-request head.");
+  }
+  const retained = new Set(result.stdout.split("\0").filter(Boolean));
+  return [...new Set(files.map(providerFromPath).filter(Boolean))]
+    .filter((providerId) => providerId !== "tools" && !retained.has(providerId));
+};
+
 const appendGithubOutputs = (outputPath, selection) => {
   // Every value is one-line JSON or a scalar, so GitHub cannot reinterpret a
   // changed filename as a workflow command or multiline output delimiter.
@@ -221,6 +250,7 @@ const appendGithubOutputs = (outputPath, selection) => {
     selection_summary: JSON.stringify({
       full: selection.full,
       changedProviderIds: selection.changedProviderIds,
+      removedProviderIds: selection.removedProviderIds,
       selectedSkills: selection.selectedSkills,
     }),
   };
@@ -233,7 +263,10 @@ const appendGithubOutputs = (outputPath, selection) => {
 
 export const main = (argumentsList = process.argv.slice(2)) => {
   const options = parseArguments(argumentsList);
-  const selection = selectProviderRegressions(readChangedFiles(options.base, options.head));
+  const files = readChangedFiles(options.base, options.head);
+  const selection = selectProviderRegressions(files, {
+    removedProviderIds: readRemovedProviderIds(files, options.head),
+  });
   if (options.githubOutput) appendGithubOutputs(options.githubOutput, selection);
   process.stdout.write(`${JSON.stringify(selection, null, 2)}\n`);
 };
