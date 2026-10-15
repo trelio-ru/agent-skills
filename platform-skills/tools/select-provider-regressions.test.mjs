@@ -92,7 +92,7 @@ test("shared tooling and workflow changes retain the full regression gate", () =
   ]) {
     const selection = selectProviderRegressions([filePath]);
     assert.equal(selection.full, true, filePath);
-    assert.equal(selection.hostedMatrix.include.length, 30, filePath);
+    assert.equal(selection.hostedMatrix.include.length, 33, filePath);
     assert.ok(selection.selfHostedSkills.includes("vk-ads"), filePath);
     assert.ok(selection.selfHostedSkills.includes("document-facsimile"), filePath);
     assert.ok(selection.selfHostedSkills.includes("gosuslugi"), filePath);
@@ -128,4 +128,12 @@ test("facsimile storage and DOCX regressions run on all three hosted operating s
     { os: "macos-latest", skill: "document-facsimile", language: "python" },
     { os: "windows-latest", skill: "document-facsimile", language: "python" },
   ]);
+});
+
+
+test("Avito runs its complete locked-source and DOM entrypoint on every OS", () => {
+  const selection = selectProviderRegressions(["platform-skills/avito-search/src/core/scraper.ts"]);
+  assert.deepEqual(selection.selfHostedSkills, ["avito-search"]);
+  assert.equal(selection.hostedMatrix.include.length, 3);
+  assert.ok(selection.hostedMatrix.include.every(row => row.test_file === "platform-skills/avito-search/tests/ci.mjs"));
 });

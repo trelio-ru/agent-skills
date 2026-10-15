@@ -171,3 +171,11 @@ clean merged worktree и ветку. Новая лицензия без реше
 перед каждым push. Корпоративные исходники не копируются даже как fixtures.
 Публикация исходников не разрешает перенос application identity; Telegram
 artifact собирается только в отдельном private release-контуре.
+
+Для Авито читай [контракт](platform-skills/avito-search/references/workflow.md):
+все исходные слои Ascard поддерживаются в одном src, provenance — отдельный
+inventory. Перед generic package validation собери exact lockfile через
+npm run build в provider; dist не коммитится. Chromium tests открывают только
+loopback fixtures. Live smoke требует отдельного разрешения на сайт и не
+подменяется fixture-результатом. Proxy credentials поступают только protected
+process transport; CAPTCHA/HTTP block не разрешают retry или смену transport.

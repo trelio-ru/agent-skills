@@ -15,6 +15,7 @@ PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 TELEGRAM_MTPROTO_TEST_APP_CREDENTIAL_JSON='{"api_id":"12345","api_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 
 FULL_SKILL_SET=(
+  avito-search
   vk-ads
   document-facsimile
   email-imap-smtp
@@ -36,7 +37,7 @@ print_usage() {
 
 is_supported_skill() {
   case "$1" in
-    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|russian-post-registered-mail)
+    avito-search|vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|russian-post-registered-mail)
       return 0
       ;;
     *)
@@ -95,6 +96,14 @@ if has_skill gas-pravosudie; then
   node platform-skills/gas-pravosudie/development/build-storage-codec.mjs --check
 fi
 
+if has_skill avito-search; then
+  npm ci --prefix platform-skills/avito-search --ignore-scripts --no-audit --no-fund
+  npm run typecheck --prefix platform-skills/avito-search
+  npm run build --prefix platform-skills/avito-search
+  (cd platform-skills/avito-search && npx playwright install chromium)
+  node --test platform-skills/avito-search/tests/ci.mjs
+fi
+
 if has_skill max-web; then
   npm ci --prefix platform-skills/max-web --ignore-scripts --no-audit --no-fund
 fi
@@ -116,7 +125,7 @@ node --test \
 # is tested. Instruction-only and Remote MCP providers have no package here.
 for skill in "${SELECTED_SKILLS[@]}"; do
   case "${skill}" in
-    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|gas-pravosudie|max-web|whatsapp-web|telegram-mtproto|telegram-web)
+    avito-search|vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|gas-pravosudie|max-web|whatsapp-web|telegram-mtproto|telegram-web)
       ;;
     *)
       continue
