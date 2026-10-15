@@ -91,6 +91,40 @@ let inputIdleWaitTimeout: TimeInterval = 600
 let inputRequestTimeout: TimeInterval = inputIdleWaitTimeout + 10
 let sessionDefaultIdleTimeout: TimeInterval = 1_800
 let sessionDefaultHardTimeout: TimeInterval = 7_200
+let inputActionDeadline: TimeInterval = 1.6
+let defaultLongPressMilliseconds = 800
+
+// Удержание не увеличивает двухсекундный handoff. Верхний предел оставляет
+// время на активацию окна, mouseUp и возврат фокуса; отсутствие/ошибка значения
+// на IPC-границе не превращаются в обычный короткий клик.
+func longPressSeconds(milliseconds: Int?) throws -> TimeInterval {
+    guard let milliseconds, (500...1000).contains(milliseconds) else {
+        throw InputSafetyError(code: "invalid_input_duration", message: "Длительное нажатие требует целое --duration-ms в диапазоне 500...1000.")
+    }
+    return Double(milliseconds) / 1000
+}
+
+func requireInputHoldBudget(duration: TimeInterval, elapsed: TimeInterval) throws {
+    // Медленная активация могла потратить весь запас ещё до mouseDown.
+    // Не начинаем заведомо обрезанное удержание и оставляем 150 мс после up
+    // на штатные паузы клика/завершения (50 + 80 мс) до action deadline.
+    guard duration.isFinite, elapsed.isFinite, elapsed >= 0,
+          elapsed + duration + 0.15 < inputActionDeadline else {
+        throw InputSafetyError(code: "input_handoff_expired", message: "Не осталось времени для полного удержания; нажатие не начато.")
+    }
+}
+
+// Production-пара down/up тестируется без HID через инъекции. Отмена во время
+// ожидания обязана отпустить кнопку до выхода из операции. Watchdog отдельно
+// хранит releaseEvents для аварийного exit, который не разматывает Swift stack.
+func performInputEventPair(
+    duration: TimeInterval, press: () throws -> Void,
+    pause: (TimeInterval) throws -> Void, release: () -> Void
+) throws {
+    try press()
+    defer { release() }
+    try pause(duration)
+}
 
 func hasIdleInput(age: TimeInterval, heldKey: Bool, heldButton: Bool, modifiers: CGEventFlags) -> Bool {
     age >= inputIdleRequiredSeconds && !heldKey && !heldButton
@@ -195,6 +229,7 @@ struct GuardedInputOperation: Codable {
     let x: Double
     let y: Double
     let count: Int
+    let durationMilliseconds: Int?
     let direction: String
     let pixels: Int
     let text: String?
@@ -316,7 +351,7 @@ func validateInputTarget(
     }
 }
 
-let guardedInputProtocolVersion = 3
+let guardedInputProtocolVersion = 4
 
 func requireGuardedInputProtocol(_ version: Int?) throws {
     guard version == guardedInputProtocolVersion else {

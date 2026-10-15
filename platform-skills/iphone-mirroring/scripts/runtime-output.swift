@@ -10,7 +10,7 @@ struct RuntimeOutputOptions {
 
     init(arguments: [String]) {
         let valuedOptions: Set<String> = [
-            "--session", "--text", "--output", "--x", "--y", "--count",
+            "--session", "--text", "--output", "--x", "--y", "--count", "--duration-ms",
             "--direction", "--pixels", "--timeout", "--interval",
             "--idle-timeout", "--hard-timeout", "--refresh",
         ]
@@ -47,7 +47,7 @@ func compactRuntimeOutput(_ source: [String: Any], includeOCR: Bool = false) -> 
         "mirrorWasRunning", "mirrorLaunchedBySupervisor",
         "events_posted", "handoff_started", "restored_front_app", "verification_required",
         "input_guard", "input_wait_seconds", "idle_required_seconds", "input_attempts",
-        "focus_ms", "text_echoed",
+        "focus_ms", "text_echoed", "duration_ms",
     ]
     var result = source.filter { fields.contains($0.key) }
     for key in ["action_result", "status", "observation"] {

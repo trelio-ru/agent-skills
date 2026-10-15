@@ -66,6 +66,7 @@ private struct SessionRequest: Codable {
     let x: Double?
     let y: Double?
     let count: Int?
+    let durationMilliseconds: Int?
     let direction: String?
     let pixels: Int?
     let textLength: Int?
@@ -754,6 +755,14 @@ private final class SessionSupervisor: @unchecked Sendable {
                 throw SupervisorError.failure("Для tap нужны x и y.")
             }
             return try performGuardedInput(request: request, command: "tap", x: x, y: y, count: request.count ?? 1)
+        case "long-press":
+            guard let x = request.x, let y = request.y else {
+                throw InputSafetyError(code: "invalid_input_point", message: "Для длительного нажатия нужны x и y.")
+            }
+            // IPC перепроверяет длительность до ожидания ввода/активации.
+            _ = try longPressSeconds(milliseconds: request.durationMilliseconds)
+            return try performGuardedInput(request: request, command: "long-press", x: x, y: y,
+                                           durationMilliseconds: request.durationMilliseconds)
         case "scroll":
             return try performGuardedInput(request: request, command: "scroll", direction: request.direction ?? "", pixels: request.pixels ?? 480)
         case "type-text":
@@ -797,7 +806,7 @@ private final class SessionSupervisor: @unchecked Sendable {
 
     private func performGuardedInput(
         request: SessionRequest, command: String, x: Double = 0.5, y: Double = 0.5, count: Int = 1,
-        direction: String = "down", pixels: Int = 480, text: String? = nil
+        direction: String = "down", pixels: Int = 480, text: String? = nil, durationMilliseconds: Int? = nil
     ) throws -> [String: Any] {
         guard x.isFinite, y.isFinite, (0...1).contains(x), (0...1).contains(y),
               (1...2).contains(count), (20...2000).contains(pixels),
@@ -817,13 +826,13 @@ private final class SessionSupervisor: @unchecked Sendable {
             }
         }, attempt: {
             try performInputAttempt(request: request, command: command, x: x, y: y, count: count,
-                                    direction: direction, pixels: pixels, text: text)
+                                    direction: direction, pixels: pixels, text: text, durationMilliseconds: durationMilliseconds)
         })
     }
 
     private func performInputAttempt(
         request: SessionRequest, command: String, x: Double, y: Double, count: Int,
-        direction: String, pixels: Int, text: String?
+        direction: String, pixels: Int, text: String?, durationMilliseconds: Int?
     ) throws -> [String: Any] {
         guard requestAlive(request), currentStopReason() == nil, !screenIsLocked(),
               let mirrorPID, let window = workingWindow(pid: mirrorPID),
@@ -839,7 +848,7 @@ private final class SessionSupervisor: @unchecked Sendable {
         let operation = GuardedInputOperation(
             command: command, parentPID: getpid(), callerPID: request.clientPID!, window: window.inputIdentity,
             virtualBounds: virtualBounds, displayID: displayID, mainDisplayID: savedMainDisplayID,
-            x: x, y: y, count: count, direction: direction, pixels: pixels, text: text
+            x: x, y: y, count: count, durationMilliseconds: durationMilliseconds, direction: direction, pixels: pixels, text: text
         )
         let child = Process()
         child.executableURL = URL(fileURLWithPath: path)

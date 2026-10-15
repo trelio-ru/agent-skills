@@ -69,9 +69,9 @@ test("release packages the cross-platform gate and every native source", async (
   const packagePaths = release.runtime.files.map((file) => file.path).sort();
 
   assert.equal(release.release.skillId, "iphone-mirroring");
-  assert.equal(release.release.version, "2.1.1");
+  assert.equal(release.release.version, "2.2.0");
   assert.equal(release.connection, null);
-  assert.equal(release.runtime.version, "2.1.0");
+  assert.equal(release.runtime.version, "2.2.0");
   assert.equal(release.runtime.entrypoint.interpreter, "node");
   assert.equal(release.runtime.entrypoint.path, "trelio-iphone-mirroring.mjs");
   assert.deepEqual(release.runtime.capabilities, ["local-session"]);
@@ -318,6 +318,8 @@ test("macOS helper sources compile and expose their bounded command surface", {
     assert.match(result.stdout, /mirrorctl screenshot --output PATH/u);
     assert.match(result.stdout, /--compact/u);
     assert.match(result.stdout, /--observe/u);
+    assert.match(result.stdout, /mirrorctl long-press --x/u);
+    assert.match(result.stdout, /--duration-ms 800 \(500\.\.\.1000\)/u);
 
     const sessionReads = [[], ["--compact"]].map((flags) => spawnSync(
       process.execPath, [entrypoint, "session", "status", ...flags],
@@ -334,17 +336,25 @@ test("macOS helper sources compile and expose their bounded command surface", {
     // must fail before touching Accessibility, an app window, or HID input.
     const guardedCases = [
       { args: ["click", "--x", "0.5", "--y", "0.5"], code: "hidden_session_required" },
+      { args: ["long-press", "--x", "0.5", "--y", "0.5"], code: "hidden_session_required" },
+      { args: ["long-press", "--x", "0.5", "--y", "0.5", "--visible"], code: "hidden_session_required" },
       { args: ["scroll", "--direction", "down"], code: "hidden_session_required" },
       ...["home", "app-switcher", "spotlight", "retry", "focus", "center", "type-text"].map((command) => ({
         args: [command], code: "hidden_session_required",
       })),
       { args: ["click", "--x", "0.5", "--y", "0.5", "--session", "ended"], code: "session_not_active" },
+      { args: ["long-press", "--x", "0.5", "--y", "0.5", "--session", "ended"], code: "session_not_active" },
+      ...["499", "1001", "NaN", "800.5", "--observe", ""].map((duration) => ({
+        args: ["long-press", "--x", "0.5", "--y", "0.5", "--duration-ms", duration], code: "invalid_input_duration",
+      })),
+      { args: ["long-press", "--x", "0.5", "--y", "0.5", "--duration-ms"], code: "invalid_input_duration" },
+      { args: ["long-press", "--x", "0.5", "--y", "0.5", "--count", "2"], code: "unsupported_input_option" },
       { args: ["home", "--session", "ended"], code: "session_not_active" },
       { args: ["type-text", "--session", "ended", "--text", "проверка"], code: "session_not_active" },
       { args: ["click", "--x", "0.5", "--y", "0.5", "--session", "ended", "--visible"], code: "input_mode_conflict" },
     ];
     const compactCases = guardedCases.map(({ args, code }) => ({ args: [...args, "--compact"], code }));
-    const observedCases = guardedCases.filter(({ args }) => ["click", "scroll", "type-text"].includes(args[0]))
+    const observedCases = guardedCases.filter(({ args }) => ["click", "long-press", "scroll", "type-text"].includes(args[0]))
       .map(({ args, code }) => ({ args: [...args, "--compact", "--observe"], code }));
     for (const { args, code } of [...guardedCases, ...compactCases, ...observedCases]) {
       const denied = spawnSync(process.execPath, [entrypoint, ...args], {

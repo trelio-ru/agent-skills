@@ -11,6 +11,8 @@ enum RuntimeOutputTests {
         assert(quoted.compact && !quoted.observe)
         let sessionValue = RuntimeOutputOptions(arguments: ["click", "--session", "--observe", "--x", "0.5"])
         assert(!sessionValue.observe)
+        let durationValue = RuntimeOutputOptions(arguments: ["long-press", "--duration-ms", "--observe", "--compact"])
+        assert(durationValue.compact && !durationValue.observe)
         let enabled = RuntimeOutputOptions(arguments: ["scroll", "--direction", "down", "--compact", "--observe", "--ocr"])
         assert(enabled.compact && enabled.observe && enabled.includeOCR)
 
@@ -39,6 +41,10 @@ enum RuntimeOutputTests {
         assert(status["recognized_text"] == nil && status["welcome_windows"] == nil)
         let withOCR = compactRuntimeOutput(original, includeOCR: true)["status"] as! [String: Any]
         assert(withOCR["recognized_text"] as? [String] == ["Тестовый экран"])
+        let held = compactRuntimeOutput(["action_result": ["action": "long-press", "duration_ms": 800,
+            "events_posted": true, "verification_required": true]])["action_result"] as! [String: Any]
+        assert(held["action"] as? String == "long-press" && held["duration_ms"] as? Int == 800)
+        assert(held["events_posted"] as? Bool == true && held["verification_required"] as? Bool == true)
 
         // Compact не фабрикует отрицание отправки, когда старый/аварийный
         // исполнитель не оставил такого доказательства.

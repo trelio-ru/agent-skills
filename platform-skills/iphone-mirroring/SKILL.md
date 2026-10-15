@@ -1,6 +1,6 @@
 ---
 name: iphone-mirroring
-description: "Control a paired physical iPhone through Apple's iPhone Mirroring app on a local Mac: screenshots, clicks, scrolling, text and system navigation. Not for iOS Simulator, Finder sync or QuickTime capture."
+description: "Control a paired physical iPhone through Apple's iPhone Mirroring app on a local Mac: screenshots, clicks, long presses, scrolling, text and system navigation. Not for iOS Simulator, Finder sync or QuickTime capture."
 ---
 
 # Видеоповтор iPhone
@@ -123,6 +123,7 @@ Lock/sleep, изменение дисплеев, потеря приложени
 
 ```text
 click --x 0.50 --y 0.72 --session SESSION_ID --compact --observe
+long-press --x 0.50 --y 0.72 --duration-ms 800 --session SESSION_ID --compact --observe
 scroll --direction down --pixels 480 --session SESSION_ID --compact --observe
 type-text --x X --y Y --text TEXT --session SESSION_ID --compact --observe
 home --session SESSION_ID --compact --observe
@@ -132,6 +133,13 @@ spotlight --session SESSION_ID --compact --observe
 
 Для прокрутки используй scroll, не drag. Просьба «закрыть приложение» на iPhone
 обычно означает `home`; force quit через App Switcher — только по прямой просьбе.
+
+`long-press` удерживает левую кнопку в одной точке: по умолчанию 800 мс,
+`--duration-ms` принимает целое 500...1000. Только скрытая сессия, один жест без
+`--count`; команда сохраняет двухсекундный handoff и отпускает кнопку при отмене.
+`duration_ms` в ответе — запрошенная длительность, не доказательство исполнения
+на телефоне. Проверь открывшееся меню/другое ожидаемое изменение по снимку;
+не повторяй жест вслепую, в том числе после прерывания.
 
 `type-text` сам кликает по полю и вводит однострочный текст до 128 UTF-16 единиц
 без clipboard, AppleScript, Computer Use и Enter. Пароли/OTP/секреты через argv
