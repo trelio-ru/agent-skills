@@ -660,8 +660,10 @@ test('setup status retains scope/lease, distinguishes process loss/expiry and re
   await assert.rejects(setupStatus(elsewhere, operation), { code: 'setup_not_found' });
 });
 test('native storage roundtrip, private ACL and wrong-account rejection on the real supported OS', { skip: !['darwin', 'win32'].includes(process.platform) }, async t => {
+  t.diagnostic('native roundtrip: bootstrap');
   const store = await fixture(t, {}), state = await store.read(); assert.equal(state.credentials.client_secret, 'synthetic-only-secret');
   const text = await fs.readFile(path.join(store.dir, 'state.enc'), 'utf8'); assert.doesNotMatch(text, /synthetic-only-secret/);
+  t.diagnostic('native roundtrip: wrong-account');
   const stranger = new Store(store.root, owner()); await assert.rejects(stranger.open(text));
   if (process.platform === 'darwin') {
     const source = await fs.readFile(new URL('../scripts/vault-key.swift', import.meta.url));
@@ -683,9 +685,11 @@ test('native storage roundtrip, private ACL and wrong-account rejection on the r
       JSON.stringify({ path: path.join(store.dir, 'state.enc'), protected: protectedValue }));
     // Real native negative evidence: opening inheritance must block the read
     // before decryption; repairing this synthetic ACL restores the same state.
+    t.diagnostic('native roundtrip: open-inheritance');
     await setProtection(false);
     try { await assert.rejects(store.read(), { code: 'native_storage_unavailable' }); }
     finally { await setProtection(true); }
+    t.diagnostic('native roundtrip: restored-private-read');
     assert.equal((await store.read()).credentials.client_secret, 'synthetic-only-secret');
     // The child ignores its parent's Restricted process policy without changing
     // machine/user policy. This is the native bootstrap regression, not a mock.
@@ -693,10 +697,14 @@ test('native storage roundtrip, private ACL and wrong-account rejection on the r
     const policyScript = `
       $ErrorActionPreference='Stop'
       [Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
-      $packet=[Console]::In.ReadToEnd() | ConvertFrom-Json
-      $before=Get-ExecutionPolicy -List | ConvertTo-Json -Compress
+      # JSON and serialization are fixed Framework operations, as in the real
+      # helper. Implicit utility-module discovery otherwise consumes the native
+      # deadline before the policy assertion runs on a cold hosted image.
+      [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35') | Out-Null
+      $packet=([Web.Script.Serialization.JavaScriptSerializer]::new()).DeserializeObject([Console]::In.ReadToEnd())
+      $before=[Management.Automation.PSSerializer]::Serialize((Microsoft.PowerShell.Security\\Get-ExecutionPolicy -List))
       $env:PSExecutionPolicyPreference='Restricted'
-      $start=New-Object Diagnostics.ProcessStartInfo
+      $start=[Diagnostics.ProcessStartInfo]::new()
       $start.FileName=$packet.executable
       $start.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$packet.helper+'"'
       $start.UseShellExecute=$false
@@ -709,11 +717,12 @@ test('native storage roundtrip, private ACL and wrong-account rejection on the r
       $result=$child.StandardOutput.ReadToEnd(); $child.WaitForExit()
       if($child.ExitCode -ne 0){exit 8}
       $env:PSExecutionPolicyPreference='Bypass'
-      if((Get-ExecutionPolicy -List | ConvertTo-Json -Compress) -ne $before){exit 9}
+      if([Management.Automation.PSSerializer]::Serialize((Microsoft.PowerShell.Security\\Get-ExecutionPolicy -List)) -ne $before){exit 9}
       [Console]::Out.Write($result)
     `;
     const packet = JSON.stringify({ executable, helper: (await import('node:url')).fileURLToPath(source), input:
       JSON.stringify({ mode: 'seal', account: store.owner.account, data: Buffer.from('synthetic').toString('base64') }) });
+    t.diagnostic('native roundtrip: process-policy');
     const result = await privateProcess(executable, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', policyScript], packet);
     assert.ok(result.length > 0);
   }

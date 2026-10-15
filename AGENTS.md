@@ -69,6 +69,9 @@ diagnostics/audience regression suites на каждой обязательно�
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.
+Windows cold-cache bootstrap WhatsApp также использует прямые Framework APIs
+без filesystem module discovery; owner/DACL до компиляции остаются обязательными.
+Native regression stages показывают только fixed names, не paths или pipe data.
 Для факсимиле читай [контракт](platform-skills/document-facsimile/references/workflow.md):
 один account на вариант подписи, обязательное ФИО, локальный PNG, atomic CAS,
 отдельное основание применения и визуальная проверка итогового документа.

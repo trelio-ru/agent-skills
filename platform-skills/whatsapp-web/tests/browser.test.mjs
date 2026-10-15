@@ -25,10 +25,14 @@ test('browser policy cannot retain or create a sending allowance for another con
   await assert.rejects(client.execute({command:'policy',mode:'autonomous',confirm:true}),/policy_confirmation_required/);client.close();
 });
 
-test('headed browser observations, input and journal preserve UI and login boundaries', {skip:!['darwin','win32'].includes(process.platform),timeout:60000},async()=>{
+test('headed browser observations, input and journal preserve UI and login boundaries', {skip:!['darwin','win32'].includes(process.platform),timeout:60000},async t=>{
   const root=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'wa-browser-fixture-'));
+  // Fixed synthetic stages locate a stalled native/browser boundary without
+  // printing helper paths, page data or the contents of a protected pipe.
+  t.diagnostic('browser fixture: native-bootstrap');
   const helper=await nativeHelper(root),directory=path.join(root,'output');
   await ensurePrivateDirectory(directory,helper);
+  t.diagnostic('browser fixture: browser-launch');
   const browser=await chromium.launch({channel:process.platform==='win32'?'msedge':'chrome',headless:false});
   const context=await browser.newContext({viewport:{width:900,height:700}});
   await context.route('https://web.whatsapp.com/**',route=>route.fulfill({contentType:'text/html',body:`<!doctype html><html><body>
@@ -40,7 +44,9 @@ test('headed browser observations, input and journal preserve UI and login bound
   const client=new WhatsAppBrowser({context,helper,permit:async()=>{},persist:async text=>saved.push(JSON.parse(text)),
     onPhase:phase=>phases.push(phase),onFatal:code=>failures.push(code)});
   try {
+    t.diagnostic('browser fixture: connect');
     await client.connect();assert.equal(client.connected,true);assert.equal(phases.at(-1),'ready');
+    t.diagnostic('browser fixture: snapshot-and-approval');
     const snapshot=await client.execute({command:'browser-snapshot',output:path.join(directory,'first.png')});
     if(process.platform!=='win32')assert.equal((await fs.stat(snapshot.output)).mode&0o077,0);
     const input=snapshot.controls.find(row=>row.label==='Message');assert.ok(input);
@@ -58,6 +64,7 @@ test('headed browser observations, input and journal preserve UI and login bound
     assert.ok(saved.length>=5);assert.equal(saved.at(-1).transport,'browser');assert.equal(saved.at(-1).wasAuthenticated,true);
     assert.equal(saved.at(-1).auth,undefined);
 
+    t.diagnostic('browser fixture: stale-layout-and-login-fence');
     const positioned=await client.execute({command:'browser-snapshot',output:path.join(directory,'positioned.png')});
     await client.page.locator('#send').evaluate(node=>node.style.transform='translateY(25px)');
     await assert.rejects(client.execute({command:'browser-click',snapshotId:positioned.snapshotId,x:10,y:10,requestId:randomUUID(),dryRun:true}),/browser_snapshot_changed/);
@@ -73,6 +80,7 @@ test('headed browser observations, input and journal preserve UI and login bound
     await assert.rejects(fs.stat(path.join(directory,'forbidden.png')),/ENOENT/);
     await assert.rejects(client.execute({command:'browser-click',snapshotId:before.snapshotId,x:10,y:10,requestId:randomUUID(),dryRun:true}),/browser_login_or_sensitive_page/);
     await client.page.locator('[data-ref]').evaluate(node=>node.remove());
+    t.diagnostic('browser fixture: readonly-and-close');
     await client.execute({command:'policy',mode:'read-only',confirm:true});
     const readOnly=await client.execute({command:'browser-snapshot',output:path.join(directory,'readonly.png')});
     await assert.rejects(client.execute({command:'browser-click',snapshotId:readOnly.snapshotId,x:10,y:10,requestId:randomUUID(),dryRun:true}),/read_only_policy/);
