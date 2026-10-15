@@ -237,7 +237,10 @@ export async function run(args, statusTimeoutMs = 30000) {
   return result;
 }
 
-if (process.argv[1] && await fs.realpath(process.argv[1]).catch(() => '') === fileURLToPath(import.meta.url)) {
+// Resolve both sides: Windows can normalize a drive letter or an 8.3 path
+// in argv without applying that spelling to import.meta.url. Comparing only
+// one resolved side can silently skip the CLI and return empty stdout.
+if (process.argv[1] && await fs.realpath(process.argv[1]).catch(() => '') === await fs.realpath(fileURLToPath(import.meta.url))) {
   try { process.stdout.write(`${JSON.stringify(await run(process.argv.slice(2)))}\n`); }
   catch (error) { process.stderr.write(`${JSON.stringify({ error: error instanceof RuntimeError ? error.code : 'runtime_failed', ...serviceHttpFailure(error) })}\n`); process.exitCode = 1; }
 }

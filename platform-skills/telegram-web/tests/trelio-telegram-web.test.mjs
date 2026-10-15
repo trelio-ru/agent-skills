@@ -593,8 +593,8 @@ test("Telegram Web release manifest and instructions publish the global search c
     "utf8",
   );
 
-  assert.equal(release.release.version, "2.5.0");
-  assert.equal(release.runtime.version, "2.5.0");
+  assert.equal(release.release.version, "2.6.0");
+  assert.equal(release.runtime.version, "2.6.0");
   assert.equal(release.runtime.minimumHostVersion, "3.7.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,

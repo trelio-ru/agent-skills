@@ -59,11 +59,19 @@ export function registerInstructionGuideContract(skillUrl) {
       const result = run(['guides']);
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.stderr, '');
+      assert.ok(result.stdout.trim(), 'metadata CLI must return its complete JSON result');
       const metadata = JSON.parse(result.stdout);
       assert.equal(metadata.requiredBeforeWork, 'all_in_order');
       assert.equal(metadata.guides.length, map.sections.length);
-      for (const guide of metadata.guides) {
-        assert.ok(guide.path.startsWith(packageRoot + path.sep));
+      for (const [index, guide] of metadata.guides.entries()) {
+        // Windows Python resolves drive casing and 8.3 aliases differently
+        // from Node. Compare the actual filesystem object to the exact signed
+        // inventory target, rather than accepting/rejecting a path prefix.
+        const expectedPath = path.join(packageRoot, path.dirname(entry.path),
+          'instruction-guides', map.sections[index].file);
+        const actual = fs.statSync(guide.path, { bigint: true });
+        const expected = fs.statSync(expectedPath, { bigint: true });
+        assert.deepEqual([actual.dev, actual.ino], [expected.dev, expected.ino]);
         const bytes = fs.readFileSync(guide.path);
         assert.equal(hash(bytes), guide.sha256);
         assert.equal(bytes.length, guide.sizeBytes);

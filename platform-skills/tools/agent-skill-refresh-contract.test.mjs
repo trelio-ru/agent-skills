@@ -107,7 +107,7 @@ test("provider instructions keep history and unused workflow detail out of the h
     (await readCurrentSkillInstructions()).map(({ skillId, source }) => [skillId, source]),
   );
   for (const [skillId, maximumBytes] of [["t-bank", 15500]]) {
-    assert.ok(Buffer.byteLength(instructions.get(skillId), "utf8") <= maximumBytes,
+    assert.ok(Buffer.byteLength(await readFile(new URL(`${skillId}/SKILL.md`, platformSkillsDirectory)), "utf8") <= maximumBytes,
       `${skillId}: move supporting detail into references before raising the context budget`);
   }
 });
@@ -117,7 +117,7 @@ test("provider instructions keep history and unused workflow detail out of the h
 test("all public main instructions fit the UTF-8 publication budget", async () => {
   const rows = await reportInstructionBudget(fileURLToPath(platformSkillsDirectory));
   assert.equal(rows.length, 17);
-  assert.deepEqual(rows.filter(row => row.exceedsLimit), []);
+  assert.deepEqual(rows.filter(row => row.exceedsLimit || row.envelopeFixtureExceedsLimit), []);
 });
 
 test("Post keeps every irreversible-action and caller-lifecycle boundary in its compact main text", async () => {
