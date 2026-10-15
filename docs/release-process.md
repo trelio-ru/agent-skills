@@ -71,3 +71,20 @@ provider-ы по exact diff и проверяет Linux/macOS/Windows. Для em
 Подробности исполнения – [github-actions-execution.md](github-actions-execution.md).
 Windows bootstrap следует [общему контракту](windows-native-runtime.md),
 который распространяется и на приватные навыки.
+
+
+## Бюджет основной инструкции
+
+До новой публикации SKILL.md после trim должен помещаться в 16 384 байта UTF-8.
+Tagged publisher и backend проверяют byte limit; число символов его не заменяет.
+Подробные сценарии можно вынести в references только при доставке тех же файлов
+в signed package и явной обязательной загрузке до соответствующего действия.
+Safety/approval/replay/callback/lease rules не удаляются ради размера.
+Полный MCP result отдельно ограничен 40 000 байтами после projection/hydration
+и реальной сериализации клиента; большой manifest или personal layer также
+могут сделать ответ слишком большим. Ответ не обрезается и не разрешает запуск.
+
+`node platform-skills/tools/report-instruction-budget.mjs` проверяет существующие
+общие source без вывода текста. `--strict` возвращает nonzero при превышениях;
+его отчёт не является live read-back или разрешением переписать immutable release.
+Текущий [аудит](skill-instruction-budget-audit.md) сохраняет видимые исключения.

@@ -84,7 +84,8 @@ test("gosuslugi keeps one headed browser session for the whole procedure", async
   const instructions = new Map(
     (await readCurrentSkillInstructions()).map(({ skillId, source }) => [skillId, source]),
   );
-  const source = instructions.get("gosuslugi");
+  const main = instructions.get("gosuslugi");
+  const source = main + "\n" + await readFile(new URL("gosuslugi/references/browser-lifecycle.md", platformSkillsDirectory), "utf8");
 
   assert.ok(source, "missing gosuslugi/SKILL.md");
   assert.match(source, /С первого перехода[^\n]+headed local browser/u);

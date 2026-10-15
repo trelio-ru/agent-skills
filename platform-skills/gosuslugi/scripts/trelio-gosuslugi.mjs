@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { validateWaitOptions, waitForSessionChange, withSessionContinuation, finishedReceiptPhase } from './session-wait.mjs';
+import { getInstructionGuides } from './instruction-guides.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
@@ -14,7 +15,7 @@ import { bootstrapBrowser, loadPlaywright, loginRole } from './browser.mjs';
 import { readAuthorization } from './transport.mjs';
 import { resolveRequestTitle } from './chat-title.mjs';
 
-const COMMANDS = ['client', 'doctor', 'bootstrap', 'authorize', 'start', 'wait', 'status', 'resume', 'review-role', 'roles', 'choose-role', 'snapshot', 'page', 'stop', 'configure', 'forget'];
+const COMMANDS = ['guides', 'client', 'doctor', 'bootstrap', 'authorize', 'start', 'wait', 'status', 'resume', 'review-role', 'roles', 'choose-role', 'snapshot', 'page', 'stop', 'configure', 'forget'];
 export function parseArguments(args) {
   const [command = 'doctor', ...rest] = args;
   requireThat(COMMANDS.includes(command), 'unknown_command');
@@ -133,6 +134,7 @@ async function doctor(directory, helper, root) {
 export async function run(args, statusTimeoutMs = 30000) {
   if (args.length === 1 && args[0] === "__trelio_accounts_import") return importExistingAccounts();
   const { command, options } = parseArguments(args);
+  if (command === 'guides') return getInstructionGuides();
   if (command === 'wait') return waitForSessionChange(remaining =>
     run(['status', '--session', options['--session']], remaining), options);
   // Parse and authorization-shape errors stay side-effect free and are

@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.4",
-    "summary": "Личный вход ждёт загрузки ролей; агент самостоятельно проверяет экран роли перед вопросом пользователю."
+    "version": "4.6.0",
+    "summary": "Короткая основная инструкция и проверяемые полные сценарии ЕСИА, Госключа и ПОС без потери правил безопасности."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.4",
+    "version": "3.6.0",
     "minimumHostVersion": "3.7.1",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",
@@ -146,7 +146,81 @@
         "path": "references/playwright-client.md",
         "mode": 420
       },
-      { "source": "scripts/session-wait.mjs", "path": "scripts/session-wait.mjs", "mode": 420 }
+      {
+        "source": "scripts/session-wait.mjs",
+        "path": "scripts/session-wait.mjs",
+        "mode": 420
+      },
+      {
+        "source": "references/runtime-commands.md",
+        "path": "references/runtime-commands.md",
+        "mode": 420
+      },
+      {
+        "source": "references/role-review.md",
+        "path": "references/role-review.md",
+        "mode": 420
+      },
+      {
+        "source": "references/esia-authorization.md",
+        "path": "references/esia-authorization.md",
+        "mode": 420
+      },
+      {
+        "source": "references/pos-submission.md",
+        "path": "references/pos-submission.md",
+        "mode": 420
+      },
+      {
+        "source": "references/browser-lifecycle.md",
+        "path": "references/browser-lifecycle.md",
+        "mode": 420
+      },
+      {
+        "source": "references/goskey-signing.md",
+        "path": "references/goskey-signing.md",
+        "mode": 420
+      },
+      {
+        "source": "references/portal-applications.md",
+        "path": "references/portal-applications.md",
+        "mode": 420
+      },
+      {
+        "source": "references/compatibility.md",
+        "path": "references/compatibility.md",
+        "mode": 420
+      },
+      {
+        "source": "references/accounts.md",
+        "path": "references/accounts.md",
+        "mode": 420
+      },
+      {
+        "source": "references/safety.md",
+        "path": "references/safety.md",
+        "mode": 420
+      },
+      {
+        "source": "references/routing.md",
+        "path": "references/routing.md",
+        "mode": 420
+      },
+      {
+        "source": "references/portal-authorization.md",
+        "path": "references/portal-authorization.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides.mjs",
+        "path": "scripts/instruction-guides.mjs",
+        "mode": 420
+      },
+      {
+        "source": "references/secure-runtime.md",
+        "path": "references/secure-runtime.md",
+        "mode": 420
+      }
     ]
   }
 }
