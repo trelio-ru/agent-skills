@@ -88,7 +88,7 @@ async function completeList(api, entity, parentKey, parentId, expected, fields) 
 // just a name or a subset of budgets. Only the parent's status and updated time
 // may differ after our one status setter. It is an optimistic guard: VK does
 // not document atomic If-Match/CAS for this endpoint.
-export async function recoveryTree(api, op, parentStatus) {
+export async function recoveryTree(api, op, parentStatus, canonical = stable) {
   check(api.auth.groups === 'ad_groups', 'status_recovery_resource_not_supported');
   const parent = project(await api.get('plans', op.id, PARENT_FIELDS), PARENT_FIELDS);
   check(id(parent.id) === op.id && parent.status === parentStatus, 'status_recovery_parent_changed');
@@ -119,34 +119,38 @@ export async function recoveryTree(api, op, parentStatus) {
   const normalizedParent = { ...parent }; delete normalizedParent.status; delete normalizedParent.updated;
   const review = { parent, groups: tree }; data(review);
   check(Buffer.byteLength(JSON.stringify(review)) <= 160000, 'status_recovery_tree_too_large');
-  return { digest: hash(stable({ parent: normalizedParent, tree })), parentUpdated: parent.updated, review,
+  // Reuse the ordinary journal's semantic snapshot for each actual object.
+  // Only its existing sex/loc_type ordering and empty-segments equivalences
+  // apply; this path must not invent a broader normalization of advertising.
+  const normalizedTree = tree.map(({ group, banners }) => ({ group: canonical(group), banners: banners.map(banner => canonical(banner)) }));
+  return { digest: hash(stable({ parent: canonical(normalizedParent), tree: normalizedTree })), parentUpdated: parent.updated, review,
     observed: { id: op.id, status: parent.status, groupIds: groups.map(g => id(g.id)), totalBudget: total / 100, dailyBudget: daily / 100, endDate: op.guard.endDate } };
 }
 
-export async function prepareStatusRecovery(api, specification, state, scope, now) {
+export async function prepareStatusRecovery(api, specification, state, scope, now, canonical) {
   check(exactKeys(specification, ['kind', 'entity', 'id', 'originalOperationId', 'guard']) && specification.kind === 'status-recovery' &&
     specification.entity === 'plans' && OPERATION.test(specification.originalOperationId), 'status_recovery_spec_invalid');
   const op = { ...structuredClone(specification), id: id(specification.id), guard: guardOf(specification.guard, now), reviewedAt: now };
   const source = recoverySource(state, op, scope);
   op.originalHash = source.hash; op.originalDispatchedAt = source.dispatchedAt;
-  const current = await recoveryTree(api, op, 'blocked');
+  const current = await recoveryTree(api, op, 'blocked', canonical);
   op.treeDigest = current.digest; op.parentUpdated = current.parentUpdated;
   op.review = current.review;
   op.effect = { entity: 'plans', id: op.id, payload: { status: 'active' }, additionalDispatchesMaximum: 1 };
   return op;
 }
 
-export async function preflightStatusRecovery(api, op, state, scope, now) {
+export async function preflightStatusRecovery(api, op, state, scope, now, canonical) {
   const source = recoverySource(state, op, scope);
   check(source.hash === op.originalHash && source.dispatchedAt === op.originalDispatchedAt, 'status_recovery_source_invalid');
   guardOf(op.guard, now);
-  const current = await recoveryTree(api, { ...op, reviewedAt: now }, 'blocked');
+  const current = await recoveryTree(api, { ...op, reviewedAt: now }, 'blocked', canonical);
   check(current.digest === op.treeDigest && current.parentUpdated === op.parentUpdated, 'object_changed_replan_required');
   return source;
 }
 
-export async function verifyStatusRecovery(api, op) {
-  const current = await recoveryTree(api, op, 'active');
+export async function verifyStatusRecovery(api, op, canonical) {
+  const current = await recoveryTree(api, op, 'active', canonical);
   check(current.digest === op.treeDigest, 'status_recovery_tree_changed');
   return current.observed;
 }

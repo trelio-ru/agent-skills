@@ -234,3 +234,20 @@ test('a failed final local save preserves both claims and completes by GET after
   assert.equal((await restarted.reconcile('recover-status')).phase, 'verified'); assert.equal(f.count(), 2);
   assert.equal((await f.store.read()).operations['original-status'].resolution.currentStateVerified, true);
 });
+
+test('recovery shares only the existing targeting snapshot equivalences and preserves all other changes', async () => {
+  for (const mode of ['sex-order', 'location-order', 'empty-segments', 'duplicate', 'membership', 'other-array']) {
+    const f = await fixture();
+    f.groups[0].targetings = { sex: ['male', 'female'], geo: { local_geo: { loc_type: ['home', 'work'] } }, segments: [], regions: [1, 2] };
+    const plan = await f.ops.plan(copy(SPEC));
+    if (mode === 'sex-order') f.groups[0].targetings.sex.reverse();
+    if (mode === 'location-order') f.groups[0].targetings.geo.local_geo.loc_type.reverse();
+    if (mode === 'empty-segments') delete f.groups[0].targetings.segments;
+    if (mode === 'duplicate') f.groups[0].targetings.sex = ['female', 'male', 'male'];
+    if (mode === 'membership') f.groups[0].targetings.sex = ['male'];
+    if (mode === 'other-array') f.groups[0].targetings.regions.reverse();
+    if (['sex-order', 'location-order', 'empty-segments'].includes(mode)) {
+      assert.equal((await f.ops.apply(plan.planId, plan.planHash, 'recover-status')).phase, 'verified'); assert.equal(f.count(), 2);
+    } else { await assert.rejects(f.ops.apply(plan.planId, plan.planHash, 'recover-status')); assert.equal(f.count(), 1); }
+  }
+});

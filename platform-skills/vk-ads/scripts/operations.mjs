@@ -131,7 +131,7 @@ export class Operations {
       state.plans = Object.fromEntries(Object.entries(state.plans).filter(([key, p]) => p.expires > this.now() || retained.has(key)));
       check(Object.keys(state.plans).filter(key => !retained.has(key)).length < 100, 'plan_store_full');
       const op = specification?.kind === 'status-recovery'
-        ? await prepareStatusRecovery(this.api, specification, state, scope(this.store.owner), this.now())
+        ? await prepareStatusRecovery(this.api, specification, state, scope(this.store.owner), this.now(), snapshot)
         : await prepare(this.api, specification);
       const record = { id: crypto.randomUUID(), account: this.store.owner.account,
         scope: scope(this.store.owner), op, expires: this.now() + 30 * 60 * 1000 };
@@ -153,7 +153,7 @@ export class Operations {
       check(Object.keys(state.operations).length < 1000, 'receipt_store_full');
       const { op } = plan;
       let recoverySource;
-      if (op.kind === 'status-recovery') recoverySource = await preflightStatusRecovery(this.api, op, state, scope(this.store.owner), this.now());
+      if (op.kind === 'status-recovery') recoverySource = await preflightStatusRecovery(this.api, op, state, scope(this.store.owner), this.now(), snapshot);
       if (managed(op)) await preflightManaged(this.api, op);
       if (op.kind === 'update') {
         const current = await this.api.get(op.entity, op.id, ['id', ...Object.keys(op.payload)]);
@@ -206,7 +206,7 @@ export class Operations {
   async verify(plan, receipt) {
     const { op } = plan;
     if (op.kind === 'status-recovery') {
-      receipt.observed = await verifyStatusRecovery(this.api, op); receipt.phase = 'verified'; return;
+      receipt.observed = await verifyStatusRecovery(this.api, op, snapshot); receipt.phase = 'verified'; return;
     }
     if (managed(op)) {
       receipt.observed = await verifyManaged(this.api, op, receipt.objectId); receipt.phase = 'verified'; return;

@@ -68,6 +68,8 @@ targeting, media IDs, landing ID/URL, тексты и разрешённая м�
 закрытый snapshot; сравни его целиком с уже разрешённым брифом до apply.
 Generated media variants/CDN derivatives не выводятся: сохраняются identity
 контента, URL и text roles. Нет широкого fallback аудитории.
+Сверка использует прежние узкие эквивалентности sex/loc_type ordering и
+пустого segments; состав, duplicates, другие массивы и поля остаются exact.
 
 ## Один дополнительный dispatch
 
