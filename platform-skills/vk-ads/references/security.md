@@ -22,7 +22,11 @@ receipt persistence; дополнительная диагностика не о
 Для HTTP-отказа `requestStage` допускает только `oauth_token` или
 `advertising_api`, заданные фиксированной веткой запроса. При повторной
 проекции проверяются те же два значения; произвольный stage/URL, account,
-наличие токена и OAuth error body не экспортируются. Старый receipt без стадии
+наличие токена и OAuth error body не экспортируются. OAuth reason допускает
+только шесть RFC6749§5.2 codes и VK invalid_token/expired_token/invalid_user/
+revoked_token либо not_returned/not_recognized/not_available. JSON до 16 КиБ
+читается лишь по error string/root code/error.code, без message, HTML или headers.
+Неизвестная причина не становится токенным лимитом. Старый receipt без стадии
 сохраняет отсутствие сведений; diagnostic не разрешает повтор OAuth-настройки
 или рекламной записи и не доказывает причину отказа VK.
 Read-back и полный before/preflight snapshot нормализуют только порядок
@@ -57,8 +61,18 @@ Read-back mismatch сообщает лишь static field code с уровнем
 
 Stable namespace:
 `<TRELIO_CONFIG_HOME>/integrations/vk-ads/accounts/<host-account-UUID>/state.enc`.
-Runtime version не входит в key. Credentials, reusable access token/expiry,
+Runtime version не входит в key. Credentials, reusable access/refresh token/expiry,
 operation plans/receipts/setup state находятся в одном encrypted envelope.
+Refresh rotation сохраняется до первого рекламного GET. Обновление/начальная
+выдача выполняются под account lock с повторным чтением кеша и проверкой прежней
+credential identity; plaintext/argv/ordinary env не используются. Invalid refresh
+не вызывает выпуск замены или автоматический отзыв. После успешного OAuth, но
+отказа readiness GET пара остаётся в зашифрованном состоянии; новые команды
+переиспользуют её. Refresh значения редактируются и отражаются только privately,
+обычные API ответы дополнительно очищаются от совпадений с refresh.
+Утраченное старой версией значение не добывается из logs или стороннего store.
+Массовый token/delete не является recovery и не предоставлен в CLI; отсутствующий
+документированный точечный revoke нельзя заменять угаданным API или reset.
 Запись атомарна; unknown receipt сохраняется до network dispatch. Максимум
 100 plans/1000 receipts и 4 MiB ciphertext; автоматического удаления pending
 или unknown evidence нет. При лимите требуется отдельное maintenance решение,

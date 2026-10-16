@@ -10,7 +10,7 @@ import { Store, privateProcess } from '../scripts/storage.mjs';
 import { Api, safeApiErrorDetails, apiValidationDetails } from '../scripts/api.mjs';
 import { Operations, prepare, matches } from '../scripts/operations.mjs';
 import { input } from '../scripts/form.mjs';
-import { argumentsOf, configureWorker, setupStatus } from '../scripts/trelio-vk-ads.mjs';
+import { argumentsOf, configureWorker, setupStatus, accountApi } from '../scripts/trelio-vk-ads.mjs';
 // The provider matrix intentionally invokes this portable entrypoint on all
 // three OS. Register the separate suites here too, so new modules cannot be
 // checked only by a local file-specific command and silently miss hosted CI.
@@ -67,7 +67,7 @@ test('host identity requires an exact selected local account; metadata cannot ch
 test('GET retries safely, bounds pagination and never follows redirects with a token', async () => {
   let calls = 0; const waits = [], api = new Api(auth(), { sleep: async ms => waits.push(ms), fetcher: async (url, options) => {
     assert.equal(url.origin, 'https://ads.vk.com'); assert.equal(options.redirect, 'error');
-    if (url.pathname.includes('oauth2')) return json({ access_token: 'synthetic-token', expires_in: 600 });
+    if (url.pathname.includes('oauth2')) return json({ access_token: 'synthetic-token', refresh_token: 'synthetic-refresh', expires_in: 600 });
     calls++; if (calls === 1) throw new Error('raw private URL'); if (calls === 2) return json({}, 503);
     return json({ items: Array.from({ length: Number(url.searchParams.get('limit')) }, (_, i) => ({ id: i + 1 })), count: 10 });
   } });
@@ -94,7 +94,7 @@ test('403 failures distinguish OAuth issuance from advertising reads with fresh 
         const oauth = url.pathname === '/api/v2/oauth2/token.json';
         calls.push(oauth ? 'oauth_token' : 'advertising_api');
         assert.equal(options.redirect, 'error');
-        if (oauth && scenario !== 'oauth_denied') return json({ access_token: 'synthetic-token', expires_in: 600 });
+        if (oauth && scenario !== 'oauth_denied') return json({ access_token: 'synthetic-token', refresh_token: 'synthetic-refresh', expires_in: 600 });
         assert.equal(options.method, oauth ? 'POST' : 'GET');
         // Provider JSON cannot forge the stage, and OAuth errors are not read
         // as ordinary API data. Neither body nor private reflected values may
@@ -106,7 +106,7 @@ test('403 failures distinguish OAuth issuance from advertising reads with fresh 
     const requestStage = scenario === 'oauth_denied' ? 'oauth_token' : 'advertising_api';
     await assert.rejects(api.list('plans', {}, 1), error => {
       assert.equal(error.code, 'permission_denied');
-      assert.deepEqual(error.details, { httpStatus: 403, requestStage });
+      assert.deepEqual(error.details, { httpStatus: 403, requestStage, ...(scenario === 'oauth_denied' ? { oauthReason: 'not_returned' } : {}) });
       return true;
     });
     assert.deepEqual(calls, scenario === 'oauth_denied' ? ['oauth_token'] : cached ? ['advertising_api'] : ['oauth_token', 'advertising_api']);
@@ -267,9 +267,139 @@ test('audience DELETE durable claim survives encrypted store restart and recover
 test('agency auth selects a per-client token privately and cached tokens avoid token issuance', async () => {
   const api = new Api({ ...auth(), mode: 'agency', agency_client: 'synthetic-agency-client' }, { fetcher: async (_url, opts) => {
     assert.equal(opts.body.get('grant_type'), 'agency_client_credentials'); assert.equal(opts.body.get('agency_client_name'), 'synthetic-agency-client');
-    return json({ access_token: 'cached-token', expires_in: 3600 });
+    return json({ access_token: 'cached-token', refresh_token: 'cached-refresh', expires_in: 3600 });
   } });
   await api.login(); const cached = new Api(api.auth); assert.equal(cached.access, 'cached-token');
+});
+test('expired VK tokens refresh their existing grant and persist rotation instead of issuing duplicates', async () => {
+  for (const mode of ['client', 'agency']) {
+    const initial = { ...auth(), mode, agency_client: mode === 'agency' ? 'synthetic-agency' : '' }, grants = [];
+    const api = new Api(initial, { fetcher: async (_url, options) => {
+      grants.push(options.body.get('grant_type'));
+      if (grants.length === 1) return json({ access_token: 'synthetic-first-access', refresh_token: 'synthetic-first-refresh', expires_in: 600 });
+      assert.equal(options.body.get('refresh_token'), 'synthetic-first-refresh');
+      assert.equal(options.body.has('agency_client_name'), false);
+      return json({ access_token: 'synthetic-next-access', refresh_token: 'synthetic-next-refresh', expires_in: 600 });
+    } });
+    await api.login(); assert.equal(initial.refresh_token, 'synthetic-first-refresh');
+    initial.expires_at = 0;
+    const restarted = new Api(initial, { fetcher: api.fetcher }); await restarted.login();
+    assert.deepEqual(grants, [mode === 'agency' ? 'agency_client_credentials' : 'client_credentials', 'refresh_token']);
+    assert.equal(initial.refresh_token, 'synthetic-next-refresh'); assert.equal(initial.access_token, 'synthetic-next-access');
+  }
+});
+test('OAuth expires_in uses seconds and valid cached access is reused without ignoring the expiry margin', async t => {
+  const now = 1800000000000; t.mock.method(Date, 'now', () => now); let requests = 0;
+  const initial = auth(), api = new Api(initial, { fetcher: async () => {
+    requests++; return json({ access_token: 'synthetic-access', refresh_token: 'synthetic-refresh', expires_in: '86400' });
+  } });
+  await api.login(); assert.equal(initial.expires_at, now + 86400 * 1000);
+  assert.equal(new Api(initial).access, 'synthetic-access'); assert.equal(requests, 1);
+  assert.equal(new Api({ ...initial, expires_at: now + 60001 }).access, 'synthetic-access');
+  assert.equal(new Api({ ...initial, expires_at: now + 60000 }).access, null);
+  assert.equal(new Api({ ...initial, expires_at: now - 1 }).access, null);
+});
+test('a failed refresh never falls back to minting a token or overwrites the saved grant', async () => {
+  for (const status of [400, 403, 503, 'network']) {
+    const initial = { ...auth(), access_token: 'synthetic-old-access', refresh_token: 'synthetic-old-refresh', expires_at: 0 };
+    const before = structuredClone(initial); let calls = 0;
+    const api = new Api(initial, { fetcher: async (_url, options) => {
+      calls++; assert.equal(options.body.get('grant_type'), 'refresh_token');
+      if (status === 'network') throw new Error('private transport text');
+      return json({ error: { message: 'private synthetic-old-refresh' } }, status);
+    } });
+    await assert.rejects(api.login(), error => {
+      assert.equal(error.code, status === 400 ? 'authorization_required' : status === 403 ? 'permission_denied' : 'network_unavailable');
+      return true;
+    });
+    assert.equal(calls, 1); assert.deepEqual(initial, before); assert.equal(api.access, null);
+  }
+});
+test('OAuth reason projection accepts documented codes only and never infers token limits from private text', async () => {
+  for (const [body, oauthReason] of [
+    [{ error: 'invalid_client', error_description: 'synthetic-only-secret' }, 'invalid_client'],
+    [{ error: { code: 'invalid_user', message: 'private' } }, 'invalid_user'],
+    [{ code: 'invalid_grant', message: 'private' }, 'invalid_grant'],
+    [{ error: 'unknown_private_value', message: 'token limit exceeded synthetic-only-secret' }, 'not_recognized'],
+    [{ error: { message: 'token limit exceeded' } }, 'not_returned'],
+  ]) {
+    const api = new Api(auth(), { fetcher: async () => json(body, 403) });
+    await assert.rejects(api.login(), error => {
+      const expected = { httpStatus: 403, requestStage: 'oauth_token', oauthReason };
+      assert.deepEqual(error.details, expected); assert.deepEqual(safeApiErrorDetails(error.details), expected); return true;
+    });
+  }
+  const oversized = new Api(auth(), { fetcher: async () => json({ error: 'invalid_client', message: 'x'.repeat(17000) }, 403) });
+  await assert.rejects(oversized.login(), { details: { httpStatus: 403, requestStage: 'oauth_token', oauthReason: 'not_available' } });
+  assert.deepEqual(safeApiErrorDetails({ httpStatus: 403, requestStage: 'advertising_api', oauthReason: 'invalid_client' }),
+    { httpStatus: 403, requestStage: 'advertising_api' });
+  assert.deepEqual(safeApiErrorDetails({ httpStatus: 403, requestStage: 'oauth_token', oauthReason: 'private' }),
+    { httpStatus: 403, requestStage: 'oauth_token' });
+});
+test('malformed refresh values fail before IO and invalid rotation never replaces saved secrets', async () => {
+  for (const value of ['', null, [], 'bad\nrefresh']) {
+    let calls = 0; const api = new Api({ ...auth(), refresh_token: value }, { fetcher: async () => { calls++; } });
+    await assert.rejects(api.login(), { code: 'oauth_refresh_invalid' }); assert.equal(calls, 0);
+  }
+  for (const refresh_token of ['', null, ['private'], 'bad\0refresh']) {
+    const initial = { ...auth(), refresh_token: 'synthetic-old-refresh' }, before = structuredClone(initial);
+    const api = new Api(initial, { fetcher: async () => json({ access_token: 'synthetic-access', refresh_token, expires_in: 600 }) });
+    await assert.rejects(api.login(), { code: 'oauth_response_invalid' }); assert.deepEqual(initial, before);
+  }
+  const initial = { ...auth(), refresh_token: 'synthetic-old-refresh' };
+  await new Api(initial, { fetcher: async () => json({ access_token: 'synthetic-access', expires_in: 600 }) }).login();
+  assert.equal(initial.refresh_token, 'synthetic-old-refresh');
+  const missing = new Api(auth(), { fetcher: async () => json({ access_token: 'synthetic-access', expires_in: 600 }) });
+  await assert.rejects(missing.login(), { code: 'oauth_response_invalid' });
+});
+test('account renewal is locked before OAuth and a stale caller reuses the persisted winner after restart', async t => {
+  const store = await fixture(t), state = await store.read();
+  state.credentials = { ...auth(), access_token: 'synthetic-old-access', refresh_token: 'synthetic-old-refresh', expires_at: 0 };
+  state.operations.previous = { phase: 'unknown', planId: 'kept' }; state.plans.kept = { evidence: 'preserved' }; await store.write(state);
+  const snapshot = structuredClone(state.credentials); let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }), blocked = new Promise(resolve => { release = resolve; });
+  let calls = 0; const options = { fetcher: async (_url, request) => {
+    calls++; assert.equal(request.body.get('grant_type'), 'refresh_token'); entered(); await blocked;
+    return json({ access_token: 'synthetic-new-access', refresh_token: 'synthetic-new-refresh', expires_in: 600 });
+  } };
+  const first = accountApi(store, structuredClone(snapshot), options); t.after(() => release());
+  // A regression which fails before the injected request must reject the
+  // test, not leave it waiting forever for a signal that can no longer fire.
+  await Promise.race([started, first]);
+  const otherStore = new Store(store.root, store.owner, { codec: store.codec });
+  t.after(() => otherStore.close());
+  try { await assert.rejects(accountApi(otherStore, structuredClone(snapshot), options), { code: 'account_busy_or_recovery_required' }); }
+  finally { release(); }
+  const ready = await first; assert.equal(ready.access, 'synthetic-new-access'); assert.equal(calls, 1);
+  const current = await store.read(); assert.equal(current.credentials.refresh_token, 'synthetic-new-refresh');
+  assert.deepEqual(current.operations, state.operations); assert.deepEqual(current.plans, state.plans);
+  const restarted = await accountApi(otherStore, snapshot, options);
+  assert.equal(restarted.access, 'synthetic-new-access'); assert.equal(calls, 1);
+  assert.doesNotMatch(await fs.readFile(path.join(store.dir, 'state.enc'), 'utf8'), /synthetic-new-access|synthetic-new-refresh/);
+  const reader = new Api(current.credentials, { fetcher: async () => json({ echo: 'synthetic-new-refresh', refresh_token: 'never-export' }) });
+  assert.deepEqual(await reader.get('plans', 1), { echo: '[redacted]' });
+});
+test('credential replacement and pending setup block renewal before any network request', async t => {
+  const store = await fixture(t), initial = (await store.read()).credentials; let calls = 0;
+  const options = { fetcher: async () => { calls++; throw new Error('must not reach VK'); } };
+  const current = await store.read(); current.credentials.client_secret = 'replacement-secret'; await store.write(current);
+  await assert.rejects(accountApi(store, initial, options), { code: 'credentials_changed' });
+  current.credentials = initial; current.setup = { phase: 'waiting_input' }; await store.write(current);
+  await assert.rejects(accountApi(store, initial, options), { code: 'setup_already_pending' }); assert.equal(calls, 0);
+});
+test('setup persists the issued refresh grant even when the readiness GET is denied', async t => {
+  const store = await fixture(t), state = await store.read(), operation = crypto.randomUUID(); let issuances = 0, reads = 0;
+  state.setup = { id: operation, scope: scope(store.owner), phase: 'starting', expires: Date.now() + 120000 }; await store.write(state);
+  const fetcher = async (url, options) => {
+    if (url.pathname.includes('oauth2')) { issuances++; return json({ access_token: 'synthetic-setup-access', refresh_token: 'synthetic-setup-refresh', expires_in: 600 }); }
+    reads++; assert.equal(options.method, 'GET'); return json({}, 403);
+  };
+  await configureWorker(store, operation, { prompt: async () => auth(), makeApi: value => new Api(value, { fetcher }) });
+  const saved = await store.read(); assert.equal(saved.setup.phase, 'failed'); assert.equal(saved.setup.error, 'permission_denied');
+  assert.equal(saved.credentials.refresh_token, 'synthetic-setup-refresh');
+  const next = await accountApi(store, saved.credentials, { fetcher });
+  await assert.rejects(next.list('plans', {}, 1), { code: 'permission_denied' });
+  assert.equal(issuances, 1); assert.equal(reads, 2);
 });
 test('creation pauses the entire tree, requires a group parent and rejects standalone banners', async () => {
   const api = new Api(auth());
@@ -672,7 +802,7 @@ test('submitted setup persists encrypted readiness without a chat acknowledgemen
   state.plans = { dispatched: { id: 'dispatched', op: { kind: 'update' } }, unused: { id: 'unused' } };
   state.operations.previous = { planId: 'dispatched', phase: 'verified' };
   state.setup = { id: operation, scope: scope(store.owner), phase: 'starting', expires: Date.now() + 60000 }; await store.write(state);
-  await configureWorker(store, operation, { prompt: async () => ({ ...auth(), client_secret: 'replacement-secret' }), makeApi: () => ({ list: async () => ({ items: [] }) }) });
+  await configureWorker(store, operation, { prompt: async () => ({ ...auth(), client_secret: 'replacement-secret' }), makeApi: value => ({ auth: value, login: async () => {}, list: async () => ({ items: [] }) }) });
   state = await store.read(); assert.equal(state.setup.phase, 'ready'); assert.equal(state.credentials.client_secret, 'replacement-secret');
   assert.deepEqual(Object.keys(state.plans), ['dispatched']);
   assert.equal(state.operations.previous.phase, 'verified');
