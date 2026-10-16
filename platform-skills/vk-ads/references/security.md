@@ -100,6 +100,17 @@ dispatch и единственный POST/DELETE. Полные неописан�
 403/неполной выборки/async pending. Source, target и goal snapshots сохраняют
 read-back/optimistic guards; параметры auth, ACL и storage не меняются.
 
+VK group lookup использует только рекламный словарь, bounded query и exact
+public ID/shortname. Произвольный URL не запрашивается; browser/social API
+fallback отсутствует. Source metadata содержит только закрытые scalar поля
+и агрегированные integer counts, без массивов людей под именем count.
+Регистрация принимает один dictionary-confirmed object_id, проверяет полный
+каталог на дубли и сохраняет только его identity digest. Внутренний id
+источника используется для удаления/read-back, публичный object_id – для
+segment params.source_id. Missing count/403/404 коллекции не доказывают
+удаления; unknown create не ищется и не повторяется. Loading/unknown size
+не превращается в готовую рекламную аудиторию.
+
 Классификация: marketing campaign management/performance; runtime не читает
 банковские счета, balance/billing, платежи, зарплаты, налоговые/инвестиционные
 сведения. Данные расхода рекламы – метрики согласованного размещения. Добавление
