@@ -88,8 +88,19 @@ function exactClientDescriptor(value) {
   'gosuslugi_client_invalid');
   requireThat(typeof value.configHome === 'string' && path.isAbsolute(value.configHome),
     'gosuslugi_client_invalid');
-  requireThat(value.options && Object.keys(value.options).sort().join() === 'company,member' &&
-    UUID.test(value.options.company || '') && UUID.test(value.options.member || ''), 'gosuslugi_client_invalid');
+  const options = value.options;
+  requireThat(options && typeof options === 'object' && !Array.isArray(options), 'gosuslugi_client_invalid');
+  // The verified Gosuslugi client includes accountId for a selected local
+  // account. Preserve that exact binding when creating the ESIA helper: dropping
+  // it would silently fall back to the legacy company/member credential store.
+  // Legacy descriptors remain valid, but neither unknown fields nor an invalid
+  // explicit account may reach the browser, consent or credential helper.
+  const hasAccount = Object.hasOwn(options, 'accountId');
+  requireThat(Object.keys(options).sort().join() ===
+    (hasAccount ? 'accountId,company,member' : 'company,member') &&
+    UUID.test(options.company || '') && UUID.test(options.member || '') &&
+    (!hasAccount || (typeof options.accountId === 'string' && UUID.test(options.accountId))),
+  'gosuslugi_client_invalid');
   return value;
 }
 

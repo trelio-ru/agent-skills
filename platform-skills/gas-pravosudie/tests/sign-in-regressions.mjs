@@ -21,7 +21,7 @@ async function fixture(t) {
   await fs.mkdir(path.join(directory, 'references'));
   const modulePath = path.join(directory, 'scripts', 'playwright-client.mjs');
   const guidePath = path.join(directory, 'references', 'playwright-client.md');
-  await fs.writeFile(modulePath, 'export const createEsiaAuthorization = async page => page.createAuthorization();\n');
+  await fs.writeFile(modulePath, 'export const createEsiaAuthorization = async (page, options) => page.createAuthorization(options);\n');
   await fs.writeFile(guidePath, '# Synthetic client\n');
 
   const calls = [];
@@ -37,10 +37,10 @@ async function fixture(t) {
     waitForLoadState: async () => {},
     goto: async (target, options) => { calls.push(['goto', target, options]); url = target; },
     bringToFront: async () => { calls.push(['focus']); },
-    createAuthorization: () => {
+    createAuthorization: options => {
       let resolve, reject;
       const authenticated = new Promise((yes, no) => { resolve = yes; reject = no; });
-      const attempt = { resolve, reject, closed: 0 };
+      const attempt = { resolve, reject, closed: 0, options };
       attempts.push(attempt);
       return {
         request: Promise.resolve({ arguments: ['authorize', '--confirm'] }),
@@ -92,7 +92,7 @@ async function fixture(t) {
     ownership: 'caller', browserAccess: 'full_playwright_context',
   };
   return {
-    portal, page, context, controls, status, attempts, calls, transitions, setPhase, save,
+    portal, page, context, client, controls, status, attempts, calls, transitions, setPhase, save,
     prepare: () => prepareCourtSignIn(portal, { phase: status.phase, client, setPhase }),
     resume: () => resumeCourtSignIn(portal, { phase: status.phase, setPhase, save }),
     settle: () => new Promise(resolve => setImmediate(resolve)),
@@ -100,6 +100,57 @@ async function fixture(t) {
     saved: () => saved,
   };
 }
+
+test('selected Gosuslugi account reaches the ESIA helper unchanged through the court sign-in flow', async t => {
+  const f = await fixture(t);
+  const accountId = crypto.randomUUID();
+  f.client.options.accountId = accountId;
+
+  assert.equal((await f.prepare()).phase, 'authorization_required');
+  assert.deepEqual(f.attempts[0].options, {
+    ...f.client.options,
+    configHome: f.client.configHome,
+    origin: 'https://ej.sudrf.ru',
+    confirm: true,
+    requestTitle: null,
+  });
+  assert.equal(f.portal.page, f.page);
+  assert.equal(f.portal.context, f.context);
+  assert.deepEqual(f.calls, [['login']]);
+
+  f.returnToCourt();
+  f.attempts[0].resolve({ context: f.context, page: f.page });
+  await f.settle();
+  assert.equal((await f.resume()).phase, 'ready');
+  assert.equal(f.attempts[0].closed, 1);
+  assert.equal(f.saved(), 1);
+});
+
+test('invalid account descriptors fail before browser access, consent or helper creation', async t => {
+  const accountId = crypto.randomUUID();
+  const invalidOptions = [
+    null, [],
+    ...[undefined, null, '', 'not-a-uuid', 123, {}, [accountId]].map(value => ({ accountId: value })),
+    { accountId, connectionId: crypto.randomUUID() },
+    { accountId, company: null },
+    { accountId, member: null },
+  ];
+  for (const options of invalidOptions) {
+    const f = await fixture(t);
+    f.client.options = options === null || Array.isArray(options)
+      ? options : { ...f.client.options, ...options };
+    // Even a read of the page is too late for malformed caller bindings.
+    // Exercise the production prepare/worker path rather than a duplicate
+    // validator so widening the accepted descriptor cannot hide side effects.
+    let browserReads = 0;
+    f.portal.ensureAuthorizationPage = async () => { browserReads += 1; };
+    await assert.rejects(f.prepare(), { code: 'gosuslugi_client_invalid' });
+    assert.equal(browserReads, 0);
+    assert.equal(f.attempts.length, 0);
+    assert.deepEqual(f.calls, []);
+    assert.equal(f.portal.authorization, null);
+  }
+});
 
 test('failed delegated login releases the helper and a separate retry reuses the same court session', async t => {
   const f = await fixture(t);
