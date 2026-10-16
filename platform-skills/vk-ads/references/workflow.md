@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.5.0, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.5.1, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -163,6 +163,15 @@ GET повторяется до трёх попыток с паузами 500/10
 Advertising POST никогда не повторяется автоматически. OAuth token сохраняется
 зашифрованно до expires_at, новый выдаётся при expiry; 401 не вызывает
 автоматическое изменение credential. 403 не трактуется как logout.
+HTTP-отказы содержат фиксированный `requestStage`: `oauth_token` означает
+ответ endpoint выдачи токена VK, `advertising_api` – ответ рекламного API.
+Например, 403 с `oauth_token` возникает до рекламного GET. Это устанавливает
+место отказа, но не доказывает его причину (права, блокировку, отзыв или иное
+ограничение VK). Host admission/grant errors возникают вне этой классификации;
+обёртка `TRELIO_SKILL_RUNTIME_EXIT_1` с provider stdout означает, что provider
+уже запущен. `account list` и packaged `reference` сами по себе не проверяют VK.
+Стадия задаётся кодом запроса, не удалённым JSON; raw URL/response не выводятся.
+Старые receipts без стадии не дополняются догадкой и не требуют повторять запись.
 Receipt сохраняет безопасные `errorDetails.httpStatus` и до 32 кодов
 `errorDetails.fields`, когда API их вернул. Вложенные validation containers
 `fields`, `items`, `errors` дают `errorDetails.fieldErrors` с `path` и `code`,

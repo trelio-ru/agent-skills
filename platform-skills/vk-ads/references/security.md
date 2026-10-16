@@ -19,6 +19,12 @@ API diagnostics содержат только HTTP status и до 32 top-level �
 Разбираются лишь validation `fields/items/errors`, никогда message, URL,
 request body или произвольный JSON. Stored paths повторно проверяются перед
 receipt persistence; дополнительная диагностика не отменяет write fence.
+Для HTTP-отказа `requestStage` допускает только `oauth_token` или
+`advertising_api`, заданные фиксированной веткой запроса. При повторной
+проекции проверяются те же два значения; произвольный stage/URL, account,
+наличие токена и OAuth error body не экспортируются. Старый receipt без стадии
+сохраняет отсутствие сведений; diagnostic не разрешает повтор OAuth-настройки
+или рекламной записи и не доказывает причину отказа VK.
 Read-back и полный before/preflight snapshot нормализуют только порядок
 уникальных male/female в targetings.sex и home/work в
 targetings.geo.local_geo.loc_type. Изменённый состав, duplicates, неизвестные

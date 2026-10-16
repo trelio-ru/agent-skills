@@ -15,6 +15,11 @@ const ERROR_PATH = /^[a-z0-9_]{1,80}(?:\[(?:0|[1-9]\d{0,3})\]|\.[a-z0-9_]{1,80})
 export function safeApiErrorDetails(details = {}, secrets = []) {
   const result = {};
   if (Number.isInteger(details?.httpStatus) && details.httpStatus >= 400 && details.httpStatus <= 599) result.httpStatus = details.httpStatus;
+  // Both OAuth issuance and advertising endpoints can deny access with 403.
+  // Only the request boundary sets this closed label; never infer it from a
+  // remote body or export a URL, account, token state or raw provider message.
+  // Revalidate persisted labels too, leaving historical receipts unmodified.
+  if (result.httpStatus && ['oauth_token', 'advertising_api'].includes(details?.requestStage)) result.requestStage = details.requestStage;
   const privateValues = secrets.filter(value => typeof value === 'string' && value.length);
   const safe = (field, code) => typeof code === 'string' && ERROR_TOKEN.test(code) &&
     !PRIVATE_FIELD.test(field) && !privateValues.some(value => field.includes(value) || code.includes(value));
@@ -107,7 +112,7 @@ export class Api {
         const code = response.status === 401 ? 'authorization_required' : response.status === 403 ? 'permission_denied'
           : method !== 'GET' && (response.status >= 500 || response.status === 429) ? 'write_result_unknown'
           : response.status === 405 ? 'api_method_unsupported' : 'api_rejected';
-        throw new Fault(code, safeApiErrorDetails({ httpStatus: response.status, ...details }, secrets));
+        throw new Fault(code, safeApiErrorDetails({ httpStatus: response.status, ...details, requestStage: 'advertising_api' }, secrets));
       }
       if (response.status === 204) return {};
       try { return clean(await boundedResponse(response), secrets); }
@@ -124,7 +129,11 @@ export class Api {
     try { response = await this.fetcher(new URL('/api/v2/oauth2/token.json', ORIGIN), { method: 'POST', redirect: 'error',
       signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }); }
     catch { throw new Fault('network_unavailable'); }
-    if (!response.ok) { await response.body?.cancel(); throw new Fault(response.status === 401 || response.status === 400 ? 'authorization_required' : response.status === 403 ? 'permission_denied' : 'network_unavailable', { httpStatus: response.status }); }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Fault(response.status === 401 || response.status === 400 ? 'authorization_required' : response.status === 403 ? 'permission_denied' : 'network_unavailable',
+        safeApiErrorDetails({ httpStatus: response.status, requestStage: 'oauth_token' }));
+    }
     const token = await boundedResponse(response);
     check(typeof token.access_token === 'string' && token.access_token.length > 0 && token.access_token.length < 8192 && !/[\r\n]/.test(token.access_token), 'oauth_response_invalid');
     this.access = token.access_token;

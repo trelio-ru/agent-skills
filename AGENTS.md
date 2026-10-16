@@ -37,6 +37,8 @@ VK receipts сохраняют bounded HTTP/field-code diagnostics без raw re
 credentials; вложенные path/code проходят тот же bounded projection и
 повторную проверку у receipt boundary. Обход только fields/items/errors,
 без message/body; причина отказа не разрешает повтор записи или fallback.
+HTTP requestStage различает только oauth_token/advertising_api и задаётся
+веткой запроса, не ответом VK; неизвестная причина/старый receipt не угадываются.
 Новый max_goals проверяет дневной бюджет либо общий бюджет с конечной датой;
 частичный update и package-specific availability не заменяются догадкой.
 Read-back mismatch сообщает только static field identity без сравниваемых
