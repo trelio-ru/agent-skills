@@ -12,6 +12,14 @@ const ERROR_TOKEN = /^[a-z0-9_]{1,80}$/;
 const PRIVATE_FIELD = /secret|password|token|authorization|cookie|__proto__|constructor|prototype/i;
 const ERROR_INDEX = /^(?:0|[1-9]\d{0,3})$/;
 const ERROR_PATH = /^[a-z0-9_]{1,80}(?:\[(?:0|[1-9]\d{0,3})\]|\.[a-z0-9_]{1,80}){0,8}$/;
+// OAuth 2.0 section 5.2 plus VK's documented authentication codes. A 403 by
+// itself does not prove token exhaustion: VK documents that limit but does
+// not publish its machine-code signature. Never classify it from free text.
+const OAUTH_CODES = ['invalid_request', 'invalid_client', 'invalid_grant', 'unauthorized_client',
+  'unsupported_grant_type', 'invalid_scope', 'invalid_token', 'expired_token', 'invalid_user', 'revoked_token',
+];
+const OAUTH_REASONS = [...OAUTH_CODES, 'not_returned', 'not_recognized', 'not_available'];
+const tokenValue = value => typeof value === 'string' && value.length > 0 && value.length < 8192 && !/[\r\n\0]/.test(value);
 export function safeApiErrorDetails(details = {}, secrets = []) {
   const result = {};
   if (Number.isInteger(details?.httpStatus) && details.httpStatus >= 400 && details.httpStatus <= 599) result.httpStatus = details.httpStatus;
@@ -20,6 +28,7 @@ export function safeApiErrorDetails(details = {}, secrets = []) {
   // remote body or export a URL, account, token state or raw provider message.
   // Revalidate persisted labels too, leaving historical receipts unmodified.
   if (result.httpStatus && ['oauth_token', 'advertising_api'].includes(details?.requestStage)) result.requestStage = details.requestStage;
+  if (result.requestStage === 'oauth_token' && OAUTH_REASONS.includes(details?.oauthReason)) result.oauthReason = details.oauthReason;
   const privateValues = secrets.filter(value => typeof value === 'string' && value.length);
   const safe = (field, code) => typeof code === 'string' && ERROR_TOKEN.test(code) &&
     !PRIVATE_FIELD.test(field) && !privateValues.some(value => field.includes(value) || code.includes(value));
@@ -93,7 +102,7 @@ export class Api {
     const url = new URL(route, ORIGIN);
     for (const [k, v] of Object.entries(query || {})) { check(v !== undefined && v !== null, 'query_invalid'); url.searchParams.set(k, String(v)); }
     if (auth && !this.access) await this.login();
-    const secrets = [this.auth.client_secret, this.access];
+    const secrets = [this.auth.client_secret, this.access, this.auth.refresh_token];
     // Only reads retry. A timeout/429/5xx during a write can follow a committed
     // change, and VK does not document a client idempotency key for these APIs.
     for (let attempt = 0; attempt < (method === 'GET' ? 3 : 1); attempt++) {
@@ -121,23 +130,38 @@ export class Api {
     }
   }
   async login() {
-    const body = new URLSearchParams({ grant_type: this.auth.mode === 'agency' ? 'agency_client_credentials' : 'client_credentials',
+    const refreshing = Object.hasOwn(this.auth, 'refresh_token');
+    check(!refreshing || tokenValue(this.auth.refresh_token), 'oauth_refresh_invalid');
+    const body = new URLSearchParams({ grant_type: refreshing ? 'refresh_token' : this.auth.mode === 'agency' ? 'agency_client_credentials' : 'client_credentials',
       client_id: this.auth.client_id, client_secret: this.auth.client_secret });
-    if (this.auth.mode === 'agency') body.set('agency_client_name', this.auth.agency_client);
+    if (refreshing) body.set('refresh_token', this.auth.refresh_token);
+    else if (this.auth.mode === 'agency') body.set('agency_client_name', this.auth.agency_client);
     // OAuth output is consumed privately, unlike ordinary API JSON projection.
     let response;
     try { response = await this.fetcher(new URL('/api/v2/oauth2/token.json', ORIGIN), { method: 'POST', redirect: 'error',
       signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }); }
     catch { throw new Fault('network_unavailable'); }
     if (!response.ok) {
-      await response.body?.cancel();
+      let oauthReason = 'not_available';
+      try {
+        const parsed = await boundedResponse(response, 16384);
+        const code = typeof parsed?.error === 'string' ? parsed.error : parsed?.error?.code ?? parsed?.code;
+        oauthReason = code === undefined ? 'not_returned' : OAUTH_CODES.includes(code) ? code : 'not_recognized';
+      } catch { /* No raw OAuth body, HTML, message or response parser error leaves this boundary. */ }
+      finally { await response.body?.cancel().catch(() => {}); }
       throw new Fault(response.status === 401 || response.status === 400 ? 'authorization_required' : response.status === 403 ? 'permission_denied' : 'network_unavailable',
-        safeApiErrorDetails({ httpStatus: response.status, requestStage: 'oauth_token' }));
+        safeApiErrorDetails({ httpStatus: response.status, requestStage: 'oauth_token', oauthReason }));
     }
     const token = await boundedResponse(response);
-    check(typeof token.access_token === 'string' && token.access_token.length > 0 && token.access_token.length < 8192 && !/[\r\n]/.test(token.access_token), 'oauth_response_invalid');
+    check(token && typeof token === 'object' && !Array.isArray(token), 'oauth_response_invalid');
+    // Renew the same grant; never fall back to client_credentials after a
+    // failed refresh. Validate both values before modifying the private cache.
+    // VK may keep the refresh value on renewal, or return a rotated one.
+    const refresh = Object.hasOwn(token, 'refresh_token') ? token.refresh_token : refreshing ? this.auth.refresh_token : null;
+    check(tokenValue(token.access_token) && tokenValue(refresh), 'oauth_response_invalid');
     this.access = token.access_token;
     this.auth.access_token = this.access;
+    this.auth.refresh_token = refresh;
     this.auth.expires_at = Date.now() + (Number.isFinite(Number(token.expires_in)) && Number(token.expires_in) > 0 ? Number(token.expires_in) : 300) * 1000;
   }
   async get(entity, objectId, fields) { return this.request('GET', this.endpoint(entity, id(objectId)), { query: fields ? { fields: fields.join(',') } : {} }); }

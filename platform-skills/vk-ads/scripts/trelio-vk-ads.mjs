@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { identity, configRoot, check, Fault, VERSION, UUID, scope, childEnvironment, clean, id, hash, stable } from './core.mjs';
+import { identity, configRoot, check, Fault, VERSION, UUID, scope, childEnvironment, clean, id, hash, stable, credentials } from './core.mjs';
 import { Store } from './storage.mjs';
 import { Api } from './api.mjs';
 import { input } from './form.mjs';
@@ -27,6 +27,27 @@ export function argumentsOf(args) {
   check(allowed && Object.keys(flags).every(k => allowed.includes(k)), 'command_invalid');
   return { command, flags };
 }
+export async function accountApi(store, initialCredentials, options = {}) {
+  let api = new Api(initialCredentials, options);
+  if (api.access) return api;
+  const expected = hash(stable(credentials(initialCredentials)));
+  // Renewal changes remote token state, so acquire the same account lock
+  // before OAuth IO, not only before saving its response. A competing caller
+  // stays busy without issuing/refreshing another token. On its later retry,
+  // reread the durable cache and reuse the winner's token. Reconfiguration or
+  // pending setup must still block before any OAuth request.
+  return store.lock(async () => {
+    const current = await store.read();
+    check(current.credentials && hash(stable(credentials(current.credentials))) === expected, 'credentials_changed');
+    check(!current.setup || !['starting', 'waiting_input', 'checking'].includes(current.setup.phase), 'setup_already_pending');
+    api = new Api(current.credentials, options);
+    if (!api.access) {
+      await api.login(); current.credentials = api.auth;
+      await store.write(current);
+    }
+    return api;
+  });
+}
 export async function configureWorker(store, operation, { prompt = input, makeApi = auth => new Api(auth) } = {}) {
   let value;
   try {
@@ -45,7 +66,11 @@ export async function configureWorker(store, operation, { prompt = input, makeAp
       // both reset and reconfiguration of the same local account.
       state.plans = Object.fromEntries(Object.entries(state.plans).filter(([key]) => Object.values(state.operations).some(r => r.planId === key)));
       state.setup.phase = 'checking'; await store.write(state);
-      const api = makeApi(value); await api.list('plans', {}, 1); await api.list('groups', {}, 1);
+      // Save the privately returned grant before the first readiness GET.
+      // Otherwise a denied/offline probe would lose a successfully issued
+      // refresh token and consume another issuance on the next working call.
+      const api = makeApi(value); await api.login(); state.credentials = api.auth; await store.write(state);
+      await api.list('plans', {}, 1); await api.list('groups', {}, 1);
       state.setup.phase = 'ready'; await store.write(state);
     });
   } catch (error) {
@@ -138,12 +163,8 @@ export async function main(args = process.argv.slice(2), env = process.env) {
       });
     }
     if (!state.credentials) return { availability: 'setup_required', runtimeVersion: VERSION, requiredAction: 'Create/select a local account, then configure' };
-    const api = new Api(state.credentials), ops = new Operations(store, api);
     check(!state.setup || !['starting', 'waiting_input', 'checking'].includes(state.setup.phase), 'setup_already_pending');
-    if (!api.access) {
-      const before = hash(stable(state.credentials)); await api.login();
-      await store.lock(async () => { const current = await store.read(); check(hash(stable(current.credentials)) === before, 'credentials_changed'); current.credentials = api.auth; await store.write(current); });
-    }
+    const api = await accountApi(store, state.credentials), ops = new Operations(store, api);
     if (command === 'doctor') {
       await api.list('plans', {}, 1); await api.list('groups', {}, 1);
       return { availability: 'ready', runtimeVersion: VERSION, account: owner.account, groupResource: state.credentials.groups };
