@@ -94,6 +94,25 @@ test('advertising dictionary resolves exact shortname/id, never a similar displa
   assert.throws(() => argumentsOf(['vk-groups', '--url', 'https://example.com']));
 });
 
+test('a broad lookup resolves a late exact match without returning the whole dictionary or confusing scan and preview bounds', async () => {
+  const f = fixture();
+  f.model.dictionary = Array.from({ length: 250 }, (_, index) => ({ id: 1000 + index, shortname: `synthetic_${index}`,
+    name: `Synthetic community ${index} ${'Длинное название '.repeat(8)}`, members_count: 2000 }));
+  f.model.dictionary.at(-1).shortname = 'sample_group';
+  const result = await vkGroups(f.api, 'sample_group');
+  assert.equal(result.resolved.id, 1249); assert.equal(result.scannedCount, 250); assert.equal(result.scanTruncated, false);
+  assert.equal(result.items.length, 20); assert.equal(result.truncated, true);
+  assert.ok(!result.items.some(v => v.id === result.resolved.id));
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 14000);
+  assert.ok(Buffer.byteLength(JSON.stringify(f.model.dictionary)) > 40000);
+  const bounded = await vkGroups(f.api, 'sample_group', 5);
+  assert.equal(bounded.resolved, null); assert.equal(bounded.scanTruncated, true); assert.equal(bounded.scannedCount, 5);
+  f.model.dictionary[0].name = '\\'.repeat(4000); f.model.dictionary[1].name = '\\'.repeat(4000);
+  const byteBounded = await vkGroups(f.api, 'sample_group');
+  assert.ok(byteBounded.items.length < 20); assert.ok(Buffer.byteLength(JSON.stringify(byteBounded)) <= 14000);
+  assert.equal(byteBounded.resolved.id, 1249);
+});
+
 test('registration sends public object_id once, verifies internal id by GET, and reports loading without claiming eligibility', async () => {
   const f = fixture(), result = await apply(f, create(), 'create-vk-source');
   assert.equal(result.phase, 'verified'); assert.equal(result.objectId, 901);
