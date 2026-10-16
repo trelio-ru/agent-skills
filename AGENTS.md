@@ -21,6 +21,13 @@ Native DialogFolder исключается по constructor до чтения pe
 и [security](platform-skills/vk-ads/references/security.md): paused creation,
 scoped планы, persisted receipts, read-back и запрет replay неизвестной записи.
 POST/PUT и структуру групп нельзя менять как fallback после ошибки API.
+Status-only recovery existing parent следует
+[узкому контракту](platform-skills/vk-ads/references/status-recovery.md):
+независимая launch authority, полный fresh tree/caps/dates review, один новый
+dispatch active после optimistic preflight, persisted claim до сети. Outcome
+первого HTTP запроса остаётся unknown; только полный read-back разрешает
+связанный fence. Create, mixed patch, другие unknown и второй recovery закрыты;
+GET-only reconcile новой операции не отправляет повторную запись.
 VK read-back принимает campaigns как response alias ad_groups; недостающие
 child IDs читает лишь под известным созданным родителем, проверяя его связь,
 полные scalar значения и однозначность. Новый POST и поиск по имени запрещены.

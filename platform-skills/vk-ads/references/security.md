@@ -28,6 +28,16 @@ targetings.geo.local_geo.loc_type. Изменённый состав, duplicates
 массив, null, прочие типы и остальные отсутствующие ключи остаются exact;
 before/preflight нормализует только копию, не сохранённый план или его hash.
 Восстановление старого receipt выполняется GET-only reconcile без replay.
+Отдельный [status recovery](status-recovery.md) допускает только новый scoped
+план active того же существующего parent ID при прежней launch authority.
+Account lock, полный уникальный tree snapshot, exact caps/end dates/children,
+content/landing IDs/text и moderation проверяются до/после единственного
+дополнительного status-only dispatch. Claim обоих receipts сохраняется до сети;
+второй recovery запрещён и после crash. Original HTTP outcome остаётся unknown;
+исходный fence разрешается лишь доказанным текущим состоянием полного дерева.
+Другие pending writes, create/mixed patch, legacy dialect и общий accept-unknown
+не используют это исключение. Generated media variants и raw mutation responses
+не экспортируются; read projection закрыта. Atomic CAS VK не обещается.
 Credential-поля и отражённые secret/token
 значения исключаются; raw response/message/URL не сохраняются в receipt.
 Read-back mismatch сообщает лишь static field code с уровнем объекта, без

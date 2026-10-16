@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { check, data, hash, stable, scope, id, Fault } from './core.mjs';
 import { safeApiErrorDetails } from './api.mjs';
 import { managed, prepareManaged, preflightManaged, dispatchManaged, managedObjectId, managedResponse, verifyManaged } from './audience-operations.mjs';
+import { prepareStatusRecovery, preflightStatusRecovery, verifyStatusRecovery, finishStatusRecovery } from './status-recovery.mjs';
 
 const COMMON = ['name', 'status', 'date_start', 'date_end', 'budget_limit', 'budget_limit_day', 'autobidding_mode'];
 const FIELDS = { plans: [...COMMON, 'objective', 'enable_utm', 'enable_offline_goals'],
@@ -129,7 +130,10 @@ export class Operations {
       const retained = new Set(Object.values(state.operations).map(r => r.planId));
       state.plans = Object.fromEntries(Object.entries(state.plans).filter(([key, p]) => p.expires > this.now() || retained.has(key)));
       check(Object.keys(state.plans).filter(key => !retained.has(key)).length < 100, 'plan_store_full');
-      const op = await prepare(this.api, specification), record = { id: crypto.randomUUID(), account: this.store.owner.account,
+      const op = specification?.kind === 'status-recovery'
+        ? await prepareStatusRecovery(this.api, specification, state, scope(this.store.owner), this.now())
+        : await prepare(this.api, specification);
+      const record = { id: crypto.randomUUID(), account: this.store.owner.account,
         scope: scope(this.store.owner), op, expires: this.now() + 30 * 60 * 1000 };
       record.hash = hash(stable(record)); state.plans[record.id] = record; await this.store.write(state); return visible(record);
     });
@@ -145,9 +149,11 @@ export class Operations {
       // A second id for the same plan cannot bypass an uncertain first request.
       const prior = Object.values(state.operations).find(r => r.hash === planHash);
       if (prior) return prior;
-      check(!Object.values(state.operations).some(r => ['unknown', 'written_unverified'].includes(r.phase)), 'unresolved_write_blocks_new_mutation');
+      if (plan.op.kind !== 'status-recovery') check(!Object.values(state.operations).some(r => ['unknown', 'written_unverified'].includes(r.phase)), 'unresolved_write_blocks_new_mutation');
       check(Object.keys(state.operations).length < 1000, 'receipt_store_full');
       const { op } = plan;
+      let recoverySource;
+      if (op.kind === 'status-recovery') recoverySource = await preflightStatusRecovery(this.api, op, state, scope(this.store.owner), this.now());
       if (managed(op)) await preflightManaged(this.api, op);
       if (op.kind === 'update') {
         const current = await this.api.get(op.entity, op.id, ['id', ...Object.keys(op.payload)]);
@@ -159,22 +165,33 @@ export class Operations {
       // OAuth outage cannot be confused with an attempted advertising mutation.
       if (!this.api.access) await this.api.login();
       const receipt = { operationId, hash: planHash, scope: plan.scope, phase: 'unknown', dispatchedAt: new Date(this.now()).toISOString(), planId };
+      if (recoverySource) {
+        // Claim the sole additional desired-state dispatch atomically with its
+        // own receipt. A crash here can never be recovered by sending again.
+        recoverySource.statusRecoveryOperation = operationId;
+        receipt.recoveryOf = recoverySource.operationId; receipt.objectId = op.id;
+      }
       state.operations[operationId] = receipt; await this.store.write(state);
       try {
         let response;
-        if (managed(op)) response = await dispatchManaged(this.api, op);
+        if (op.kind === 'status-recovery') response = await this.api.request('POST', this.api.endpoint('plans', op.id), { body: { status: 'active' } });
+        else if (managed(op)) response = await dispatchManaged(this.api, op);
         else if (op.kind === 'url') response = await this.api.request('POST', '/api/v2/urls.json', { body: { url: op.url } });
         else if (op.kind === 'upload') {
           const body = new FormData(); body.set('file', new Blob([upload.bytes], { type: upload.type }), `creative.${upload.type === 'video/mp4' ? 'mp4' : upload.type.split('/')[1]}`);
           body.set('data', JSON.stringify({ width: upload.width, height: upload.height }));
           response = await this.api.request('POST', `/api/v2/content/${upload.type === 'video/mp4' ? 'video' : 'static'}.json`, { body });
         } else response = await this.api.request('POST', this.api.endpoint(op.entity, op.kind === 'update' ? op.id : null), { body: op.payload });
-        receipt.objectId = managed(op) ? managedObjectId(op, response) : op.kind === 'update' ? op.id : id(response.id);
-        receipt.response = managed(op) ? managedResponse(op, response) : response; receipt.phase = 'written_unverified'; await this.store.write(state);
-        await this.verify(plan, receipt); await this.store.write(state); return receipt;
+        receipt.objectId = managed(op) ? managedObjectId(op, response) : ['update', 'status-recovery'].includes(op.kind) ? op.id : id(response.id);
+        receipt.response = op.kind === 'status-recovery' ? {} : managed(op) ? managedResponse(op, response) : response;
+        receipt.phase = 'written_unverified'; await this.store.write(state);
+        await this.verify(plan, receipt);
+        if (op.kind === 'status-recovery') finishStatusRecovery(state, op, receipt, scope(this.store.owner));
+        await this.store.write(state); return receipt;
       } catch (error) {
         // Once dispatched, even a crash before response persistence leaves an
         // unknown receipt. A rejection can be terminal, but is never auto-retried.
+        if (op.kind === 'status-recovery' && receipt.phase === 'verified') receipt.phase = 'written_unverified';
         receipt.error = error instanceof Fault ? error.code : 'write_result_unknown';
         // Preserve the provider's safe reason alongside the replay fence. A
         // terminal 400 otherwise loses the fields needed to prepare a reviewed
@@ -188,6 +205,9 @@ export class Operations {
   }
   async verify(plan, receipt) {
     const { op } = plan;
+    if (op.kind === 'status-recovery') {
+      receipt.observed = await verifyStatusRecovery(this.api, op); receipt.phase = 'verified'; return;
+    }
     if (managed(op)) {
       receipt.observed = await verifyManaged(this.api, op, receipt.objectId); receipt.phase = 'verified'; return;
     }
@@ -266,13 +286,19 @@ export class Operations {
       const state = await this.store.read(), receipt = state.operations[operationId];
       check(receipt && receipt.scope === scope(this.store.owner), 'operation_not_found');
       if (['unknown', 'written_unverified'].includes(receipt.phase)) {
+        const unresolvedPhase = receipt.phase;
         const plan = state.plans[receipt.planId];
         // A lost create response has no trustworthy object ID. Do not guess a
         // similarly named object or turn absence in a list into permission to retry.
-        const knownTarget = plan.op.kind === 'update' || managed(plan.op) && (plan.op.kind === 'goal' || plan.op.action !== 'create');
+        const knownTarget = ['update', 'status-recovery'].includes(plan.op.kind) || managed(plan.op) && (plan.op.kind === 'goal' || plan.op.action !== 'create');
         if (!receipt.objectId && !knownTarget) return { ...receipt, nextAction: 'Find the result in VK manually; do not repeat this creation' };
         receipt.objectId ||= plan.op.id;
-        try { await this.verify(plan, receipt); delete receipt.error; delete receipt.errorDetails; } catch (error) {
+        try {
+          await this.verify(plan, receipt);
+          if (plan.op.kind === 'status-recovery') finishStatusRecovery(state, plan.op, receipt, scope(this.store.owner));
+          delete receipt.error; delete receipt.errorDetails;
+        } catch (error) {
+          if (plan.op.kind === 'status-recovery' && receipt.phase === 'verified') receipt.phase = unresolvedPhase;
           receipt.error = error instanceof Fault ? error.code : 'readback_failed';
           const details = safeApiErrorDetails(error instanceof Fault ? error.details : {}, [this.api.auth.client_secret, this.api.access]);
           // A later readback failure supersedes the earlier diagnostic; do not

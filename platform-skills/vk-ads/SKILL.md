@@ -120,6 +120,8 @@ ID источника и ID связи различаются. Загрузка 
 объявлении. `written_unverified` и `unknown` требуют `receipt`/`reconcile`.
 Неизвестная запись блокирует новые изменения кабинета, даже с новым plan ID.
 Не повторяй создание, не меняй API/transport после timeout/429/5xx.
+Для status-only recovery с прежней authority сначала прочитай
+`reference --name status-recovery`.
 Если потерян ответ создания, не угадывай ID по похожему названию: проверь VK
 с человеком. `accept-unknown --operation … --confirm keep-result-without-replay`
 разрешён только после его отдельного решения принять непроверенный результат;

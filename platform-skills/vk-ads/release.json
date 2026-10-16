@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk-ads",
-    "version": "1.4.2",
-    "summary": "Исправлено чтение источников подписчиков VK в сегменте: сопоставление использует публичный source_id и полный каталог регистраций. ID объекта связи сохраняется отдельно; дубли, неполный каталог и неверная ссылка остаются явными ограничениями."
+    "version": "1.5.0",
+    "summary": "Добавлено ограниченное восстановление неизвестной установки active у существующей кампании: полный review дерева, лимитов и дат, один дополнительный status-only dispatch и проверка результата. Исходный HTTP outcome сохраняется неизвестным; создание и общий retry не разрешаются."
   },
   "connection": null,
   "runtime": {
-    "version": "1.4.2",
+    "version": "1.5.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "scripts/trelio-vk-ads.mjs",
@@ -19,6 +19,8 @@
       "local-accounts-v1"
     ],
     "files": [
+      {"source":"scripts/status-recovery.mjs","path":"scripts/status-recovery.mjs","mode":420},
+      {"source":"references/status-recovery.md","path":"references/status-recovery.md","mode":420},
       {
         "source": "scripts/api.mjs",
         "path": "scripts/api.mjs",
