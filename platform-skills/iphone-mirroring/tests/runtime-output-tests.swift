@@ -46,6 +46,22 @@ enum RuntimeOutputTests {
         assert(held["action"] as? String == "long-press" && held["duration_ms"] as? Int == 800)
         assert(held["events_posted"] as? Bool == true && held["verification_required"] as? Bool == true)
 
+        let connection = compactRuntimeOutput([
+            "action": "session_start", "sessionID": "exact-lease",
+            "mirrorLaunchedBySupervisor": true, "connection_candidate": false,
+            "connection_outcome": "timed_out", "connection_wait_seconds": 30.1,
+            "connection_error": ["error_code": "connection_timeout"],
+            "observation": ["output": "/tmp/final.png", "connection_controls_ready": false, "screen_state": "connecting"],
+        ])
+        assert(connection["sessionID"] as? String == "exact-lease")
+        assert(connection["connection_candidate"] as? Bool == false)
+        assert(connection["connection_outcome"] as? String == "timed_out")
+        assert(connection["connection_wait_seconds"] as? Double == 30.1)
+        assert((connection["connection_error"] as? [String: Any])?["error_code"] as? String == "connection_timeout")
+        let lastFrame = connection["observation"] as! [String: Any]
+        assert(lastFrame["output"] as? String == "/tmp/final.png")
+        assert(lastFrame["connection_controls_ready"] as? Bool == false)
+
         // Compact не фабрикует отрицание отправки, когда старый/аварийный
         // исполнитель не оставил такого доказательства.
         let unknown = compactRuntimeOutput(["action": "scroll"])
@@ -75,6 +91,14 @@ enum RuntimeOutputTests {
         assert(failedCapture["verification_required"] as? Bool == true)
         assert(failedCapture["observation"] == nil)
         assert((failedCapture["observation_error"] as? [String: Any])?["verification_required"] as? Bool == true)
+
+        var unusedDirectory: URL?
+        let noFrame = try withPrivateRuntimeObservation(allowMissingOutput: true) { output in
+            unusedDirectory = output.deletingLastPathComponent()
+            return ["connection_outcome": "timed_out"]
+        }
+        assert(noFrame["output"] == nil)
+        assert(!FileManager.default.fileExists(atPath: unusedDirectory!.path))
 
         for command in ["type-text", "screenshot", "scroll"] {
             let screenshot = runtimeScreenshotPayload(

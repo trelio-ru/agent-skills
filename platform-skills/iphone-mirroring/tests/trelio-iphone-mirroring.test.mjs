@@ -69,13 +69,14 @@ test("release packages the cross-platform gate and every native source", async (
   const packagePaths = release.runtime.files.map((file) => file.path).sort();
 
   assert.equal(release.release.skillId, "iphone-mirroring");
-  assert.equal(release.release.version, "2.2.0");
+  assert.equal(release.release.version, "2.2.1");
   assert.equal(release.connection, null);
-  assert.equal(release.runtime.version, "2.2.0");
+  assert.equal(release.runtime.version, "2.2.1");
   assert.equal(release.runtime.entrypoint.interpreter, "node");
   assert.equal(release.runtime.entrypoint.path, "trelio-iphone-mirroring.mjs");
   assert.deepEqual(release.runtime.capabilities, ["local-session"]);
   assert.deepEqual(packagePaths, [
+    "scripts/connection-readiness.swift",
     "scripts/input-guardian.swift",
     "scripts/input-safety.swift",
     "scripts/mirror-session-supervisor.swift",
@@ -86,6 +87,27 @@ test("release packages the cross-platform gate and every native source", async (
     "scripts/virtual-display-bridge.m",
     "trelio-iphone-mirroring.mjs",
   ]);
+});
+
+test("connection readiness waits for native evidence, handles reconnect transitions and respects cancellation", {
+  skip: process.platform !== "darwin",
+  timeout: 60_000,
+}, async () => {
+  const buildDirectory = await mkdtemp(path.join(tmpdir(), "trelio-connection-readiness-test-"));
+  try {
+    const binary = path.join(buildDirectory, "connection-readiness-tests");
+    const compile = spawnSync("/usr/bin/xcrun", [
+      "swiftc", "-parse-as-library", "-warnings-as-errors",
+      path.join(skillDirectory, "scripts", "connection-readiness.swift"),
+      path.join(testDirectory, "connection-readiness-tests.swift"), "-o", binary,
+    ], { encoding: "utf8", timeout: 50_000 });
+    assert.equal(compile.status, 0, compile.stderr);
+    const result = spawnSync(binary, [], { encoding: "utf8", timeout: 5_000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Connection readiness regressions passed/u);
+  } finally {
+    await rm(buildDirectory, { recursive: true, force: true });
+  }
 });
 
 test("instructions preserve hidden-session ownership and prove cleanup", async () => {
@@ -120,7 +142,7 @@ test("instructions preserve hidden-session ownership and prove cleanup", async (
   assert.doesNotMatch(instructions, /scripts\/mirrorctl\s+(?:status|session|click)/u);
 });
 
-test("locked-phone recovery explicitly reconnects before waiting", async () => {
+test("locked-phone recovery reconnects once and reviews the built-in readiness result", async () => {
   const instructions = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
   const inUseBranchStart = instructions.indexOf("- `iphone_in_use`");
   const unlockBranchStart = instructions.indexOf("- `physical_unlock_required`");
@@ -133,10 +155,11 @@ test("locked-phone recovery explicitly reconnects before waiting", async () => {
   const inUseBranch = instructions.slice(inUseBranchStart, unlockBranchStart);
   const unlockBranch = instructions.slice(unlockBranchStart, connectedBranchStart);
   assert.match(inUseBranch, /один раз выполни `retry --session ID`/u);
-  assert.match(inUseBranch, /только затем запусти\s+`wait-connected/u);
+  assert.match(inUseBranch, /проверь его итоговый кадр и `connection_outcome`/u);
   assert.match(inUseBranch, /пассивное\s+ожидание.*оставит старое состояние/ius);
   assert.match(unlockBranch, /выполни один `retry --session ID`/u);
-  assert.match(unlockBranch, /переходи к `wait-connected`/u);
+  assert.match(unlockBranch, /проверь итоговый кадр и `connection_outcome`/u);
+  for (const branch of [inUseBranch, unlockBranch]) assert.doesNotMatch(branch, /запусти `wait-connected`/u);
 });
 
 test("native retry recognizes Apple's terminal Connect action", async () => {
@@ -382,6 +405,16 @@ test("macOS helper sources compile and expose their bounded command surface", {
     assert.equal(invalidStart.status, 2, invalidStart.stderr);
     assert.equal(JSON.parse(invalidStart.stderr).observation, undefined);
     assert.equal(JSON.parse(invalidStart.stderr).observation_error, undefined);
+    for (const args of [
+      ["--timeout", "NaN"], ["--timeout", "inf"], ["--timeout", "121"],
+      ["--timeout", "oops"], ["--interval", "0"], ["--interval", "6"],
+    ]) {
+      const invalidWait = spawnSync(process.execPath, [entrypoint, "wait-connected", ...args, "--compact", "--observe"], {
+        cwd: materializedRoot, env: isolatedEnvironment, encoding: "utf8", timeout: 10_000,
+      });
+      assert.equal(invalidWait.status, 2, invalidWait.stderr);
+      assert.equal(JSON.parse(invalidWait.stderr).observation, undefined);
+    }
   } finally {
     await rm(materializedRoot, { recursive: true, force: true });
   }

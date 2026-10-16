@@ -42,6 +42,7 @@ func compactRuntimeOutput(_ source: [String: Any], includeOCR: Bool = false) -> 
         "action", "ok", "action_result", "status", "observation", "observation_error",
         "output", "captured_at", "screen_state", "screen_state_error",
         "app_running", "ax_trusted", "frontmost", "connection_candidate",
+        "connection_outcome", "connection_wait_seconds", "connection_controls_ready", "connection_error",
         "sessionID", "active", "process_alive", "reused", "already_stopped", "exitReason",
         "idleTimeout", "hardTimeout", "idle_remaining", "hard_remaining", "inputProtocolVersion",
         "mirrorWasRunning", "mirrorLaunchedBySupervisor",
@@ -105,7 +106,9 @@ func runtimeScreenshotPayload(
     return result
 }
 
-func withPrivateRuntimeObservation(capture: (URL) throws -> [String: Any]) throws -> [String: Any] {
+func withPrivateRuntimeObservation(
+    allowMissingOutput: Bool = false, capture: (URL) throws -> [String: Any]
+) throws -> [String: Any] {
     // Один OS-owned каталог на кадр не пересекается с чужими файлами и не
     // требует очищать предыдущие снимки, которые ещё может читать агент.
     var template = Array(FileManager.default.temporaryDirectory
@@ -117,6 +120,12 @@ func withPrivateRuntimeObservation(capture: (URL) throws -> [String: Any]) throw
     let output = directory.appendingPathComponent("screen.png")
     do {
         let result = try capture(output)
+        // Только connection wait с бюджетом короче стартовой паузы может
+        // завершиться до первого захвата. Не создаём фиктивный пустой PNG.
+        if allowMissingOutput, !FileManager.default.fileExists(atPath: output.path) {
+            try FileManager.default.removeItem(at: directory)
+            return result
+        }
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output.path)
         return result
     } catch {
