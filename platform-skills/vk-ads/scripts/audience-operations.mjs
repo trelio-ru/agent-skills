@@ -1,5 +1,6 @@
 import { check, data, id, hash, stable, Fault } from './core.mjs';
-import { project, SEGMENT_FIELDS, relationMetadata, collection, sources, counterGoals } from './diagnostics.mjs';
+import { project, SEGMENT_FIELDS, relationMetadata, collection, sources, counterGoals,
+  VK_GROUP_SOURCES, vkGroupQuery, vkGroups, vkGroupSources, vkGroupSourceByPublicId } from './diagnostics.mjs';
 
 const SEGMENTS = '/api/v2/remarketing/segments';
 const RELATION_TYPES = ['remarketing_users_list', 'remarketing_counter', 'remarketing_vk_group', 'segment'];
@@ -56,8 +57,24 @@ async function goalState(api, op) {
   // unique goal by display name or pretend the whole goal inventory is loaded.
   return { target, counter, goal, goalsTruncated: page.truncated };
 }
+async function vkRegistrationState(api, op) {
+  if (op.action === 'delete') return sources(api, 'vk-groups', op.id);
+  const lookup = await vkGroups(api, op.groupQuery, 5000);
+  check(lookup.resolved && lookup.resolved.id === op.payload.object_id, 'vk_group_not_resolved');
+  const page = await vkGroupSources(api, 5000);
+  check(!page.truncated, 'vk_group_sources_incomplete');
+  check(!page.items.some(v => Number(v.object_id) === op.payload.object_id), 'vk_group_source_already_registered');
+  // Duplicate detection requires a complete account inventory. Persist only
+  // its identity digest, not the names of every unrelated registered source.
+  // Counts can change naturally; the selected public identity cannot change
+  // between review and dispatch. VK remains responsible for live ACL checks.
+  const identities = page.items.map(v => project(v, ['id', 'object_id'])).sort((a, b) => a.id - b.id);
+  return { group: project(lookup.resolved, ['id', 'name', 'shortname']),
+    inventoryDigest: hash(stable(identities)), inventoryCount: identities.length };
+}
 async function state(api, op) {
   if (op.kind === 'goal') return { snapshot: await goalState(api, op) };
+  if (op.entity === 'vk-groups') return { snapshot: await vkRegistrationState(api, op) };
   if (op.entity === 'users-lists') return { snapshot: await sources(api, 'users-lists', op.id) };
   return segmentState(api, op.entity === 'relations' ? op.segmentId : op.id);
 }
@@ -67,6 +84,8 @@ async function references(api, op) {
   for (const item of items) {
     if (item.object_type === 'remarketing_users_list') result.push({ type: item.object_type,
       source: await sources(api, 'users-lists', item.params.source_id) });
+    else if (item.object_type === 'remarketing_vk_group') result.push({ type: item.object_type,
+      source: await vkGroupSourceByPublicId(api, item.params.source_id) });
     else if (item.object_type === 'segment') {
       const source = project(await api.request('GET', `${SEGMENTS}/${id(item.object_id)}.json`,
         { query: { fields: SEGMENT_FIELDS.join(',') } }), SEGMENT_FIELDS);
@@ -90,7 +109,20 @@ export async function prepareManaged(api, specification) {
     op.note = 'Sets the explicit Top counter goal only; does not install a pixel, change strategy or prove a real business conversion';
     return op;
   }
-  check(op.kind === 'audience' && ['segments', 'relations', 'users-lists'].includes(op.entity) && ['create', 'update', 'delete'].includes(op.action), 'operation_invalid');
+  check(op.kind === 'audience' && ['segments', 'relations', 'users-lists', 'vk-groups'].includes(op.entity) && ['create', 'update', 'delete'].includes(op.action), 'operation_invalid');
+  if (op.entity === 'vk-groups') {
+    check(['create', 'delete'].includes(op.action), 'operation_invalid');
+    keys(op, ['kind', 'entity', 'action', ...(op.action === 'create' ? ['payload', 'groupQuery'] : ['id'])]);
+    if (op.action === 'create') {
+      keys(op.payload, ['object_id']); op.payload.object_id = id(op.payload.object_id);
+      // Only a dictionary-confirmed public identity can be registered. Do not
+      // silently substitute a name match, an internal source id or a topic.
+      op.groupQuery = vkGroupQuery(op.groupQuery).query;
+    } else op.id = id(op.id);
+    op.before = (await state(api, op)).snapshot;
+    op.note = 'Registers/removes one VK community source only. Loading status and aggregate size do not establish advertising eligibility; VK checks dependencies';
+    return op;
+  }
   const allowed = ['kind', 'entity', 'action', ...(op.entity === 'relations' ? ['segmentId'] : []),
     ...(op.action !== 'create' ? ['id'] : []), ...(op.action !== 'delete' ? ['payload'] : [])];
   keys(op, allowed); check(op.action === 'delete' || op.payload && typeof op.payload === 'object', 'payload_invalid');
@@ -147,6 +179,7 @@ export async function preflightManaged(api, op) {
 }
 function route(op) {
   if (op.kind === 'goal') return null;
+  if (op.entity === 'vk-groups') return `${VK_GROUP_SOURCES}${op.action === 'create' ? '' : `/${id(op.id)}`}.json`;
   if (op.entity === 'users-lists') return `/api/v3/remarketing/users_lists/${id(op.id)}.json`;
   if (op.entity === 'relations') return `${SEGMENTS}/${id(op.segmentId)}/relations${op.action === 'create' ? '' : `/${id(op.id)}`}.json`;
   return `${SEGMENTS}${op.action === 'create' ? '' : `/${id(op.id)}`}.json`;
@@ -177,6 +210,20 @@ export async function verifyManaged(api, op, objectId) {
     const other = value => Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'priced_goal'));
     check(equal(other(current.target), other(op.before.target)), 'readback_mismatch');
     return current;
+  }
+  if (op.entity === 'vk-groups') {
+    const page = await vkGroupSources(api, 5000, objectId);
+    const found = page.items.filter(v => v.id === id(objectId));
+    if (op.action === 'delete') {
+      // The single-object endpoint documents no GET. A 404 of the collection,
+      // 403 or an incomplete filtered list cannot prove this source deleted.
+      check(!page.truncated && found.length === 0, 'audience_deletion_not_confirmed');
+      return { id: objectId, object_id: op.before.object_id, deleted: true };
+    }
+    check(found.length === 1 && id(found[0].object_id) === op.payload.object_id, 'readback_mismatch');
+    // Verification proves registration, not that asynchronous subscriber
+    // loading finished. Expose the separate, non-inferred readiness state.
+    return found[0];
   }
   if (op.action === 'delete' && op.entity !== 'relations') {
     try {

@@ -66,6 +66,12 @@ closed specs, complete parent snapshot, safe projection/opaque params digest,
 async deletion/403/partial list не превращаются в verified absence. Потерянный
 create ID не угадывается. Hosted VK entrypoint регистрирует все отдельные
 diagnostics/audience regression suites на каждой обязательной OS.
+VK-сообщество разрешается только по exact public id/shortname из рекламного
+справочника. `remarketing_vk_group.params.source_id` равен публичному
+RemarketingVkGroup.object_id, не внутреннему id источника. Регистрация/удаление
+источника использует тот же scoped journal; неполный каталог не доказывает
+отсутствие/удаление. Loading и неизвестный размер не становятся готовностью
+рекламы; live совместимость нового endpoint проверяется отдельно от fixtures.
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.

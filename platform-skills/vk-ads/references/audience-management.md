@@ -1,6 +1,6 @@
 # Управление аудиторией и явной целью
 
-Runtime 1.3.1. Перед первой такой записью прочитай `reference --name
+Runtime 1.4.0. Перед первой такой записью прочитай `reference --name
 audience-management` и общий workflow. Аргументы добавляются только к current
 signed localAction. Все операции используют прежние `plan --file`, scoped hash,
 `apply --plan --hash --operation`, encrypted receipts и GET-only reconcile.
@@ -28,6 +28,8 @@ write-пути не доказывается синтетическими рег
 - сегмент: create с 1–20 источниками, update name/pass_condition, delete;
 - связь: добавить один источник, обновить известные params, удалить одну связь;
 - загруженный список: только переименование и удаление, без загрузки людей;
+- VK-сообщество: поиск exact публичной группы, чтение зарегистрированного
+  источника, отдельная регистрация и удаление;
 - priced_goal кампании/группы: явная цель Top@Mail.ru по exact внутреннему
   ID источника счётчика и exact ID цели.
 
@@ -67,10 +69,14 @@ CSV, экспорт людей, источник look-alike, настройки 
 pass_condition – целое число от 1 до количества источников. Для нового
 remarketing_counter обязательны source_id (Top counter ID), строковый goal_id,
 type, left/right: целые дни 0–365, left > right. Для remarketing_vk_group и
-remarketing_users_list – source_id/type. Вложенный segment – object_id,
+remarketing_users_list – source_id/type. Для VK source_id является публичным
+ID группы (RemarketingVkGroup.object_id), а не внутренним id источника.
+Вложенный segment – object_id,
 без params. Цикл по собственной ссылке отклоняется до dispatch; другие циклы
 и source ACL повторно проверяет VK. Списки/вложенные сегменты читаются по
-exact ID и перепроверяются до записи. Для других документированных ссылок
+exact ID и перепроверяются до записи. VK-ссылка требует одного уже
+зарегистрированного источника с этим публичным object_id в полном bounded
+каталоге; его состояние загрузки остаётся явным в плане. Для других ссылок
 plan показывает vk_validation_required, без выдуманного metadata endpoint.
 
 ```json
@@ -110,6 +116,83 @@ pending_delete/deleting не является завершённым удале�
 запись. Сохраняется прежний operation ID; GET-only reconcile ожидает deleted
 либо документированный 404 exact ранее прочитанного объекта. 403, timeout,
 пропавший parent/endpoint списка связей и неполная выборка не доказывают удаления.
+
+## Источник подписчиков VK-сообщества
+
+Определения проверены 16 октября 2026 по официальным
+[VkGroup](https://target.my.com/doc/api/ru/resource/VkGroup),
+[RemarketingVkGroups](https://target.my.com/doc/api/ru/resource/RemarketingVkGroups),
+[RemarketingVkGroup](https://target.my.com/doc/api/ru/object/RemarketingVkGroup) и
+[SegmentParams](https://target.my.com/doc/api/ru/info/SegmentParams#vk_group).
+Эти страницы используют публичный `/api/v1/documentation.json?_language=ru`.
+Текущий каталог документации ads.vk.com не включает эти source resources,
+хотя SegmentRelations сохраняет тип remarketing_vk_group. Это граница
+документированного наследуемого API, а не доказательство доступности метода
+в нынешнем кабинете VK Ads. Runtime использует только фиксированный ads.vk.com;
+403/404 не разрешает переход на myTarget, cookie/browser или социальный API.
+
+`vk-groups --query example_group` читает `/api/v2/vk_groups.json?_q=...`.
+Можно передать shortname, положительный публичный ID, club/public/event-ID
+или exact https://vk.com/shortname. URL разбирается локально и не открывается.
+Выбирается только один exact shortname либо публичный ID. Похожее название
+не выбирается. `resolved=null`/ambiguous сохраняют неопределённость; пустой
+поиск не доказывает отсутствие сообщества. По документации справочник
+возвращает группы от 1000 участников. Наличие в нём не означает, что источник
+зарегистрирован, его подписчики загружены или реклама разрешена.
+
+`sources --type vk-groups` возвращает bounded зарегистрированные источники.
+`--id` адресует внутренний id; exact чтение идёт через `_id__in` коллекции,
+как в first-party source picker. Отдельный resource документирует DELETE,
+поэтому GET на одиночный source endpoint не придумывается. Читаются только
+id/object_id/name/shortname/status/loaded_users_count/users_count.
+
+Для регистрации сначала разреши публичную группу и сверяй ссылку с выбранным
+пользователем сообществом. Затем подготовь отдельный план:
+
+```json
+{"kind":"audience","entity":"vk-groups","action":"create","groupQuery":"example_group","payload":{"object_id":101}}
+```
+
+101 здесь синтетический публичный ID. Runtime повторно получает exact группу
+из рекламного справочника и полный bounded список источников, запрещает
+дубли и сохраняет identity digest каталога без названий чужих источников.
+Перед apply проверяются те же условия. POST `/api/v2/remarketing/vk_groups.json`
+содержит только object_id. Ответ даёт внутренний source id, который сохраняется
+до GET read-back. `verified` означает проверенную регистрацию; это не запуск
+кампании и не доказательство окончания загрузки.
+
+readiness.state различает loading/unloaded, loaded_empty, loaded_nonempty,
+loaded_size_unknown и unknown. Отсутствующий/отрицательный размер не становится
+нулём. Loaded_nonempty требует status=loaded и положительного
+loaded_users_count. Даже он сохраняет campaignEligibility=not_assessed:
+соответствие офферу, достаточность аудитории, модерация и доставка проверяются
+отдельно. Для ожидания загрузки повторяют только sources с тем же внутренним
+id, не регистрацию. Автоматическое расширение на похожие сообщества отсутствует.
+
+После регистрации сегмент использует публичный object_id:
+
+```json
+{"kind":"audience","entity":"segments","action":"create","payload":{"name":"Согласованный сегмент","pass_condition":1,"relations":[{"object_type":"remarketing_vk_group","params":{"source_id":101,"type":"positive"}}]}}
+```
+
+В прочитанной связи relation.object_id указывает на внутренний источник.
+Runtime сопоставляет его с источником и проверяет согласованность public
+params.source_id. Эти IDs не подставляются друг вместо друга.
+
+Удаление источника адресует внутренний id, например:
+
+```json
+{"kind":"audience","entity":"vk-groups","action":"delete","id":901}
+```
+
+DELETE `/api/v2/remarketing/vk_groups/901.json` не выполняет каскадную очистку.
+VK возвращает 409 для используемого в аудитории источника. Сначала отдельно
+удаляй только согласованные тестовые связи/сегменты. Проверка удаления требует
+отсутствия exact id в полной коллекции; 403/404 коллекции или missing count
+оставляют результат непроверенным. При известном id reconcile делает только
+GET; потерянный id создания остаётся manual без повторного POST и поиска
+похожего результата. Обновление, bulk registration, тематики и выгрузка людей
+этим узким source contract не реализованы.
 
 ## Явная цель Top@Mail.ru
 

@@ -16,6 +16,7 @@ import { argumentsOf, configureWorker, setupStatus } from '../scripts/trelio-vk-
 // checked only by a local file-specific command and silently miss hosted CI.
 import './diagnostics.test.mjs';
 import './audience-operations.test.mjs';
+import './vk-groups.test.mjs';
 
 const owner = () => ({ account: crypto.randomUUID(), binding: 'a'.repeat(64), company: crypto.randomUUID(), member: crypto.randomUUID() });
 const auth = () => ({ mode: 'client', groups: 'ad_groups', client_id: 'synthetic-client', client_secret: 'synthetic-only-secret', agency_client: '' });

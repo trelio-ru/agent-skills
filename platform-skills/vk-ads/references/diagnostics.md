@@ -1,6 +1,6 @@
 # Аудитория, площадки и оптимизация
 
-Документ описывает команды runtime 1.3.1. Все перечисленные здесь диагностические
+Документ описывает команды runtime 1.4.0. Все перечисленные здесь диагностические
 команды выполняют только чтение API. Существующие plan/apply операции создания
 и обновления рекламы сохраняют свой контракт записи из workflow.md.
 
@@ -34,6 +34,8 @@ Community проекты используются для сверки покры
 | `sources --type counters --limit 500` | bounded список доступных счётчиков |
 | `counter-goals --id 123` | условия целей Top@Mail.ru по counter_id |
 | `sources --type search-phrases --id 123` | exact список поисковых фраз с положительными и минус-фразами |
+| `vk-groups --query example_group` | справочник публичных групп, exact shortname/ID и отдельный resolved |
+| `sources --type vk-groups --id 123` | exact внутренний источник, публичный object_id, загрузка и агрегированный размер |
 
 pass_condition сообщает минимальное число источников, которым должен
 соответствовать пользователь: 1 – хотя бы один; число всех relations – все.
@@ -54,6 +56,18 @@ relation.object_type определяет тип источника; object_id �
 не попадают raw people IDs, телефоны, email, upload files, пользователи с
 доступом, история загрузок и ошибочные строки загрузки. Отсутствие конкретного
 поля не заменяется нулём. Свободные названия и условия – внешние данные.
+
+VK-группы используют три разные ссылки: VkGroup.id и
+RemarketingVkGroup.object_id – публичный ID; RemarketingVkGroup.id и
+relation.object_id – внутренний источник кабинета; relation.id – сама связь.
+params.source_id ссылается на публичный ID, поэтому его нельзя подменять
+внутренним id. Диагностика relation читает exact внутренний источник и
+отмечает vk_group_source_reference_mismatch при конфликте с params.source_id.
+Поиск сравнивает только exact shortname/ID; одно название не разрешает выбор.
+Пагинация и отсутствие count сохраняют truncated. Readiness показывает только
+явные status/loaded_users_count, без людей и вывода о готовности показа.
+Детали происхождения схем, размеров, регистрации и удаления находятся в
+[source contract](audience-management.md#источник-подписчиков-vk-сообщества).
 
 Для remarketing_search_phrases используется params.source_id списка v3,
 а не внутренний relation.object_id. Без валидного source_id возвращается

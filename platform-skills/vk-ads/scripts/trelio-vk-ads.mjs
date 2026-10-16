@@ -9,7 +9,7 @@ import { Store } from './storage.mjs';
 import { Api } from './api.mjs';
 import { input } from './form.mjs';
 import { Operations } from './operations.mjs';
-import { segments, audience, sources, counterGoals, placements, optimization } from './diagnostics.mjs';
+import { segments, audience, sources, counterGoals, placements, optimization, vkGroups } from './diagnostics.mjs';
 
 export function argumentsOf(args) {
   const [command, ...rest] = args; const flags = {};
@@ -20,7 +20,7 @@ export function argumentsOf(args) {
   const allowed = { doctor: [], configure: [], reference: ['name'], 'setup-status': ['operation', 'wait-ms'],
     list: ['entity', 'parent', 'limit', 'status'], get: ['entity', 'id', 'fields'], catalog: ['name'],
     stats: ['entity', 'ids', 'from', 'to', 'family', 'period', 'metrics', 'attribution', 'conversion-type', 'breakdown'],
-    audiences: ['id', 'limit'], sources: ['type', 'id', 'limit'], 'counter-goals': ['id'], placements: ['group'], optimization: ['group'],
+    audiences: ['id', 'limit'], sources: ['type', 'id', 'limit'], 'vk-groups': ['query', 'limit'], 'counter-goals': ['id'], placements: ['group'], optimization: ['group'],
     plan: ['file'], apply: ['plan', 'hash', 'operation'],
     receipt: ['operation'], reconcile: ['operation'], 'accept-unknown': ['operation', 'confirm'], reset: ['confirm'], 'recover-lock': ['confirm'], '__configure-worker': ['operation'],
     '__trelio_accounts_import': [] }[command];
@@ -161,6 +161,7 @@ export async function main(args = process.argv.slice(2), env = process.env) {
     if (command === 'catalog') return api.catalog(flags.name);
     if (command === 'audiences') return flags.id ? audience(api, flags.id) : segments(api, Number(flags.limit || 500));
     if (command === 'sources') return sources(api, flags.type, flags.id, Number(flags.limit || 500));
+    if (command === 'vk-groups') return vkGroups(api, flags.query, Number(flags.limit || 500));
     if (command === 'counter-goals') return counterGoals(api, flags.id);
     if (command === 'placements') return placements(api, flags.group);
     if (command === 'optimization') return optimization(api, flags.group);
