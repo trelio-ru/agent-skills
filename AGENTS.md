@@ -72,6 +72,9 @@ RemarketingVkGroup.object_id, не внутреннему id источника.
 источника использует тот же scoped journal; неполный каталог не доказывает
 отсутствие/удаление. Loading и неизвестный размер не становятся готовностью
 рекламы; live совместимость нового endpoint проверяется отдельно от fixtures.
+Lookup разделяет bounded сканирование и preview: exact resolved сохраняется
+за пределами первых 20 кандидатов, весь ответ до 14 000 bytes. Полнота поиска
+не подменяется сокращением показанного списка и наоборот.
 VK Windows storage использует прямые Framework APIs и один bootstrap всех
 каталогов с полными guards. Bounded watchdog и safe stages из security-контракта
 не включают private paths, packets или native stderr.

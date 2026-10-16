@@ -100,12 +100,26 @@ export async function vkGroups(api, query, maximum = 500) {
   const items = page.items.map(v => vkMetadata(v, VK_GROUP_FIELDS));
   const matches = items.filter(v => selector.publicId !== undefined ? v.id === selector.publicId :
     typeof v.shortname === 'string' && v.shortname.toLowerCase() === selector.shortname);
-  return { ...page, items, query: selector.query, resolved: matches.length === 1 ? matches[0] : null,
+  const result = { items: [], count: page.count, query: selector.query, resolved: matches.length === 1 ? matches[0] : null,
     resolution: matches.length === 1 ? selector.publicId !== undefined ? 'exact_public_id' : 'exact_shortname' :
       matches.length > 1 ? 'ambiguous' : 'not_found_in_results',
-    // The documented dictionary omits communities below its audience threshold.
-    // An empty/partial query result is not proof that the community is absent.
-    sourceRegistrationChecked: false, campaignEligibility: 'not_assessed' };
+    // The legacy dictionary contract describes an audience threshold; current
+    // rows alone do not prove eligibility or absence of a missing community.
+    sourceRegistrationChecked: false, campaignEligibility: 'not_assessed',
+    scannedCount: items.length, scanTruncated: page.truncated, truncated: page.truncated };
+  // Broad queries can return hundreds of unrelated groups. Scan the selected
+  // bound before resolving identity, but do not copy that whole dictionary into
+  // the model's result. A late exact match stays visible outside the preview.
+  // Scan completeness and output truncation must remain independent evidence.
+  const outputBytes = () => Buffer.byteLength(JSON.stringify(result), 'utf8');
+  check(outputBytes() <= 14000, 'vk_group_metadata_too_large');
+  for (const item of items) {
+    if (result.items.length >= 20) break;
+    result.items.push(item);
+    if (outputBytes() > 14000) { result.items.pop(); break; }
+  }
+  result.truncated ||= result.items.length < items.length;
+  return result;
 }
 function vkMetadata(value, fields) {
   const result = project(value, fields); result.id = id(result.id);

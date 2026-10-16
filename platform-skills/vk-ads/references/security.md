@@ -110,6 +110,9 @@ fallback отсутствует. Source metadata содержит только �
 segment params.source_id. Missing count/403/404 коллекции не доказывают
 удаления; unknown create не ищется и не повторяется. Loading/unknown size
 не превращается в готовую рекламную аудиторию.
+Публичный lookup сканирует отдельный bounded каталог, но возвращает максимум
+20 кандидатов в ответе до 14 000 UTF-8 bytes. Exact resolved не теряется за
+пределами preview; scanTruncated отдельно от truncated описывает полноту поиска.
 
 Классификация: marketing campaign management/performance; runtime не читает
 банковские счета, balance/billing, платежи, зарплаты, налоговые/инвестиционные
