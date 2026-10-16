@@ -86,6 +86,42 @@ test('writes do not retry on timeout, 429 or 5xx; 401 and 403 remain distinct', 
     assert.equal(calls, 1);
   }
 });
+test('403 failures distinguish OAuth issuance from advertising reads with fresh or cached tokens', async () => {
+  for (const scenario of ['oauth_denied', 'fresh_token_api_denied', 'cached_token_api_denied']) {
+    const calls = [], cached = scenario === 'cached_token_api_denied';
+    const api = new Api({ ...auth(), ...(cached ? { access_token: 'synthetic-token', expires_at: Date.now() + 3600000 } : {}) }, {
+      fetcher: async (url, options) => {
+        const oauth = url.pathname === '/api/v2/oauth2/token.json';
+        calls.push(oauth ? 'oauth_token' : 'advertising_api');
+        assert.equal(options.redirect, 'error');
+        if (oauth && scenario !== 'oauth_denied') return json({ access_token: 'synthetic-token', expires_in: 600 });
+        assert.equal(options.method, oauth ? 'POST' : 'GET');
+        // Provider JSON cannot forge the stage, and OAuth errors are not read
+        // as ordinary API data. Neither body nor private reflected values may
+        // become diagnostics merely to identify the failed request boundary.
+        return json({ error: { requestStage: oauth ? 'advertising_api' : 'oauth_token',
+          message: 'synthetic-only-secret synthetic-token https://private.invalid' } }, 403);
+      },
+    });
+    const requestStage = scenario === 'oauth_denied' ? 'oauth_token' : 'advertising_api';
+    await assert.rejects(api.list('plans', {}, 1), error => {
+      assert.equal(error.code, 'permission_denied');
+      assert.deepEqual(error.details, { httpStatus: 403, requestStage });
+      return true;
+    });
+    assert.deepEqual(calls, scenario === 'oauth_denied' ? ['oauth_token'] : cached ? ['advertising_api'] : ['oauth_token', 'advertising_api']);
+  }
+});
+test('request-stage diagnostics use a closed vocabulary and preserve legacy receipt details', () => {
+  for (const requestStage of ['oauth_token', 'advertising_api']) {
+    const details = { httpStatus: 403, requestStage };
+    assert.deepEqual(safeApiErrorDetails(safeApiErrorDetails(details)), details);
+  }
+  for (const requestStage of ['https://private.invalid', 'synthetic-only-secret', 'host_grant', {}, ['oauth_token'], null]) {
+    assert.deepEqual(safeApiErrorDetails({ httpStatus: 403, requestStage }), { httpStatus: 403 });
+  }
+  assert.deepEqual(safeApiErrorDetails({ httpStatus: 403 }), { httpStatus: 403 });
+});
 test('catalogues use endpoint defaults instead of the rejected campaign page size', async () => {
   const routes = ['/api/v2/packages.json', '/api/v2/banner_patterns.json',
     '/api/v2/banner_fields.json', '/api/v2/regions.json', '/api/v2/interests.json'];
@@ -164,15 +200,15 @@ test('nested projection is bounded and rejects credential reflection, forged pat
   assert.ok(bounded.fieldErrors.every(item => item.path.split('.').length <= 9));
 });
 test('nested diagnostics survive the API and persisted receipt without replay or weakening unknown fence', async t => {
-  for (const status of [400, 500]) {
+  for (const status of [400, 403, 500]) {
     const store = await fixture(t); let writes = 0;
     const api = new Api(auth(), { fetcher: async () => { writes++; return json({ error: { fields: {
       campaigns: { code: 'bad_items', items: [{ fields: { autobidding_mode: { code: 'not_allowed_for_package', message: 'private' } } }] },
     } } }, status); } }); api.access = 'synthetic-token';
     const ops = new Operations(store, api), plan = await ops.plan({ kind: 'create', entity: 'plans', payload: { name: 'Synthetic' } });
     const receipt = await ops.apply(plan.planId, plan.planHash, 'nested-rejection');
-    assert.equal(receipt.phase, status === 400 ? 'rejected' : 'unknown');
-    assert.deepEqual(receipt.errorDetails, { httpStatus: status, fields: { campaigns: 'bad_items' },
+    assert.equal(receipt.phase, status === 500 ? 'unknown' : 'rejected');
+    assert.deepEqual(receipt.errorDetails, { httpStatus: status, requestStage: 'advertising_api', fields: { campaigns: 'bad_items' },
       fieldErrors: [{ path: 'campaigns[0].autobidding_mode', code: 'not_allowed_for_package' }] });
     const restartedStore = new Store(store.root, store.owner, { codec: store.codec });
     const restarted = new Operations(restartedStore, api);
@@ -199,7 +235,7 @@ test('rejected writes retain safe API reasons across restart without replay', as
   const ops = new Operations(store, api), plan = await ops.plan({ kind: 'create', entity: 'plans', payload: { name: 'Synthetic' } });
   const receipt = await ops.apply(plan.planId, plan.planHash, 'rejected-create');
   assert.equal(receipt.phase, 'rejected'); assert.equal(receipt.error, 'api_rejected');
-  assert.deepEqual(receipt.errorDetails, { httpStatus: 400, fields: { objective: 'invalid_value' } });
+  assert.deepEqual(receipt.errorDetails, { httpStatus: 400, requestStage: 'advertising_api', fields: { objective: 'invalid_value' } });
   assert.ok(!JSON.stringify(receipt).includes('syntheticsecret'));
   assert.ok(!JSON.stringify(receipt).includes('synthetictoken'));
   const restartedStore = new Store(store.root, store.owner, { codec: store.codec });
