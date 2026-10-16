@@ -32,8 +32,8 @@ window/PID/topology и полный OCR. `--ocr` возвращает распо
 CLI без новых флагов сохраняет прежний полный формат и команды.
 
 `--observe` поддерживается у `session start`, `click`, `long-press`, `scroll`, `type-text`,
-`home`, `app-switcher`, `spotlight` и `retry`. После одной операции он делает
-единственный захват и OCR-классификацию, сохраняет PNG и возвращает
+`home`, `app-switcher`, `spotlight`, `retry` и `wait-connected`. После одной операции он
+сохраняет итоговый захват с OCR-классификацией в PNG и возвращает
 `observation.output`/`screen_state`/`captured_at` (Unix milliseconds). Вместо
 удаляемого внутреннего status-снимка агент открывает этот же файл; повторный screenshot
 того же кадра не требуется. Снимок после предыдущего шага пригоден как исходный
@@ -64,10 +64,48 @@ CLI без новых флагов сохраняет прежний полны�
 Runtime не инициирует системные permission prompts. Физический unlock после
 перезагрузки iPhone и блокировка занятого телефона остаются действиями
 пользователя. После такого действия terminal overlay Apple не обновляется сам:
-runtime выполняет `retry`, который нажимает точную AX-кнопку `Подключиться` /
-`Connect` либо `Повторить попытку` / `Try Again`, и только затем ожидает
+runtime выполняет `retry`, который один раз нажимает точную AX-кнопку `Подключиться` /
+`Connect` либо `Повторить попытку` / `Try Again` и сам ожидает
 подключение. Пассивный `wait-connected` на старом `iphone_in_use` не считается
 восстановлением.
+
+## Готовность подключения
+
+`session start`, `retry` и `wait-connected` используют общий алгоритм из
+`scripts/connection-readiness.swift`. После создания/переиспользования скрытой
+lease либо единственного AXPress runtime выдерживает минимум три секунды
+до первого захвата. Затем он ждёт два последовательных кадра одного window
+ID/PID без системного connection overlay. До и после каждого захвата должны
+быть доступны все три exact AXMenuItem: «Экран «Домой»» / Home Screen,
+«Переключатель приложений» / App Switcher и Spotlight с `AXEnabled=true`.
+Серое окно и фон Apple без OCR при выключенных командах остаются `connecting`;
+отсутствующее AXEnabled остаётся `readiness_unavailable`. Критерия яркости нет:
+чёрный экран подключённого приложения с доступной навигацией допустим.
+
+Общий монотонный бюджет по умолчанию равен 30 секундам, интервал между
+завершёнными захватами — одной секунде. Время OCR входит в тот же бюджет,
+изменение window identity или промежуточный неготовый кадр сбрасывает кандидат.
+`wait-connected` позволяет явно выбрать конечный timeout `>0...120` секунд и
+interval `0.25...5` секунд; бюджет короче стартовой паузы истекает без снимка.
+Проверка caller/lease работает и во время паузы, ожидание не захватывает фокус,
+не отправляет HID и не создаёт повторных AXPress/launch. Stop прекращает
+наблюдение exact сессии без перехода к новой lease.
+
+Ответ сохраняет исходный action/sessionID/ownership и добавляет
+`connection_outcome` (`candidate`, `blocked`, `timed_out`, `observation_failed`),
+`connection_candidate`, `connection_wait_seconds`, `screen_state` и
+`verification_required`. `connection_candidate=true` требует визуальной
+проверки содержимого. Terminal overlay Apple возвращается как `blocked`;
+истечение бюджета и недоступное наблюдение сохраняют `connection_error` с
+машинным кодом. Ошибка после старта не скрывает созданную lease и не заменяет
+explicit stop. Неизвестный результат retry не разрешает повтор ради снимка.
+
+Промежуточные PNG перезаписываются в одном owner-only временном каталоге,
+в ответ попадает только последний кадр. `--observe` сохраняет именно его:
+новый capture после ожидания не делается. Без флага внутренний файл удаляется.
+Тайм-аут до первого capture не создаёт фиктивный PNG. `connected_or_unknown`
+обычного screenshot/status сохраняет старый смысл OCR-кандидата и не заменяет
+положительное доказательство готовности.
 
 ## Session lifecycle
 
@@ -175,3 +213,8 @@ node --test \
 На macOS тест `--help` компилирует три native binary без запуска ScreenContinuity
 и без запроса TCC. Live device smoke не входит в CI: он выполняется только по
 явному запросу владельца сопряжённого iPhone через свежий signed runtime.
+При явно порученной разработке допускается проверка изменяемого canonical
+source по maintainer route с теми же TCC/lease/cleanup ограничениями.
+Deterministic connection tests исполняют production алгоритм с внедрёнными
+часами, AX-сигналами и кадрами: gray/wallpaper, ready/disabled/unknown,
+смена окна, terminal overlay, deadline, ошибка захвата и отмена caller.

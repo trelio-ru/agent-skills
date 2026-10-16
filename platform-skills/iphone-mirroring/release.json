@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "iphone-mirroring",
-    "version": "2.2.0",
-    "summary": "Добавлено длительное нажатие на iPhone: 800 мс по умолчанию, 500–1000 мс по выбору. Скрытая сессия сохраняет защиту ввода, отпускание кнопки при отмене и проверку результата по снимку."
+    "version": "2.2.1",
+    "summary": "Старт и повторное подключение дожидаются рабочего экрана iPhone. Серые переходные кадры больше не считаются подключением; проверяются системная навигация и два последовательных снимка."
   },
   "connection": null,
   "runtime": {
-    "version": "2.2.0",
+    "version": "2.2.1",
     "minimumHostVersion": "1.4.0",
     "entrypoint": {
       "path": "trelio-iphone-mirroring.mjs",
@@ -45,6 +45,11 @@
       {
         "source": "scripts/runtime-output.swift",
         "path": "scripts/runtime-output.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/connection-readiness.swift",
+        "path": "scripts/connection-readiness.swift",
         "mode": 420
       },
       {

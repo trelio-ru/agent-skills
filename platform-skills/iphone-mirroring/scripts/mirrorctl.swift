@@ -265,6 +265,124 @@ private func screenshotPayload(arguments: [String], outputURL: URL) throws -> [S
     )
 }
 
+private func connectionControlsReady(_ app: NSRunningApplication) -> Bool? {
+    guard AXIsProcessTrusted() else { return nil }
+    let root = AXUIElementCreateApplication(app.processIdentifier)
+    let titles = [
+        ["Экран «Домой»", "Home Screen"],
+        ["Переключатель приложений", "App Switcher"],
+        ["Spotlight"],
+    ]
+    var enabled: [Bool] = []
+    for alternatives in titles {
+        guard let item = findMenuItem(in: root, titles: Set(alternatives.map(normalized))),
+              axString(item, kAXRoleAttribute) == kAXMenuItemRole,
+              let value = copyAXAttribute(item, kAXEnabledAttribute) as? Bool else { return nil }
+        enabled.append(value)
+    }
+    return enabled.allSatisfy { $0 }
+}
+
+private func connectionSample(arguments: [String], outputURL: URL) throws -> MirrorConnectionSample {
+    try refreshSessionActivityIfActive(arguments: arguments)
+    guard let app = runningApp(), let record = workingWindow(for: app) else {
+        throw MirrorError.unavailable("Рабочее окно Видеоповтора исчезло во время подключения.")
+    }
+    let before = connectionControlsReady(app)
+    try capture(record, to: outputURL)
+    let lines = try recognizeText(in: outputURL)
+    let after = connectionControlsReady(app)
+    guard runningApp()?.processIdentifier == app.processIdentifier,
+          workingWindow(for: app)?.id == record.id else {
+        throw MirrorError.unavailable("Рабочее окно изменилось во время проверки подключения.")
+    }
+    // Отсутствие AXEnabled отличается от disabled: неподдерживаемый API не
+    // даёт разрешения считать отсутствие текста успешным подключением.
+    let ready: Bool? = before == nil || after == nil ? nil : before == true && after == true
+    let rawState = classifyScreen(lines)
+    let sample = MirrorConnectionSample(
+        screenState: rawState, controlsReady: ready,
+        windowIdentity: "\(record.pid):\(record.id)", observation: [:]
+    )
+    var observation = runtimeScreenshotPayload(
+        command: "wait-connected", output: outputURL.path,
+        capturedAt: Int(Date().timeIntervalSince1970 * 1_000),
+        screenState: sample.effectiveState, window: record.json, recognizedText: lines
+    )
+    if let ready { observation["connection_controls_ready"] = ready }
+    return MirrorConnectionSample(
+        screenState: rawState, controlsReady: ready,
+        windowIdentity: sample.windowIdentity, observation: observation
+    )
+}
+
+private func emitConnectionResult(
+    _ source: [String: Any], arguments: [String], timeout: TimeInterval = 30, interval: TimeInterval = 1
+) {
+    var result = source
+    // Сохраняем exact созданную lease и при start без --session. За время
+    // ожидания чужая новая сессия не должна стать неявной целью наблюдения.
+    var scopedArguments = arguments
+    if let createdID = source["sessionID"] as? String, option("--session", in: arguments) == nil {
+        scopedArguments += ["--session", createdID]
+    }
+    let callerParentPID = getppid()
+    var retainedOutput: URL?
+    defer {
+        // Внутренние промежуточные снимки перезаписываются в одном приватном
+        // файле. Без --observe после ответа не остаётся недоступных артефактов.
+        if !runtimeOutputOptions.observe, let retainedOutput {
+            try? FileManager.default.removeItem(at: retainedOutput.deletingLastPathComponent())
+        }
+    }
+    do {
+        if option("--session", in: scopedArguments) == nil, let active = activeSessionState(),
+           let activeID = sessionID(in: active) {
+            scopedArguments += ["--session", activeID]
+        }
+        _ = try withPrivateRuntimeObservation(allowMissingOutput: true) { output in
+            retainedOutput = output
+            let waiting = try waitForMirrorConnection(
+                timeout: timeout, interval: interval,
+                check: {
+                    guard callerParentPID > 1, getppid() == callerParentPID else {
+                        throw MirrorError.unavailable("Вызывающий процесс завершился; ожидание подключения отменено.")
+                    }
+                    _ = try validatedActiveSession(arguments: scopedArguments)
+                },
+                sample: { try connectionSample(arguments: scopedArguments, outputURL: output) }
+            )
+            result.merge(waiting.json) { _, value in value }
+            if let sample = waiting.sample {
+                if runtimeOutputOptions.observe {
+                    result["observation"] = sample.observation
+                } else {
+                    var status = sample.observation
+                    status.removeValue(forKey: "output")
+                    result["status"] = status
+                }
+            }
+            if waiting.outcome == "timed_out" {
+                result["connection_error"] = [
+                    "error_code": waiting.sample?.effectiveState == "readiness_unavailable"
+                        ? "connection_readiness_unavailable" : "connection_timeout",
+                    "error": "Подключение не подтверждено за \(timeout) с. Проверьте последнее состояние; повтор не выполнялся.",
+                ]
+            }
+            return result
+        }
+    } catch {
+        // Start/retry уже выполнены. Ошибка наблюдения не скрывает sessionID
+        // и не отправляет кнопку повторно; caller всё ещё обязан сделать stop.
+        result["connection_candidate"] = false
+        result.removeValue(forKey: "observation")
+        result["connection_outcome"] = "observation_failed"
+        result["verification_required"] = true
+        result["connection_error"] = ["error_code": "connection_observation_failed", "error": error.localizedDescription]
+    }
+    emitJSON(result)
+}
+
 private func automaticScreenshot(arguments: [String]) throws -> [String: Any] {
     try withPrivateRuntimeObservation {
         try screenshotPayload(arguments: arguments, outputURL: $0)
@@ -1224,6 +1342,8 @@ private let usage = """
   --ocr      Добавить OCR в компактный status/screenshot/observation.
   --observe  Сохранить снимок после session start или одного действия;
              путь возвращается в observation.output, ввод не повторяется.
+  session start / retry / wait-connected ждут готовность: минимум 3 с,
+  затем два кадра с доступной системной навигацией, максимум 30 с по умолчанию.
   mirrorctl screenshot --compact [--output PATH] [--session ID]
   mirrorctl session start --compact --observe
   mirrorctl scroll --direction down --session ID --compact --observe
@@ -1237,10 +1357,10 @@ private func run() throws {
     }
 
     if runtimeOutputOptions.observe {
-        let observableCommands: Set<String> = ["click", "long-press", "scroll", "type-text", "home", "app-switcher", "spotlight", "retry"]
+        let observableCommands: Set<String> = ["click", "long-press", "scroll", "type-text", "home", "app-switcher", "spotlight", "retry", "wait-connected"]
         let startsSession = command == "session" && arguments.dropFirst().first == "start"
         guard startsSession || observableCommands.contains(command) else {
-            throw MirrorError.usage("--observe доступен для session start, click, long-press, scroll, type-text, home, app-switcher, spotlight и retry.")
+            throw MirrorError.usage("--observe доступен для session start, click, long-press, scroll, type-text, home, app-switcher, spotlight, retry и wait-connected.")
         }
     }
 
@@ -1256,7 +1376,7 @@ private func run() throws {
         case "start":
             let session = try startHiddenSession(arguments: arguments)
             observationAfterAction = true
-            emitActionResult(session, arguments: arguments, legacyStatus: false)
+            emitConnectionResult(session, arguments: arguments)
         case "status":
             emitJSON(hiddenSessionStatus())
         case "keepalive":
@@ -1403,40 +1523,16 @@ private func run() throws {
         let app = try ensureRunningApp()
         observationAfterAction = true
         try pressRetry(app)
-        Thread.sleep(forTimeInterval: 0.8)
-        emitActionResult(["action": "retry"], arguments: arguments)
+        emitConnectionResult(["action": "retry"], arguments: arguments)
 
     case "wait-connected":
-        let timeout = option("--timeout", in: arguments).flatMap(Double.init) ?? 30
-        let interval = option("--interval", in: arguments).flatMap(Double.init) ?? 1.5
-        guard timeout > 0, interval >= 0.25 else {
-            throw MirrorError.usage("--timeout должен быть > 0, --interval — не меньше 0.25 с.")
+        guard let timeout = Double(option("--timeout", in: arguments) ?? "30"),
+              let interval = Double(option("--interval", in: arguments) ?? "1"),
+              timeout.isFinite, timeout > 0, timeout <= 120,
+              interval.isFinite, interval >= 0.25, interval <= 5 else {
+            throw MirrorError.usage("--timeout должен быть > 0 и не больше 120 с, --interval — 0.25...5 с.")
         }
-
-        let deadline = Date().addingTimeInterval(timeout)
-        var consecutiveCandidates = 0
-        var lastState = "unknown"
-        while Date() < deadline {
-            try refreshSessionActivityIfActive(arguments: arguments)
-            let current = status(includeOCR: true)
-            lastState = current["screen_state"] as? String ?? "unknown"
-            if lastState == "connected_or_unknown" {
-                consecutiveCandidates += 1
-                if consecutiveCandidates >= 2 {
-                    emitJSON([
-                        "action": "wait-connected",
-                        "connection_candidate": true,
-                        "status": current,
-                        "verification_required": true,
-                    ])
-                    return
-                }
-            } else {
-                consecutiveCandidates = 0
-            }
-            Thread.sleep(forTimeInterval: interval)
-        }
-        throw MirrorError.timeout("Подключение не стало готовым за \(timeout) с; последнее состояние: \(lastState).")
+        emitConnectionResult(["action": "wait-connected"], arguments: arguments, timeout: timeout, interval: interval)
 
     default:
         throw MirrorError.usage("Неизвестная команда: \(command)\n\n\(usage)")

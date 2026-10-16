@@ -11,6 +11,7 @@ source_path="${script_dir}/mirrorctl.swift"
 supervisor_source="${script_dir}/mirror-session-supervisor.swift"
 input_safety_source="${script_dir}/input-safety.swift"
 runtime_output_source="${script_dir}/runtime-output.swift"
+connection_readiness_source="${script_dir}/connection-readiness.swift"
 guardian_source="${script_dir}/input-guardian.swift"
 bridge_source="${script_dir}/virtual-display-bridge.m"
 bridge_header="${script_dir}/virtual-display-bridge.h"
@@ -22,6 +23,7 @@ source_hash="$(
     "${supervisor_source}" \
     "${input_safety_source}" \
     "${runtime_output_source}" \
+    "${connection_readiness_source}" \
     "${guardian_source}" \
     "${bridge_source}" \
     "${bridge_header}" \
@@ -53,6 +55,7 @@ if [[ ! -x "${binary_path}" || ! -x "${supervisor_path}" || ! -x "${guardian_pat
     "${source_path}" \
     "${input_safety_source}" \
     "${runtime_output_source}" \
+    "${connection_readiness_source}" \
     -o "${temporary_binary}"
 
   # Supervisor должен жить между отдельными CLI-вызовами, потому что время
