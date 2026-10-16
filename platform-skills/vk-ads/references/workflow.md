@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.4.2, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.5.0, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -196,6 +196,13 @@ Apply сохраняет `unknown` до сети, затем object ID/отве�
 timeout или malformed response не стирают receipt. Один operation ID и один
 planHash не отправляются повторно, даже после restart или с другим ID.
 `unknown` и `written_unverified` блокируют новую запись всего аккаунта.
+Отдельное узкое исключение для известного status-only update родителя описано
+в [status recovery](status-recovery.md); до подготовки нужен
+`reference --name status-recovery`. Это новый reviewed plan, один дополнительный
+dispatch того же active и полный tree read-back, а не автоматический HTTP retry.
+Исходный unknown не принимается человеком автоматически и не объявляется
+успешным: resolved_by_status_recovery сохраняет originalRequestOutcome:unknown.
+Путь не применяется к create, другим полям или второму unknown recovery.
 Ответ создания может называть группы `campaigns` при настроенном `ad_groups`:
 это только alias ответа, структура запросов не меняется. Если ответ не вернул
 ID дочерних объектов, сверка читает полный bounded список лишь внутри exact
