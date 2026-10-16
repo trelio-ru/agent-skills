@@ -177,32 +177,26 @@ export async function audience(api, segmentId) {
     const type = Object.hasOwn(family, item.object_type) ? family[item.object_type] : undefined;
     item.sourceMetadataState = 'type_not_supported';
     if (!type) continue;
-    // Search phrase relations have an internal object_id distinct from the
-    // list addressed by the v3 API. Use the explicit source_id; an absent or
-    // malformed reference is not permission to guess from object_id/name.
-    const pointer = type === 'search-phrases' ? item.params?.source_id : item.object_id;
-    if (!/^[1-9]\d{0,9}$/.test(String(pointer)) || Number(pointer) > 2147483647) {
-      item.sourceMetadataState = 'source_reference_invalid'; continue;
-    }
-    const sourceId = id(pointer);
+    // Search phrases and VK communities expose a separate params.source_id.
+    // In particular a VK relation.object_id is not the registered source.id:
+    // it remains an opaque relation object reference. Match the public group
+    // id against source.object_id in a complete inventory, never by name or
+    // by an assumed equivalence of these independent integer namespaces.
+    const pointer = ['search-phrases', 'vk-groups'].includes(type) ? item.params?.source_id : item.object_id;
+    let sourceId;
+    try { sourceId = id(pointer); } catch { item.sourceMetadataState = 'source_reference_invalid'; continue; }
     const key = `${type}:${sourceId}`;
     if (!cache.has(key)) {
       if (cache.size >= 20) { item.sourceMetadataState = 'lookup_limit'; continue; }
       try {
-        const source = type === 'segments' ? project(await api.request('GET', `/api/v2/remarketing/segments/${id(item.object_id)}.json`,
+        const source = type === 'vk-groups' ? await vkGroupSourceByPublicId(api, sourceId) :
+          type === 'segments' ? project(await api.request('GET', `/api/v2/remarketing/segments/${id(item.object_id)}.json`,
           { query: { fields: SEGMENT_FIELDS.join(',') } }), SEGMENT_FIELDS) : await sources(api, type, sourceId);
-        check(id(source.id) === sourceId, 'readback_mismatch');
+        check(id(type === 'vk-groups' ? source.object_id : source.id) === sourceId, 'readback_mismatch');
         cache.set(key, { source, sourceMetadataState: 'resolved' });
       } catch (error) { cache.set(key, { sourceMetadataState: error.code || 'source_read_failed' }); }
     }
     Object.assign(item, cache.get(key));
-    // The cache belongs to the internal source id. Each relation must still
-    // agree with that source's public object_id, including a second relation
-    // sharing the cached source with a different (or malformed) source_id.
-    if (type === 'vk-groups' && item.source && item.params?.source_id !== undefined) {
-      try { check(id(item.source.object_id) === id(item.params.source_id), 'vk_group_source_reference_mismatch'); }
-      catch { item.sourceMetadataState = 'vk_group_source_reference_mismatch'; }
-    }
   }
   // Describes set membership rules, never the identities of audience members.
   // Do not recursively expand nested segments: that can expose cycles and an

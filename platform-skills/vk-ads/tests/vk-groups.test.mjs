@@ -48,7 +48,9 @@ function fixture() {
       }
       if (url.pathname === '/api/v2/remarketing/segments.json') {
         model.segment = { id: 11, name: body.name, pass_condition: body.pass_condition, relations_count: body.relations.length };
-        model.relations = body.relations.map(v => ({ ...v, id: 501, object_id: 901 }));
+        // A relation's opaque object reference is a third namespace, distinct
+        // from both the public group id101 and registered source id901.
+        model.relations = body.relations.map(v => ({ ...v, id: 501, object_id: 701 }));
         return json({ id: 11 });
       }
       throw Error('Unexpected mutation');
@@ -70,6 +72,14 @@ function fixture() {
 }
 async function apply(f, spec, operation) {
   const plan = await f.ops.plan(spec); return f.ops.apply(plan.planId, plan.planHash, operation);
+}
+function readFixture() {
+  const f = fixture();
+  f.model.sources = [{ id: 901, object_id: 101, name: 'Synthetic community', shortname: 'sample_group',
+    status: 'loaded', loaded_users_count: 123, users_count: 2500, users: ['must-not-escape'] }];
+  f.model.segment = { id: 11, name: 'Synthetic segment', pass_condition: 1, relations_count: 1 };
+  f.model.relations = [{ id: 501, object_id: 701, object_type: 'remarketing_vk_group', params: { source_id: 101, type: 'positive' } }];
+  return f;
 }
 
 test('advertising dictionary resolves exact shortname/id, never a similar display name or an arbitrary URL', async () => {
@@ -131,22 +141,65 @@ test('registration sends public object_id once, verifies internal id by GET, and
   assert.ok(f.calls.filter(v => v.method === 'GET').every(v => !/vk_groups\/901/.test(v.path)));
 });
 
-test('segment source_id uses public id while returned relation.object_id resolves the registered internal source', async () => {
+test('VK relations resolve public source_id independently of opaque relation.object_id and registered source.id', async () => {
   const f = fixture(); await apply(f, create(), 'register-for-segment');
   const spec = { kind: 'audience', entity: 'segments', action: 'create', payload: { name: 'Synthetic audience', pass_condition: 1,
     relations: [{ object_type: 'remarketing_vk_group', params: { source_id: 101, type: 'positive' } }] } };
   const plan = await f.ops.plan(spec);
   assert.equal(plan.operation.referencesBefore[0].source.id, 901);
   assert.equal((await f.ops.apply(plan.planId, plan.planHash, 'create-vk-segment')).phase, 'verified');
-  const info = await audience(f.api, 11); assert.equal(info.relations.items[0].source.id, 901);
+  const info = await audience(f.api, 11); assert.equal(info.relations.items[0].sourceMetadataState, 'resolved');
+  assert.equal(info.relations.items[0].source.id, 901);
+  assert.equal(info.relations.items[0].object_id, 701); assert.equal(info.relations.items[0].source.object_id, 101);
   assert.equal(info.relations.items[0].sourceMetadataState, 'resolved');
   f.model.relations.push({ ...f.model.relations[0], id: 502, params: { source_id: 102, type: 'negative' } });
   f.model.segment.relations_count = 2;
   const mismatched = await audience(f.api, 11);
   assert.equal(mismatched.relations.items[0].sourceMetadataState, 'resolved');
-  assert.equal(mismatched.relations.items[1].sourceMetadataState, 'vk_group_source_reference_mismatch');
+  assert.equal(mismatched.relations.items[1].sourceMetadataState, 'vk_group_source_not_registered_or_ambiguous');
   spec.payload.relations[0].params.source_id = 901;
   await assert.rejects(f.ops.plan(spec), { code: 'vk_group_source_not_registered_or_ambiguous' });
+});
+
+test('VK diagnostic reads cache by public identity, preserve independent relation ids and never export unknown rules or people', async () => {
+  const f = readFixture();
+  f.model.relations.push({ id: 502, object_id: 702, object_type: 'remarketing_vk_group',
+    params: { source_id: 101, type: 'negative', unsupported_rule: 'must-not-escape' } });
+  f.model.segment.relations_count = 2;
+  const result = await audience(f.api, 11);
+  assert.deepEqual(result.relations.items.map(v => v.sourceMetadataState), ['resolved', 'resolved']);
+  assert.deepEqual(result.relations.items.map(v => v.object_id), [701, 702]);
+  assert.deepEqual(result.relations.items.map(v => v.source.id), [901, 901]);
+  assert.equal(result.relations.items[1].paramsProjectionComplete, false);
+  assert.equal(result.relations.items[0].source.readiness.state, 'loaded_nonempty');
+  assert.ok(!JSON.stringify(result).includes('must-not-escape'));
+  assert.equal(f.calls.filter(v => v.path === '/api/v2/remarketing/vk_groups.json').length, 1);
+  assert.ok(f.calls.every(v => v.method === 'GET' && v.query._id__in === undefined));
+  delete f.model.relations[0].object_id;
+  assert.equal((await audience(f.api, 11)).relations.items[0].source.id, 901);
+});
+
+test('VK metadata requires a scalar explicit public reference and complete unique inventory; no opaque-id or name fallback', async () => {
+  for (const pointer of [undefined, null, [101], 0, -101, true, 'not-an-id']) {
+    const f = readFixture(); f.model.relations[0].object_id = 901; f.model.relations[0].params.source_id = pointer;
+    assert.equal((await audience(f.api, 11)).relations.items[0].sourceMetadataState, 'source_reference_invalid');
+    assert.equal(f.calls.length, 2);
+  }
+  const malformed = readFixture(); malformed.model.relations[0].params.source_id = {};
+  await assert.rejects(audience(malformed.api, 11), { code: 'response_invalid' });
+  const partial = readFixture(); partial.model.partial = true;
+  const incomplete = (await audience(partial.api, 11)).relations.items[0];
+  assert.equal(incomplete.sourceMetadataState, 'vk_group_sources_incomplete'); assert.equal(incomplete.source, undefined);
+  const duplicate = readFixture(); duplicate.model.sources.push({ ...duplicate.model.sources[0], id: 902 });
+  assert.equal((await audience(duplicate.api, 11)).relations.items[0].sourceMetadataState, 'vk_group_source_not_registered_or_ambiguous');
+  duplicate.model.sources[1].id = 901;
+  assert.equal((await audience(duplicate.api, 11)).relations.items[0].sourceMetadataState, 'collection_changed');
+  const absent = readFixture(); absent.model.relations[0].object_id = 901; absent.model.relations[0].params.source_id = 102;
+  assert.equal((await audience(absent.api, 11)).relations.items[0].sourceMetadataState, 'vk_group_source_not_registered_or_ambiguous');
+  absent.model.sources.push({ ...absent.model.sources[0], id: 902, object_id: 102 });
+  const exact = (await audience(absent.api, 11)).relations.items[0];
+  assert.equal(exact.sourceMetadataState, 'resolved'); assert.equal(exact.source.id, 902); assert.equal(exact.source.object_id, 102);
+  assert.equal(exact.object_id, 901); assert.ok(absent.calls.every(v => v.method === 'GET'));
 });
 
 test('stale public identity, duplicates, unknown inventories and unregistered public ids stop before dispatch', async () => {

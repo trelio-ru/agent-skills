@@ -1,6 +1,6 @@
 # Управление аудиторией и явной целью
 
-Runtime 1.4.1. Перед первой такой записью прочитай `reference --name
+Runtime 1.4.2. Перед первой такой записью прочитай `reference --name
 audience-management` и общий workflow. Аргументы добавляются только к current
 signed localAction. Все операции используют прежние `plan --file`, scoped hash,
 `apply --plan --hash --operation`, encrypted receipts и GET-only reconcile.
@@ -174,15 +174,29 @@ loaded_users_count. Даже он сохраняет campaignEligibility=not_ass
 отдельно. Для ожидания загрузки повторяют только sources с тем же внутренним
 id, не регистрацию. Автоматическое расширение на похожие сообщества отсутствует.
 
+В опубликованном source contract status является read-only. Коллекция
+документирует GET и POST регистрации, отдельный resource – DELETE; отдельная
+команда начала загрузки и срок обработки не установлены. Loading означает
+текущую загрузку, unloaded – отсутствие загруженного списка; unloaded сам по
+себе не доказывает, что загрузка уже поставлена в очередь. Не создавай новый
+источник, не угадывай /load и не активируй рекламу ради начала загрузки.
+Дальнейшая безопасная проверка – sources --type vk-groups --id с тем же
+registration id. Неизменный unloaded остаётся внешним ограничением VK;
+причина и следующий поддерживаемый шаг уточняются в поддержке VK с exact ID.
+
 После регистрации сегмент использует публичный object_id:
 
 ```json
 {"kind":"audience","entity":"segments","action":"create","payload":{"name":"Согласованный сегмент","pass_condition":1,"relations":[{"object_type":"remarketing_vk_group","params":{"source_id":101,"type":"positive"}}]}}
 ```
 
-В прочитанной связи relation.object_id указывает на внутренний источник.
-Runtime сопоставляет его с источником и проверяет согласованность public
-params.source_id. Эти IDs не подставляются друг вместо друга.
+В прочитанной связи relation.object_id – ID вложенного объекта API, а не
+RemarketingVkGroup.id регистрации. Его точная внутренняя структура не
+разбирается. Для метаданных runtime сопоставляет публичный params.source_id с
+RemarketingVkGroup.object_id в полной уникальной выборке. Это соответствует
+first-party GroupModel.isMyRelation: проверяются тип и public source_id,
+не равенство relation.object_id и registration id. Отсутствие/неполнота/дубли
+сохраняют явное ограничение. Никакие ID в сохранённых записях не переписываются.
 
 Удаление источника адресует внутренний id, например:
 

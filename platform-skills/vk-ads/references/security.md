@@ -110,6 +110,11 @@ fallback отсутствует. Source metadata содержит только �
 segment params.source_id. Missing count/403/404 коллекции не доказывают
 удаления; unknown create не ищется и не повторяется. Loading/unknown size
 не превращается в готовую рекламную аудиторию.
+Diagnostic relation.object_id сохраняется как opaque ссылка и не становится
+registration id. Lookup использует scalar params.source_id, полный каталог,
+единственное совпадение source.object_id и валидный source.id; нет fallback
+на opaque ID/имя при missing/invalid source_id. Разобранные метаданные не
+отменяют неполноту неизвестных params или проверку загрузки аудитории.
 Публичный lookup сканирует отдельный bounded каталог, но возвращает максимум
 20 кандидатов в ответе до 14 000 UTF-8 bytes. Exact resolved не теряется за
 пределами preview; scanTruncated отдельно от truncated описывает полноту поиска.

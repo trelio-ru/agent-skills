@@ -68,8 +68,12 @@ create ID не угадывается. Hosted VK entrypoint регистриру
 diagnostics/audience regression suites на каждой обязательной OS.
 VK-сообщество разрешается только по exact public id/shortname из рекламного
 справочника. `remarketing_vk_group.params.source_id` равен публичному
-RemarketingVkGroup.object_id, не внутреннему id источника. Регистрация/удаление
-источника использует тот же scoped journal; неполный каталог не доказывает
+RemarketingVkGroup.object_id, не внутреннему id источника. relation.object_id
+остаётся opaque ссылкой вложенного объекта. Diagnostic source lookup идёт по
+scalar params.source_id
+через полный уникальный каталог; ID/имя не подставляются при его отсутствии.
+Регистрация/удаление источника используют тот же scoped journal; неполный
+каталог не доказывает
 отсутствие/удаление. Loading и неизвестный размер не становятся готовностью
 рекламы; live совместимость нового endpoint проверяется отдельно от fixtures.
 Lookup разделяет bounded сканирование и preview: exact resolved сохраняется
