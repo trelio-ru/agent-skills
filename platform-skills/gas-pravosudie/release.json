@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gas-pravosudie",
-    "version": "4.1.4",
-    "summary": "Полные инструкции читаются отдельными частями из подписанного пакета. Правила безопасности и рабочих сценариев сохранены без потери текста."
+    "version": "4.1.5",
+    "summary": "Исправлен вход в ГАС через выбранный локальный аккаунт Госуслуг: привязка аккаунта передаётся помощнику ЕСИА и больше не вызывает gosuslugi_client_invalid."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.9",
+    "version": "1.0.10",
     "minimumHostVersion": "2.4.0",
     "entrypoint": {
       "path": "scripts/trelio-gas-pravosudie.mjs",

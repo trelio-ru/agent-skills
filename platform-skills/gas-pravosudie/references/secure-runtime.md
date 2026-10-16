@@ -65,6 +65,12 @@ verified командой `client` Госуслуг. Он создаётся д�
 не сохраняются в GAS vault. Новый helper не восстанавливает уже начатую
 transaction и login click после неизвестного результата не повторяется.
 
+Descriptor принимает exact `options` с `company` и `member`, а для выбранного
+локального аккаунта – также `accountId` в формате UUID. ГАС передаёт привязку
+аккаунта helper-у без удаления или подмены; descriptor без `accountId` сохраняет
+legacy company/member flow. Неизвестные поля и явно заданный неверный `accountId`
+дают `gosuslugi_client_invalid` до обращения к странице, согласия и запуска ЕСИА.
+
 Если обычный runtime Госуслуг уже находится в `ready`, exact `authorize`
 передаёт transaction его существующему защищённому worker. Повторная системная
 разблокировка и отдельный auth-only lease не нужны; текущая страница Госуслуг
