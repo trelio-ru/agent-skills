@@ -8,11 +8,13 @@ keys сюда не добавляются. Перед правкой прочи�
 Для Windows/native bootstrap прочитай полный
 [windows-native-runtime.md](docs/windows-native-runtime.md). Общий статический
 gate обходит все provider-ы; native gate выполняется на реальной Windows.
-Для Telegram reactions, search, folder scope, cursor и context grouping читай полный
+Для Telegram views/reactions, search, folder scope, cursor и context grouping читай полный
 [контракт сообщений](docs/telegram-mtproto-message-workflows.md). Обзор всех чатов
 использует отдельные проходы закреплённых/обычных диалогов и проверку
 метаданных; export cursor продвигается только после возвращённого сообщения.
 Archive scope повторно проверяется до history, включая exact сохранённый ID.
+Просмотры постов возвращаются как nullable `views` из полученного Message:
+неизвестное значение не становится нулём, чтение не регистрирует просмотр.
 Native DialogFolder исключается по constructor до чтения peer/folder metadata:
 сводная строка архива не является чатовой принадлежностью либо history target.
 

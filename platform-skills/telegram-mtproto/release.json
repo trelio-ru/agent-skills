@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.6.1",
-    "summary": "Полные инструкции читаются отдельными частями из подписанного пакета. Правила безопасности и рабочих сценариев сохранены без потери текста."
+    "version": "2.6.2",
+    "summary": "Чтение, поиск и экспорт постов каналов возвращают количество просмотров. Недоступный счётчик остаётся неизвестным; чтение не увеличивает просмотры."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.6.1",
+    "version": "2.6.2",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

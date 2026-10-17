@@ -1,8 +1,8 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.5.2`
-публикует runtime `2.5.2`, требует Telethon `>=1.44,<2` и сохраняет
-minimum host `1.11.0`,
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.6.2`
+публикует runtime `2.6.2`, требует Telethon `>=1.44,<2` и сохраняет
+minimum host `3.7.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
 входа. Чтение не отправляет Telegram read receipts; исходящие действия
@@ -218,6 +218,27 @@ page не считается концом ветки. Любая чужая thre
 `public_message` дополнительно возвращает mediaType и threadId;
 `public_messages` – nullable message link. User dialogs не получают
 выдуманную t.me/username/message ссылку.
+
+## Просмотры постов каналов
+
+Общий `public_message` возвращает nullable `views` во всех путях recent/exact
+read, thread root/replies, search hits/context, scheduled queue и period export.
+Это уже полученное `Message.views`: целое число от 0 до 2³¹−1.
+Отсутствующий либо некорректный счётчик (включая bool, строку, отрицательное
+или выходящее за TL int значение) возвращается как `null`, без coercion.
+Ноль сохраняется отдельно от неизвестного значения; обычный чат или scheduled
+message без этой metadata не получает выдуманный счётчик.
+
+Проекция не вызывает дополнительные RPC и не регистрирует просмотр: в частности,
+она не использует `messages.getMessagesViews` с `increment=true`. Счётчик
+относится к конкретному посту и моменту получения сообщения, не является числом
+уникальных читателей, подписчиков или общим числом просмотров канала. Для нового
+снимка нужно повторное scoped чтение. Автоматических refresh/analytics запросов нет.
+
+`tests/test_views.py` проверяет значения и неизвестную metadata, все основные
+пути чтения, сохранение счётчика при экспорте и отсутствие новых RPC/receipts.
+API: [Message.views](https://core.telegram.org/constructor/message),
+[messages.getMessagesViews](https://core.telegram.org/method/messages.getMessagesViews).
 
 ## Чтение реакций
 

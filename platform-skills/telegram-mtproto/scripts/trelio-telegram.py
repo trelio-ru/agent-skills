@@ -2442,6 +2442,14 @@ def public_message(
         and raw_file_size >= 0
         else None
     )
+    # Telegram includes the channel-post counter in the message snapshot.
+    # Project it without getMessagesViews/increment or any other extra RPC:
+    # inspecting a post must not register a view. Missing/invalid metadata is
+    # unknown, whereas an explicit zero is meaningful. TL int is signed int32;
+    # reject booleans, coercions and out-of-range values instead of guessing.
+    views = nonnegative_integer(getattr(message, "views", None))
+    if views is not None and views >= 2**31:
+        views = None
     return {
         "id": message.id,
         "date": message.date.isoformat() if message.date else None,
@@ -2460,6 +2468,7 @@ def public_message(
         "linkEntities": link_entities,
         "linkEntitiesTruncated": link_entities_truncated,
         "replyContext": reply_context,
+        "views": views,
         "reactions": public_message_reactions(message),
     }
 
