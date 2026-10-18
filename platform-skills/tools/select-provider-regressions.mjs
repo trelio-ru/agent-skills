@@ -17,9 +17,10 @@ const PROVIDERS = Object.freeze({
   "document-facsimile": { owner: "general", matrix: { language: "python" } },
   "consultant-plus": { owner: "general", matrix: null },
   "dodostats-drinkitstats": { owner: "general", matrix: null },
-  // This provider reuses browser tools and ships no executable package. Keep
-  // its instruction guards without inventing Node preparation/browser jobs.
+  // Browser-tool instructions ship no executable package. Keep their source
+  // guards without inventing Node preparation or browser installation jobs.
   "google-ai-search": { owner: "general", matrix: null },
+  "yandex-search": { owner: "general", matrix: null },
   "gas-pravosudie": {
     owner: "general",
     matrix: {

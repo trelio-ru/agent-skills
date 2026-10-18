@@ -109,7 +109,7 @@ test("shared tooling and workflow changes retain the full regression gate", () =
 });
 
 test("instruction-only providers still run the shared instruction contracts", () => {
-  for (const skill of ["ozon-buyer-search", "google-ai-search"]) {
+  for (const skill of ["ozon-buyer-search", "google-ai-search", "yandex-search"]) {
     const selection = selectProviderRegressions([
       `platform-skills/${skill}/SKILL.md`,
     ]);
