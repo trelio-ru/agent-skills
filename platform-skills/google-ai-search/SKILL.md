@@ -34,6 +34,56 @@ const googleSearchTab = await cua.createBrowserTab("iab", "https://g.ai", { visi
 
 ## Запрос и уточнение
 
+Перед первой отправкой создай в том же browser REPL один controller и сохраняй
+его между связанными вопросами. Отправку через UI выполняй только внутри
+`await googleAiPacing.submit(callback)`: callback вводит и отправляет один
+вопрос, без повторов. После наблюдаемого завершения нового ответа вызывай
+`googleAiPacing.answerReady()`. Не отмечай готовность по старому ответу.
+
+```javascript
+var googleAiPacing = (() => {
+  let state = "initial";
+  return {
+    async submit(sendOnce) {
+      // Пока предыдущий ответ не проверен, следующий вопрос не допускается.
+      // Ошибка UI может означать уже принятую отправку: автоматического retry нет.
+      if (state !== "initial" && state !== "ready") {
+        throw new Error("GOOGLE_AI_PREVIOUS_QUESTION_NOT_REVIEWED");
+      }
+      const needsPause = state === "ready";
+      state = "waiting";
+      try {
+        if (needsPause) {
+          // Равномерная пауза 2–15 секунд включительно после готового ответа.
+          // Это ограничение частоты, а не способ обхода CAPTCHA или лимитов.
+          const delayMs = 2_000 + Math.floor(Math.random() * 13_001);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+        state = "submitting";
+        const result = await sendOnce();
+        state = "awaiting-answer";
+        return result;
+      } catch (error) {
+        state = "unknown";
+        throw error;
+      }
+    },
+    answerReady() {
+      if (state !== "awaiting-answer" && state !== "unknown") {
+        throw new Error("GOOGLE_AI_NO_QUESTION_TO_REVIEW");
+      }
+      state = "ready";
+    },
+  };
+})();
+```
+
+Первый вопрос отправляется без искусственной паузы. Для каждого следующего,
+включая уточнения, controller выбирает новую задержку от 2 до 15 секунд после
+проверки готовности прошлого ответа. Время генерации в эту паузу не входит.
+Не сокращай выбранную задержку и не отправляй вопросы параллельно.
+Это не подтверждённый лимит Google и не гарантия отсутствия CAPTCHA.
+
 1. После перехода с `g.ai` проверь обычную страницу: открыт Google AI Mode,
    есть поле вопроса. Текущий redirect ведёт на Google Search с `udm=50`;
    один URL без доступного интерфейса не подтверждает готовность поиска.

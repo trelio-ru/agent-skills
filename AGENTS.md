@@ -116,7 +116,8 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 Изменение поведения одновременно обновляет контракт и содержательные тесты.
 Google AI Search следует полному [контракту](platform-skills/google-ai-search/SKILL.md):
 instruction-only browser tool, скрытая вкладка без изменения host launch policy,
-уточнения в той же беседе и источники текущего ответа. Проверка прототипа проходит
+уточнения в той же беседе, controller случайной паузы 2–15 секунд после готового
+ответа и источники текущего ответа. Проверка прототипа проходит
 реальную отправку, completion, уточнение и открытие первоисточника; account/history
 и session-параметры не сохраняются в публичные fixtures или отчёты.
 Для iPhone Mirroring читай [контракт](docs/iphone-mirroring-agent-skill.md):
