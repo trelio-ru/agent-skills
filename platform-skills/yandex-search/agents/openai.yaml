@@ -1,0 +1,4 @@
+interface:
+  display_name: "Yandex Search"
+  short_description: "Обычный поиск Яндекса с проверкой источников"
+  default_prompt: "Используй $yandex-search, чтобы найти информацию в обычной выдаче Яндекса в скрытой вкладке и дать проверенные ссылки."
