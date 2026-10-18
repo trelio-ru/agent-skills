@@ -109,13 +109,15 @@ test("shared tooling and workflow changes retain the full regression gate", () =
 });
 
 test("instruction-only providers still run the shared instruction contracts", () => {
-  const selection = selectProviderRegressions([
-    "platform-skills/ozon-buyer-search/SKILL.md",
-  ]);
+  for (const skill of ["ozon-buyer-search", "google-ai-search"]) {
+    const selection = selectProviderRegressions([
+      `platform-skills/${skill}/SKILL.md`,
+    ]);
 
-  assert.deepEqual(selection.selfHostedSkills, ["ozon-buyer-search"]);
-  assert.equal(selection.runSourceTests, true);
-  assert.equal(selection.hasHostedMatrix, false);
+    assert.deepEqual(selection.selfHostedSkills, [skill]);
+    assert.equal(selection.runSourceTests, true);
+    assert.equal(selection.hasHostedMatrix, false);
+  }
 });
 
 test("an unregistered provider fails closed instead of silently skipping CI", () => {

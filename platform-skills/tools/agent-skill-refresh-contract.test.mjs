@@ -116,7 +116,7 @@ test("provider instructions keep history and unused workflow detail out of the h
 // The delivery envelope is independently guarded by backend/host at read time.
 test("all public main instructions fit the UTF-8 publication budget", async () => {
   const rows = await reportInstructionBudget(fileURLToPath(platformSkillsDirectory));
-  assert.equal(rows.length, 16);
+  assert.equal(rows.length, 17);
   assert.deepEqual(rows.filter(row => row.exceedsLimit || row.envelopeFixtureExceedsLimit), []);
 });
 

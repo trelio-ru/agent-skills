@@ -108,6 +108,10 @@ jobs:
           node --test
           platform-skills/tools/agent-skill-refresh-contract.test.mjs
           platform-skills/tools/agent-skill-setup-contract.test.mjs
+      - name: Run Google AI Search instruction controller regressions
+        # Instruction-only: execute its delivered REPL snippet with fake timers,
+        # without an executable package, Google account or browser installation.
+        run: node --test platform-skills/google-ai-search/tests/pacing.test.mjs
       - name: Run DodoStats / DrinkitStats Remote MCP contract regression
         if: needs.hosted-plan.outputs.run_dodostats == 'true'
         run: >-

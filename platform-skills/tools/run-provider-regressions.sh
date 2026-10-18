@@ -43,7 +43,7 @@ print_usage() {
 
 is_supported_skill() {
   case "$1" in
-    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|russian-post-registered-mail)
+    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|google-ai-search|russian-post-registered-mail)
       return 0
       ;;
     *)
@@ -124,6 +124,10 @@ node --test \
   platform-skills/tools/build-runtime-package.test.mjs \
   platform-skills/tools/local-accounts.test.mjs \
   platform-skills/tools/select-provider-regressions.test.mjs
+
+if has_skill google-ai-search; then
+  node --test platform-skills/google-ai-search/tests/pacing.test.mjs
+fi
 
 # Every selected executable package remains deterministic before its behavior
 # is tested. Instruction-only and Remote MCP providers have no package here.
