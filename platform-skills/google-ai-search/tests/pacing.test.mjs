@@ -14,48 +14,106 @@ assert.ok(controllerSource, "The browser REPL controller must be available in th
  * Fake randomness/timers prove the delay boundaries and ordering without
  * sending Google requests or making CI wait for artificial pauses.
  */
-const createController = ({ random = () => 0, setTimeout = (done) => done() } = {}) => {
-  const context = vm.createContext({ Math: { floor: Math.floor, random }, setTimeout });
+const createHarness = ({ random = () => 0, deferTimers = false, earlyTimer = false } = {}) => {
+  let now = 100;
+  const delays = [];
+  const timers = [];
+  const context = vm.createContext({
+    Math: { floor: Math.floor, ceil: Math.ceil, random },
+    performance: { now: () => now },
+    setTimeout: (done, delay) => {
+      delays.push(delay);
+      const complete = () => {
+        // One deliberately early callback proves that the monotonic deadline,
+        // rather than merely an awaited timeout, owns the minimum interval.
+        now += earlyTimer && delays.length === 1 ? delay - 1 : delay;
+        done();
+      };
+      if (deferTimers) timers.push(complete);
+      else complete();
+    },
+  });
   vm.runInContext(controllerSource, context, { timeout: 1_000 });
-  return context.googleAiPacing;
+  return {
+    controller: context.googleAiPacing,
+    delays,
+    advance: (milliseconds) => { now += milliseconds; },
+    releaseTimer: () => timers.shift()(),
+  };
+};
+
+const observeReady = async ({ controller }) => {
+  await controller.observe(() => "Completed answer observed");
+  controller.answerReady();
 };
 
 test("the first question has no delay and the next requires observed completion", async () => {
   let sends = 0;
-  const controller = createController({ setTimeout: () => assert.fail("First question must not wait.") });
+  const harness = createHarness();
+  const { controller, delays } = harness;
   assert.throws(() => controller.answerReady(), /GOOGLE_AI_NO_QUESTION_TO_REVIEW/u);
   assert.equal(await controller.submit(() => ++sends), 1);
   await assert.rejects(controller.submit(() => ++sends), /GOOGLE_AI_PREVIOUS_QUESTION_NOT_REVIEWED/u);
   assert.equal(sends, 1);
+  assert.deepEqual(delays, []);
+  assert.throws(() => controller.answerReady(), /GOOGLE_AI_NO_QUESTION_TO_REVIEW/u);
+  await observeReady(harness);
 });
 
 test("each follow-up gets fresh randomness with inclusive 2 and 15 second bounds", async () => {
   const randomValues = [0, 1 - Number.EPSILON, 0.5];
-  const delays = [];
-  const controller = createController({
-    random: () => randomValues.shift(),
-    setTimeout: (done, delay) => { delays.push(delay); done(); },
-  });
+  const harness = createHarness({ random: () => randomValues.shift() });
+  const { controller, delays } = harness;
   await controller.submit(() => undefined);
   for (let index = 0; index < 3; index += 1) {
-    controller.answerReady();
+    await observeReady(harness);
     await controller.submit(() => undefined);
   }
   assert.deepEqual(delays, [2_000, 15_000, 8_500]);
   assert.equal(randomValues.length, 0);
 });
 
+test("operator thinking counts both before and after completion acknowledgement", async () => {
+  for (const thinkBeforeAcknowledgement of [false, true]) {
+    const { controller, delays, advance } = createHarness({ random: () => 1 - Number.EPSILON });
+    await controller.submit(() => undefined);
+    await controller.observe(() => "Completed answer observed");
+    if (thinkBeforeAcknowledgement) advance(60_000);
+    controller.answerReady();
+    if (!thinkBeforeAcknowledgement) advance(60_000);
+    await controller.submit(() => undefined);
+    assert.deepEqual(delays, [], "A minute of operator thinking must not acquire another pause.");
+  }
+});
+
+test("a 10 second interval with 7 seconds already elapsed waits only 3 seconds", async () => {
+  const harness = createHarness({ random: () => 8_000 / 13_001 });
+  await harness.controller.submit(() => undefined);
+  await observeReady(harness);
+  harness.advance(7_000);
+  await harness.controller.submit(() => undefined);
+  assert.deepEqual(harness.delays, [3_000]);
+});
+
+test("an early timer callback still cannot submit before the interval deadline", async () => {
+  const harness = createHarness({ earlyTimer: true });
+  await harness.controller.submit(() => undefined);
+  await observeReady(harness);
+  await harness.controller.submit(() => undefined);
+  assert.deepEqual(harness.delays, [2_000, 1]);
+});
+
 test("a follow-up cannot send before its timer or race another submission", async () => {
-  let releaseTimer;
   let sends = 0;
-  const controller = createController({ setTimeout: (done) => { releaseTimer = done; } });
+  const harness = createHarness({ deferTimers: true });
+  const { controller } = harness;
   await controller.submit(() => ++sends);
-  controller.answerReady();
+  await observeReady(harness);
   const pending = controller.submit(() => ++sends);
   assert.equal(sends, 1);
   assert.throws(() => controller.answerReady(), /GOOGLE_AI_NO_QUESTION_TO_REVIEW/u);
   await assert.rejects(controller.submit(() => ++sends), /GOOGLE_AI_PREVIOUS_QUESTION_NOT_REVIEWED/u);
-  releaseTimer();
+  harness.releaseTimer();
   assert.equal(await pending, 2);
   await assert.rejects(controller.submit(() => ++sends), /GOOGLE_AI_PREVIOUS_QUESTION_NOT_REVIEWED/u);
   assert.equal(sends, 2);
@@ -63,23 +121,33 @@ test("a follow-up cannot send before its timer or race another submission", asyn
 
 test("completion cannot be acknowledged while a UI submission is still pending", async () => {
   let releaseSubmit;
-  const controller = createController();
+  const harness = createHarness();
+  const { controller } = harness;
   const pending = controller.submit(() => new Promise((resolve) => { releaseSubmit = resolve; }));
   assert.throws(() => controller.answerReady(), /GOOGLE_AI_NO_QUESTION_TO_REVIEW/u);
   await assert.rejects(controller.submit(() => undefined), /GOOGLE_AI_PREVIOUS_QUESTION_NOT_REVIEWED/u);
   releaseSubmit();
   await pending;
-  controller.answerReady();
+  await observeReady(harness);
 });
 
 test("an ambiguous UI error blocks replay until the answer is observed", async () => {
   let attempts = 0;
-  const controller = createController();
+  const harness = createHarness();
+  const { controller } = harness;
   await assert.rejects(controller.submit(() => { attempts += 1; throw new Error("UI timeout"); }), /UI timeout/u);
   await assert.rejects(controller.submit(() => ++attempts), /GOOGLE_AI_PREVIOUS_QUESTION_NOT_REVIEWED/u);
   assert.equal(attempts, 1);
   // This explicit transition represents inspecting the original conversation
   // and observing its completed answer, not merely catching the UI error.
-  controller.answerReady();
+  await observeReady(harness);
   assert.equal(await controller.submit(() => ++attempts), 2);
+});
+
+test("failed observation cannot acknowledge readiness using an older snapshot", async () => {
+  const { controller } = createHarness();
+  await controller.submit(() => undefined);
+  await controller.observe(() => "Completed answer observed");
+  await assert.rejects(controller.observe(() => { throw new Error("Snapshot unavailable"); }), /Snapshot unavailable/u);
+  assert.throws(() => controller.answerReady(), /GOOGLE_AI_NO_QUESTION_TO_REVIEW/u);
 });

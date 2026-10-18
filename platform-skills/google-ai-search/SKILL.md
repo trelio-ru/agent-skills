@@ -37,12 +37,17 @@ const googleSearchTab = await cua.createBrowserTab("iab", "https://g.ai", { visi
 Перед первой отправкой создай в том же browser REPL один controller и сохраняй
 его между связанными вопросами. Отправку через UI выполняй только внутри
 `await googleAiPacing.submit(callback)`: callback вводит и отправляет один
-вопрос, без повторов. После наблюдаемого завершения нового ответа вызывай
-`googleAiPacing.answerReady()`. Не отмечай готовность по старому ответу.
+вопрос, без повторов. Состояние читай через
+`await googleAiPacing.observe(() => googleSearchTab.getAXState())`: controller
+фиксирует время получения снимка до размышлений модели. Если снимок подтверждает
+завершение нового ответа, вызови `googleAiPacing.answerReady()`. Не отмечай
+готовность по старому ответу.
 
 ```javascript
 var googleAiPacing = (() => {
   let state = "initial";
+  let observedAt = null;
+  let nextQuestionAt = 0;
   return {
     async submit(sendOnce) {
       // Пока предыдущий ответ не проверен, следующий вопрос не допускается.
@@ -54,11 +59,15 @@ var googleAiPacing = (() => {
       state = "waiting";
       try {
         if (needsPause) {
-          // Равномерная пауза 2–15 секунд включительно после готового ответа.
-          // Это ограничение частоты, а не способ обхода CAPTCHA или лимитов.
-          const delayMs = 2_000 + Math.floor(Math.random() * 13_001);
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          // Размышления модели уже входят в интервал от готового ответа.
+          // Ждём только остаток; повторная проверка не допускает раннего таймера.
+          let remainingMs = nextQuestionAt - performance.now();
+          while (remainingMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, Math.ceil(remainingMs)));
+            remainingMs = nextQuestionAt - performance.now();
+          }
         }
+        observedAt = null;
         state = "submitting";
         const result = await sendOnce();
         state = "awaiting-answer";
@@ -68,10 +77,19 @@ var googleAiPacing = (() => {
         throw error;
       }
     },
+    async observe(readState) {
+      observedAt = null;
+      const result = await readState();
+      observedAt = performance.now();
+      return result;
+    },
     answerReady() {
-      if (state !== "awaiting-answer" && state !== "unknown") {
+      if ((state !== "awaiting-answer" && state !== "unknown") || observedAt === null) {
         throw new Error("GOOGLE_AI_NO_QUESTION_TO_REVIEW");
       }
+      // Timestamp снимка сохраняет и время до смысловой проверки моделью,
+      // и последующие раздумья. Монотонные часы не зависят от настройки часов ОС.
+      nextQuestionAt = observedAt + 2_000 + Math.floor(Math.random() * 13_001);
       state = "ready";
     },
   };
@@ -79,9 +97,12 @@ var googleAiPacing = (() => {
 ```
 
 Первый вопрос отправляется без искусственной паузы. Для каждого следующего,
-включая уточнения, controller выбирает новую задержку от 2 до 15 секунд после
-проверки готовности прошлого ответа. Время генерации в эту паузу не входит.
-Не сокращай выбранную задержку и не отправляй вопросы параллельно.
+включая уточнения, controller выбирает новый минимальный интервал 2–15 секунд
+от получения снимка готового ответа. Размышления модели и прочие действия
+входят в этот интервал; время генерации прошлого ответа не входит. Если
+прошла минута, отправляй сразу. Если выбран интервал 10 секунд, а прошло 7,
+дождись только оставшихся 3 секунд. Не добавляй полную паузу перед отправкой
+и не пересоздавай controller ради нового отсчёта. Не отправляй вопросы параллельно.
 Это не подтверждённый лимит Google и не гарантия отсутствия CAPTCHA.
 
 1. После перехода с `g.ai` проверь обычную страницу: открыт Google AI Mode,
