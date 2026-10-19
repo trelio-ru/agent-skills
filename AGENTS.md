@@ -113,6 +113,18 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 Не перезаписывай чужие изменения и не дели node_modules между worktree.
 
 Комментируй неочевидные инварианты, права, состояния, retries и восстановление.
+Для Avito читай [визуальный контракт](platform-skills/avito/references/workflow.md)
+и [защиту сессии](platform-skills/avito/references/security.md). Только
+host image/input API, без прямого HTTP, model-facing DOM/AX, code extraction
+или fallback. Локальный fixed link router может обработать href exact click
+для same-tab навигации; модель не получает код или DOM. Active private profile
+и stopped AEAD archive различаются; crash не перезаписывает durable snapshot.
+Private Cookie API host сохраняет session-only overlay в том же AEAD snapshot;
+MCP его не возвращает. Explicit logout не восстанавливается, legacy snapshot
+не требует сброса входа; restore выполняется до provider navigation.
+Закрытие окна и «готово» сохраняют попытку в OS-protected snapshot;
+`saved_unverified` требует визуальной проверки кабинета. Native совместимость
+host проверяется отдельно на macOS, Windows и Linux до публичного выпуска.
 Изменение поведения одновременно обновляет контракт и содержательные тесты.
 Google AI Search следует полному [контракту](platform-skills/google-ai-search/SKILL.md):
 instruction-only browser tool, скрытая вкладка без изменения host launch policy,

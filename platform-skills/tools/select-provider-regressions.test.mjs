@@ -97,7 +97,9 @@ test("shared tooling and workflow changes retain the full regression gate", () =
   ]) {
     const selection = selectProviderRegressions([filePath]);
     assert.equal(selection.full, true, filePath);
-    assert.equal(selection.hostedMatrix.include.length, 30, filePath);
+    assert.equal(selection.hostedMatrix.include.length, 33, filePath);
+    assert.deepEqual(selection.hostedMatrix.include.filter(row => row.skill === 'avito').map(row => row.os),
+      ['ubuntu-latest', 'macos-latest', 'windows-latest'], filePath);
     assert.ok(selection.selfHostedSkills.includes("vk-ads"), filePath);
     assert.ok(selection.selfHostedSkills.includes("document-facsimile"), filePath);
     assert.ok(selection.selfHostedSkills.includes("gosuslugi"), filePath);
