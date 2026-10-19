@@ -115,7 +115,10 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 Комментируй неочевидные инварианты, права, состояния, retries и восстановление.
 Для Avito читай [визуальный контракт](platform-skills/avito/references/workflow.md)
 и [защиту сессии](platform-skills/avito/references/security.md). Только
-host image/input API, без прямого HTTP, DOM/AX, code extraction или fallback.
+host image/input API, без прямого HTTP, model-facing DOM/AX, code extraction
+или fallback. Локальный fixed link router может обработать href exact click
+для same-tab навигации; модель не получает код или DOM. Active private profile
+и stopped AEAD archive различаются; crash не перезаписывает durable snapshot.
 Закрытие окна и «готово» сохраняют попытку в OS-protected snapshot;
 `saved_unverified` требует визуальной проверки кабинета. Native совместимость
 host проверяется отдельно на macOS, Windows и Linux до публичного выпуска.

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const commands = {
-  doctor: {}, setup: {}, status: {}, wait: {}, ready: {}, screenshot: {}, close: {}, disconnect: {},
+  doctor: {}, setup: {}, 'show-login': {}, status: {}, wait: {}, ready: {}, screenshot: {}, close: {}, disconnect: {},
   navigate: { url: 'string' }, click: { frameId: 'string', x: 'number', y: 'number' },
   scroll: { frameId: 'string', x: 'number', y: 'number', deltaY: 'number', deltaX: 'number?' },
   'type-text': { frameId: 'string', text: 'string' }, key: { frameId: 'string', key: 'string' },

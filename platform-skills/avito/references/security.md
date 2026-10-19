@@ -10,14 +10,28 @@ lease host. Ручной вход, ожидание пользователя и 
 lease; новый tool call её не продлевает. Фоновые страницы не активируют чужие
 приложения. Завершение закрывает только принадлежащие runtime поверхности.
 
-Browser context непостоянный. Cookies и localStorage разрешённых origins сохраняются
-только зашифрованным AEAD снимком вне Git, Workspace, plugin и package cache.
-IndexedDB, sessionStorage и history в снимок не входят; готовность реального
-входа проверяется по изображению после восстановления, а не наличию файла.
-Ключ хранится в системном хранилище: Keychain на macOS, Windows Credential
-Manager под текущим пользователем, Secret Service в desktop Linux.
-Linux не использует временный kernel keyring вместо постоянного Secret Service.
-Недоступное/заблокированное хранилище – явный отказ, plaintext fallback нет.
+Host запускает обычный managed Chromium без remote-debugging pipe/port,
+`--enable-automation` и fingerprint spoof. Локальный extension использует
+фиксированные Page/Input команды внутреннего debugger API. Только raster и
+закрытые metadata переходят к модели. Browser binary обновляется закреплённым
+host release, без отдельного обслуживания администратора компании.
+
+Фиксированный isolated link adapter локально обрабатывает href exact trusted
+координатного click, чтобы открыть target-blank ссылку в той же вкладке без
+активации приложения. HTML/DOM/код и URL из этого внутреннего канала не выдаются
+модели. Произвольного scripting/evaluate API нет. Поддержка anchor не доказывает
+поддержку любого site popup/iframe: неизвестный результат не повторяют.
+
+Во время работы owned профиль находится на диске в частном каталоге host.
+После нормальной остановки auth stores (cookies, localStorage, IndexedDB,
+sessionStorage/WebStorage и необходимые browser preferences/Local State)
+сохраняются bounded AEAD архивом, а plaintext каталог удаляется. History,
+Login Data, обычный cache и downloads в архив не входят. Crash не доказывает
+сохранение и не перезаписывает предыдущий durable snapshot.
+Ключ хранится в Keychain на macOS, Windows Credential Manager под текущим
+пользователем или desktop Linux Secret Service. Недоступное/заблокированное
+хранилище – явный отказ, plaintext fallback нет. Готовность входа устанавливается
+по изображению после восстановления, а не наличию snapshot.
 
 Снимок привязан к Trelio origin, skill и UUID личного аккаунта. Каталог аккаунтов
 и company binding обслуживает host. Отображаемое имя, компания или версия runtime
