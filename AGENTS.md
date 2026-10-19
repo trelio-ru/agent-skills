@@ -119,6 +119,9 @@ host image/input API, без прямого HTTP, model-facing DOM/AX, code extr
 или fallback. Локальный fixed link router может обработать href exact click
 для same-tab навигации; модель не получает код или DOM. Active private profile
 и stopped AEAD archive различаются; crash не перезаписывает durable snapshot.
+Private Cookie API host сохраняет session-only overlay в том же AEAD snapshot;
+MCP его не возвращает. Explicit logout не восстанавливается, legacy snapshot
+не требует сброса входа; restore выполняется до provider navigation.
 Закрытие окна и «готово» сохраняют попытку в OS-protected snapshot;
 `saved_unverified` требует визуальной проверки кабинета. Native совместимость
 host проверяется отдельно на macOS, Windows и Linux до публичного выпуска.

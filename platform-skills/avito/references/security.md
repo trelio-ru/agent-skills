@@ -28,6 +28,13 @@ sessionStorage/WebStorage и необходимые browser preferences/Local St
 сохраняются bounded AEAD архивом, а plaintext каталог удаляется. History,
 Login Data, обычный cache и downloads в архив не входят. Crash не доказывает
 сохранение и не перезаписывает предыдущий durable snapshot.
+Session-only cookies дополнительно сохраняются закрытым локальным Cookie API
+host, поскольку Windows может удалить их при закрытии последнего окна. Значения
+не попадают в worker source, публичный pixels/input API и ответы модели; тот же
+AEAD snapshot хранит bounded overlay с исходными HttpOnly/SameSite/CHIPS полями.
+Restore выполняется до навигации Avito. Explicit logout в открытом окне очищает
+overlay и не восстанавливается при следующем запуске. Старые snapshots без этого
+слоя сохраняют native session state при переходе, без сброса авторизации.
 Ключ хранится в Keychain на macOS, Windows Credential Manager под текущим
 пользователем или desktop Linux Secret Service. Недоступное/заблокированное
 хранилище – явный отказ, plaintext fallback нет. Готовность входа устанавливается
