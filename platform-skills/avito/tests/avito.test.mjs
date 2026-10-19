@@ -17,6 +17,15 @@ test('coordinate interface rejects script/selector/path overrides before host I/
   await assert.rejects(runAvito(['screenshot'], {}), /AVITO_HOST_REQUIRED/);
 });
 
+test('first host account discovery works before selection and ignores caller environment', async () => {
+  // The host always performs this handshake before account list/create or any
+  // provider command. A real first-install failure used to be hidden by tests
+  // calling runAvito directly with a preselected synthetic account.
+  const noEnvironmentAccess = new Proxy({}, { get() { throw new Error('unexpected environment access'); } });
+  assert.deepEqual(await runAvito(['__trelio_accounts_import'], noEnvironmentAccess), { schemaVersion: 1, accounts: [] });
+  await assert.rejects(runAvito(['__trelio_accounts_import', '--path', '/private'], noEnvironmentAccess), /AVITO_COMMAND_INVALID/);
+});
+
 test('materialized package exposes complete signed guides without credentials or browser I/O', async () => {
   const source = fileURLToPath(new URL('../', import.meta.url));
   const built = buildRuntimePackage(source);
@@ -29,6 +38,24 @@ test('materialized package exposes complete signed guides without credentials or
       await fs.mkdir(path.dirname(file), { recursive: true });
       await fs.writeFile(file, Buffer.from(item.contentBase64, 'base64'));
     }
+    // Run the exact internal host entry from the materialized signed-package
+    // layout, on every native CI OS. Poison browser/account hints and preserve a
+    // synthetic durable-session marker: discovery must not start, reset or
+    // import an unrelated managed profile just because one exists on disk.
+    const marker = path.join(temporary, 'existing-session-marker');
+    await fs.writeFile(marker, 'synthetic session must survive account discovery');
+    const importEnv = { HOME: temporary, USERPROFILE: temporary, SystemRoot: process.env.SystemRoot,
+      TRELIO_VISUAL_SESSION_MODULE_URL: 'file:///must-not-load-visual-session.mjs',
+      TRELIO_SKILL_ACCOUNT_JSON: 'invalid-untrusted-account-json' };
+    const imported = spawnSync(process.execPath, [path.join(temporary, 'trelio-avito.mjs'), '__trelio_accounts_import'], {
+      cwd: temporary, encoding: 'utf8', env: importEnv, timeout: 15_000,
+    });
+    assert.equal(imported.status, 0, imported.stderr);
+    assert.equal(imported.stderr, '');
+    assert.deepEqual(JSON.parse(imported.stdout), { schemaVersion: 1, accounts: [] });
+    assert.equal(await fs.readFile(marker, 'utf8'), 'synthetic session must survive account discovery');
+    assert.deepEqual((await fs.readdir(temporary)).sort(), ['existing-session-marker', 'references', 'trelio-avito.mjs']);
+    await fs.unlink(marker);
     const result = spawnSync(process.execPath, [path.join(temporary, 'trelio-avito.mjs'), 'guides'], { cwd: temporary, encoding: 'utf8', env: { HOME: temporary, USERPROFILE: temporary, SystemRoot: process.env.SystemRoot }, timeout: 15_000 });
     assert.equal(result.status, 0, result.stderr);
     const metadata = JSON.parse(result.stdout);

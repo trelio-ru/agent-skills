@@ -27,8 +27,18 @@ export function parseAvitoCommand(argv) {
 }
 
 export async function runAvito(argv, env = process.env) {
-  // These value-free commands run before account/native/browser I/O. The skill
-  // loader can read all instructions without a configured account or session.
+  // local-accounts-v1 makes the host call this exact discovery entry before
+  // account selection, including on a brand-new installation. Avito has never
+  // had a pre-catalogue provider store: return the bounded empty discovery
+  // envelope rather than opening Chromium, inspecting profiles or inferring an
+  // account from cookies. Existing host accounts and their saved sessions stay
+  // under host ownership; an empty discovery does not delete or reset them.
+  // Accept only the exact internal command, so appended flags cannot turn this
+  // bootstrap path into a caller-controlled storage or browser operation.
+  if (argv.length === 1 && argv[0] === '__trelio_accounts_import') return { schemaVersion: 1, accounts: [] };
+  // These value-free provider commands need no credentials, native storage or
+  // browser I/O. The host has already selected a catalogue record before this
+  // entry, but the record does not need a configured provider session.
   if (argv.length === 1 && argv[0] === 'commands') return { schemaVersion: 1, commands };
   if (argv.length === 1 && argv[0] === 'guides') return {
     schemaVersion: 1,
