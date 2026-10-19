@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 2,
+  "release": { "skillId": "avito", "version": "0.1.0", "summary": "Визуальная работа в отдельном Chromium и защищённая локальная сессия" },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "После установки предложите пользователю войти в личный аккаунт в отдельном Chromium. Рекомендуется технический аккаунт вместо основного на случай ограничений Avito. Это не гарантирует защиту от блокировки.",
+      "Пароль и код вводятся пользователем в видимом окне. Можно сообщить «готово» или закрыть окно – защищённая сессия сохранится локально. Модель получает только изображения страниц."
+    ],
+    "configFields": [], "secretFields": []
+  },
+  "runtime": {
+    "version": "0.1.0", "minimumHostVersion": "3.9.0",
+    "entrypoint": { "path": "trelio-avito.mjs", "interpreter": "node" },
+    "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
+    "browserSession": { "apiVersion": 1, "sessionClass": "protected-snapshot", "manualAssist": true },
+    "files": [
+      { "source": "scripts/trelio-avito.mjs", "path": "trelio-avito.mjs", "mode": 493 },
+      { "source": "references/workflow.md", "path": "references/workflow.md", "mode": 420 },
+      { "source": "references/security.md", "path": "references/security.md", "mode": 420 }
+    ]
+  }
+}
