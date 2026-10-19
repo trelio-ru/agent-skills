@@ -10,6 +10,14 @@ Runtime использует общий host visual-browser API и поддер�
 Точные аргументы публикуются runtime через `commands` до credential/browser IO.
 Не придумывай aliases или скрытые флаги.
 
+Перед первым выбором аккаунта host вызывает фиксированный
+`__trelio_accounts_import`. У Avito нет прежнего provider-каталога: команда
+возвращает пустой список без чтения профилей, credentials, запуска Chromium или
+сети. Существующие host accounts и snapshots она не меняет. Сначала используй
+штатный host `account list`; новый аккаунт создаётся через host, без входа и
+доступа к cookie stores. Затем `guides` и `commands` читаются с выбранным
+аккаунтом до любых рабочих команд и credential/browser IO.
+
 `doctor` проверяет наличие host API и выбранного аккаунта. `status` и `wait`
 показывают фазу текущего browser worker; native secure store проверяется при
 запуске, до открытия окна ввода. Отсутствие ошибки не заменяет provider readiness.

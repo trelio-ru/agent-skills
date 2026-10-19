@@ -125,6 +125,9 @@ MCP его не возвращает. Explicit logout не восстанавл�
 Закрытие окна и «готово» сохраняют попытку в OS-protected snapshot;
 `saved_unverified` требует визуальной проверки кабинета. Native совместимость
 host проверяется отдельно на macOS, Windows и Linux до публичного выпуска.
+Первый host account flow Avito обязан проходить реальный packaged
+`__trelio_accounts_import`: отсутствие legacy store даёт пустой bounded envelope
+без native/browser/credential IO, не ошибку и не сброс существующих snapshots.
 Изменение поведения одновременно обновляет контракт и содержательные тесты.
 Google AI Search следует полному [контракту](platform-skills/google-ai-search/SKILL.md):
 instruction-only browser tool, скрытая вкладка без изменения host launch policy,
