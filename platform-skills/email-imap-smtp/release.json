@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.5.0",
-    "summary": "Режим «только SMTP» для отправителей с пересылкой: без IMAP и архива отправленных. Обычные почтовые подключения сохраняют чтение и копии писем."
+    "version": "2.5.1",
+    "summary": "SMTP-only подключение можно настроить из существующего Agent Secret через одноразовую защищённую передачу. Пароль не требуется вводить в браузерную форму повторно."
   },
   "connection": null,
   "runtime": {
-    "version": "2.5.0",
+    "version": "2.5.1",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-email.py",

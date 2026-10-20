@@ -2,8 +2,9 @@
 
 Подключения, реальные credentials и sessions находятся на устройстве пользователя
 либо в защищённом company secret storage. Они не являются частью этого source.
-Настройка выполняется только штатным verified runtime и защищённой локальной
-формой; пароль, OTP, token и cookie не вводятся через чат или GitHub.
+Настройка выполняется штатным verified runtime через защищённую локальную
+форму либо явный one-use Agent Secret checkout в поддержанном ниже сценарии;
+пароль, OTP, token и cookie не вводятся через чат или GitHub.
 
 <a id="email-device-storage"></a>
 
@@ -38,6 +39,26 @@ native unlock, а внутренний IMAP connector также проверя�
 сохраняют прежний контракт копирования; настройка SMTP-only одного аккаунта
 не меняет другие и не привязывает пересланный Gmail. Это capability, а не
 расширение разрешения отправки или read-only policy.
+
+### Подключение SMTP-only из Agent Secret
+
+Явное `configure --smtp-only --from-agent-secret` использует только существующий
+Run-bound checkout поля password с logical executable `trelio-workspace`,
+delivery=file и handoff в exact live-resolved `skill run`. SMTP/email/user/name
+передаются как проверенные несекретные CLI-параметры; password flags нет.
+Без активного подходящего Run используется обычная форма, фиктивный Run запрещён.
+Нужны отдельные обычные secret ACL и поручение настроить этот локальный ящик.
+
+Bridge владеет one-use grant и temporary file cleanup; signed provider не
+обращается к vault API сам. В публичный process поступает только reference
+TRELIO_SECRET_FILE, не значение. Native owner переносит путь через private
+protocol; worker читает bounded UTF-8 после permit и owner/file/parent checks.
+Reference не наследуется compiler/guardian/worker через ambient env. Временный
+файл не копируется в config, Git, Workspace, logs либо native protocol. Пароль
+сохраняется существующим Keychain/DPAPI writer; режим/подпись других ящиков,
+bindings и sending policy сохраняются. Ошибка не открывает browser fallback
+и не разрешает повторное потребление. Свежий doctor устанавливает результат;
+успех storage не означает доставку сообщения.
 
 ## Общий каталог личных аккаунтов
 

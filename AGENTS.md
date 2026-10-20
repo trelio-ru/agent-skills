@@ -174,6 +174,10 @@ production алгоритмом с внедрёнными часами, без H
 читай [контракт подключения](docs/agent-skill-connections.md#режим-почты-только-для-отправки).
 Не выводи его из ошибки IMAP; отключённые копии не являются сбоем или поводом
 повторять SMTP. Чтение/reply блокируются до native unlock.
+Из existing Agent Secret настройка идёт только через one-use Run-bound
+secret-exec → exact signed skill-run и native-owned file reference. Значение
+не добавляется в argv, ambient env, private protocol или Workspace; browser
+fallback после отказа не выполняется автоматически.
 Для ответов в цепочке читай [контракт reply](docs/email-replies.md): provider
 вычисляет адресатов/заголовки и связывает preview с source UIDVALIDITY, точными
 bytes и account/company. Digest не разрешает отправку или повтор неизвестного
