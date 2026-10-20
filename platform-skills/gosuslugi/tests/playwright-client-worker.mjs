@@ -337,11 +337,11 @@ try {
       assert.equal(route.request().method(), 'GET', 'SSO return must not submit any credentials');
       if (url.origin === origin && url.pathname === '/callback') {
         callbackStarted(); await released;
-        return route.fulfill({ contentType: 'text/html', body: '<h1>Кабинет</h1>' });
+        return route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<h1>Кабинет</h1>' });
       }
-      if (url.origin === 'https://esia.gosuslugi.ru') return route.fulfill({ contentType: 'text/html',
+      if (url.origin === 'https://esia.gosuslugi.ru') return route.fulfill({ contentType: 'text/html; charset=utf-8',
         body: `<script>location.replace(${JSON.stringify(callback)})</script>` });
-      if (url.origin === origin) return route.fulfill({ contentType: 'text/html',
+      if (url.origin === origin) return route.fulfill({ contentType: 'text/html; charset=utf-8',
         body: `<a href="${auth.href.replaceAll('&', '&amp;')}">Вход через ЕСИА</a>` });
       return route.abort();
     });
@@ -354,7 +354,9 @@ try {
       // callbackSeen has revoked inputs but HTTP/document proof is still absent.
       const clicked = page.getByRole('link', { name: 'Вход через ЕСИА' }).click();
       clicked.catch(() => {}); // A failed claim still closes the pending navigation in finally.
-      await started;
+      // A missing/misdecoded fixture link must fail with Playwright's bounded
+      // click timeout instead of waiting for the native guardian's outer cap.
+      await Promise.race([started, clicked.then(() => { throw new Error('callback_request_not_observed'); })]);
       const info = await current.request;
       const authorization = await readAuthorization(config.root, identity, info.sessionId, info.requestId, origin, helper);
       const authorizer = new EsiaAuthorizer({ identity, leaseId, guardPid: process.pid, authorization, authorizerControl },
