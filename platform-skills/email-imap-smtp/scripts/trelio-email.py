@@ -661,6 +661,9 @@ def browser_password_page(
     }}
     input:focus, textarea:focus, select:focus {{ outline: 3px solid rgba(26,115,232,.2); }}
     label {{ display: grid; gap: 6px; }}
+    /* The author-level grid rule must not override the browser's hidden
+       presentation when SMTP-only mode removes the IMAP controls. */
+    label[hidden] {{ display: none; }}
     .actions {{ display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }}
     button {{
       min-width: 120px;
