@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 // Closed signed document map, never a caller-controlled filesystem path.
 // The metadata route runs before native/identity/browser/network initialization.
-const files = ["part-01.md", "part-02.md", "part-03.md", "part-04.md", "part-05.md", "part-06.md", "part-07.md", "part-08.md"];
+const files = ["part-01.md", "part-02.md", "part-03.md", "part-04.md", "part-05.md", "part-06.md", "part-07.md", "part-08.md", "part-09.md"];
 export async function getInstructionGuides() {
   return { schemaVersion: 1, requiredBeforeWork: 'all_in_order', guides:
     await Promise.all(files.map(async file => {

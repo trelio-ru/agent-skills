@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "max-web",
-    "version": "2.9.1",
-    "summary": "Полные инструкции читаются отдельными частями из подписанного пакета. Правила безопасности и рабочих сценариев сохранены без потери текста."
+    "version": "2.10.0",
+    "summary": "Пассивный monitor одного привязанного MAX-чата: native message ID, scoped checkpoint, явные gaps и отсутствие read receipts."
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,7 +17,7 @@
     ]
   },
   "runtime": {
-    "version": "2.9.1",
+    "version": "2.10.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-max.mjs",
@@ -83,6 +83,11 @@
       {
         "source": "scripts/instruction-guides/part-08.md",
         "path": "instruction-guides/part-08.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-09.md",
+        "path": "instruction-guides/part-09.md",
         "mode": 420
       }
     ]

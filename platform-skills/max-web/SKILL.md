@@ -83,3 +83,7 @@ account comment, `--confirm`, preview/hash или успешное выполн�
 ## Публичный bug-report
 
 Полный обязательный раздел: [инструкция](scripts/instruction-guides/part-07.md)
+
+## Фоновая проверка одного привязанного чата
+
+Полный обязательный раздел: [инструкция](scripts/instruction-guides/part-09.md)

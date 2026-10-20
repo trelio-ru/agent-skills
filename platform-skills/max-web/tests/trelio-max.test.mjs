@@ -3,6 +3,7 @@ registerInstructionGuideContract(new URL("../", import.meta.url));
 import { readSkillInstructions } from "../../tools/read-skill-instructions.mjs";
 import './assist-control-shutdown.test.mjs';
 import './http-errors.test.mjs';
+import './assistant-monitor.test.mjs';
 import './chat-references.test.mjs';
 import './direct-chat-history.test.mjs';
 import './phone-assist.test.mjs';
@@ -190,8 +191,8 @@ test("MAX worker closure receipt is private, credential-free and cannot replace 
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.9.1");
-  assert.equal(release.runtime.version, "2.9.1");
+  assert.equal(release.release.version, "2.10.0");
+  assert.equal(release.runtime.version, "2.10.0");
   assert.equal(release.runtime.minimumHostVersion, "3.7.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -315,7 +316,7 @@ test("MAX local policy defaults to confirm and keeps state outside workspace", (
 test("MAX exposes a versioned, content-free live probe command", () => {
   const options = parseRuntimeArguments(["probe"]);
   assert.equal(options.command, "probe");
-  assert.equal(ADAPTER_VERSION, "46");
+  assert.equal(ADAPTER_VERSION, "47");
 });
 
 test("MAX exposes bounded assisted recovery for reads and exact manual operations", () => {
