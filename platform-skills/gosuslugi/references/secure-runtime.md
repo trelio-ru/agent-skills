@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.5.4 объявляет signed host browser-session class
+Runtime 3.5.6 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -392,13 +392,25 @@ native primitives остаются теми же, что для Госуслуг
 
 `authorize --browser-session UUID --request UUID --origin HTTPS_ORIGIN --confirm`
 проверяет exact company/member/session/request/origin/deadline до claim и OS key
-read. Нужен существующий vault: setup и перенос старого env/profile не запускаются.
+read. Существующий vault нужен только до ввода credentials; setup и перенос
+старого env/profile не запускаются.
 Native guardian ограничивает доступ authorizer к credentials исходным бюджетом,
 не больше 30 минут; ожидание уже входит в срок. Для каждого символа и auth action
 private adapter вызывает `authorization-permit` у того же worker, который
 получает свежий native permit. Callback не предоставляет process ownership,
 не открывает vault и не начинает новую авторизацию. После потери worker/guardian
 ввод прекращается; стеновые часы и живой stale PID не заменяют native barrier.
+
+Если callback request уже наблюдён до claim, broker выдаёт только return-only
+claim той же transaction. Authorizer ожидает verified HTTP response/document
+commit либо продолжает разрешённый одноразовый выбор физлица без `allowSecret`,
+чтения vault/key и OS unlock. Callback ещё не доказывает готовность кабинета.
+Отдельный worker без расшифрованного record сохраняет status/review-role/resume
+и исходный native deadline; возврат к credential observation/input запрещён.
+Прежний callback не сбрасывается и новая попытка не создаётся. Отказ проверки
+transaction сохраняет собственный safe code. Проверки покрывают pending HTTP,
+pending document, официальный chooser, закрытие capability и настоящий worker
+без vault/key helper; headed smoke удерживает callback до завершения claim.
 
 Если обычный worker уже жив и находится в `ready`, CLI не создаёт отдельный
 lease и не читает OS key повторно. Exact owner-only command передаёт ему один

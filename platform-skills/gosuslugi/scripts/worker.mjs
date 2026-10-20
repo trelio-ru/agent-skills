@@ -155,10 +155,10 @@ async function input(kind) {
   return answer;
 }
 async function authenticate() {
-  requireThat(!busy && portal && record, 'session_busy'); busy = true;
+  requireThat(!busy && portal && (record || config.authorization && portal.returnOnly), 'session_busy'); busy = true;
   try {
     reviewContext = null;
-    const ready = await portal.authenticate(record.credentials, loginRole(config.loginRole));
+    const ready = await portal.authenticate(record?.credentials ?? null, loginRole(config.loginRole));
     if (ready) {
       // An existing Gosuslugi cookie/header can remain usable while ESIA blocks
       // a new login. It is not evidence that the account block was lifted.
@@ -270,11 +270,18 @@ async function initialize() {
     failureStage = 'authorization_claim';
     await portal.claim();
     if (portal.completed) return stop();
+    portal.watchPeer({ isBusy: () => busy || stopping,
+      onReturned: async () => { if (record || portal.returnOnly) await authenticate(); },
+      onLost: async error => { await failAuthorization(authorizationFailure(error)); await stop(); } });
+    if (portal.returnOnly) {
+      // Callback input is already revoked. Complete the same transaction under
+      // its native lease without reading the key/vault or requiring credentials.
+      // A role/manual wait remains resumable with record=null; browser ownership
+      // and the callback/document completion checks stay with the caller.
+      failureStage = 'authorization'; await authenticate(); return;
+    }
     requireThat(exists, 'credentials_required');
     await setPhase('unlock_required');
-    portal.watchPeer({ isBusy: () => busy || stopping,
-      onReturned: async () => { if (record) await authenticate(); },
-      onLost: async error => { await failAuthorization(authorizationFailure(error)); await stop(); } });
   }
   failureStage = 'vault_unlock';
   key = await vaultKey(config.helper, config.keyHelper, config.directory,
@@ -409,7 +416,8 @@ try {
         if (authorizationAttempt && !delegatedPortal && !config.authorization && authorizationAttempt.status === 'failed')
           authorizationAttempt.requireResume();
         if (activeAuthorization()) authorizationAttempt?.requireResume();
-        requireThat(!busy && (delegatedPortal || portal) && record, 'session_busy');
+        requireThat(!busy && (delegatedPortal || portal) &&
+          (record || config.authorization && portal.returnOnly), 'session_busy');
         // Acquire the same operation lock before the encrypted recovery write.
         // Sent flags remain intact: an earlier submitted password/OTP is never
         // replayed merely because the operator reported an account recovery.
