@@ -13,7 +13,8 @@ gate обходит все provider-ы; native gate выполняется на 
 использует отдельные проходы закреплённых/обычных диалогов и проверку
 метаданных; export cursor продвигается только после возвращённого сообщения.
 Archive scope повторно проверяется до history, включая exact сохранённый ID.
-Пассивный `monitor` хранит checkpoint отдельно от unread; baseline/gap/ACK границы – в том же контракте сообщений.
+Пассивный `monitor` хранит durable checkpoint отдельно от unread/session TTL;
+baseline/gap/ACK и отдельный HMAC purpose – в том же контракте сообщений.
 Просмотры постов возвращаются как nullable `views` из полученного Message:
 неизвестное значение не становится нулём, чтение не регистрирует просмотр.
 Native DialogFolder исключается по constructor до чтения peer/folder metadata:

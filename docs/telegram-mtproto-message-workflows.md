@@ -503,12 +503,19 @@ Channels из native `UpdateChannelTooLong`/`UpdateChannel` перечислен
 команда не устанавливает фоновый монитор, не открывает окно и не отправляет ACK.
 
 Shared signed cursor защищает account/member/company/connection + exact stream;
-подпись не является правом Trelio, внешней записи или раскрытия. Cursor содержит
-только счётчики и живёт до 12 часов после успешной страницы. Повреждение, expiry,
+подпись не является правом Trelio, внешней записи или раскрытия. Monitor использует
+отдельные HMAC purpose и v2 envelope без session TTL: persisted sequence counters
+продолжаются после простоя/смены часов. Native session authorization и account
+проверяются заново до difference; это не продление admission. Обычный overview
+v1 сохраняет TTL 12 часов и не принимает monitor token даже при том же binding.
+Новый monitor также не принимает overview token. Повреждение, смена binding,
 TooLong, native page overflow и отсутствие продвижения возвращают отказ, сохраняя
 старый checkpoint; автоматического нового baseline нет. Можно уменьшить limit
 10..100 для повторного чтения прежней позиции. При минимальном limit/gap/repeated
 no-progress требуется review/backfill. Host коммитит events + nextCursor вместе.
+Monitor epoch не зависит от human preview version; local account UUID и
+companyBinding входят в scope вместе с actual Telegram account. Тот же storage
+locator или номер Telegram account не разрешает перенос cursor в другую binding.
 
 Native новые/изменённые сообщения проецируются в bounded ссылки/ID/digest без
 текста, имён, phones, access hashes, file references или TL blobs. Entity mention
@@ -525,8 +532,9 @@ Existing human chat-only/sending policy сохраняется. Эта read API 
 проверка owner delegation принадлежат отдельному host/backend контракту.
 
 `test_assistant_monitor.py` проверяет настоящую command/dispatcher ветку,
-account/channel positions, slice/empty/gaps, большие sender IDs, подпись/expiry/
-account binding, no ACK, privacy canaries и digest без transport churn. Fixtures
+account/channel positions, slice/empty/gaps, большие sender IDs, domain-separated
+подпись, downtime/clock change, прежний overview expiry/account binding, no ACK,
+privacy canaries и digest без transport churn. Fixtures
 не используют account/network/application identity; реальные Windows и signed
 release проверки остаются отдельными gates. Исходники не активируют live skill.
 

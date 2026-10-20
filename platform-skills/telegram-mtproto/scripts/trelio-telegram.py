@@ -3147,11 +3147,12 @@ def overview_digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-async def overview_binding(client: Any, identity: Identity, operation: str, scope: Any) -> str:
+async def overview_binding(client: Any, identity: Identity, operation: str, scope: Any,
+                           *, version: str | None = None) -> str:
     account = await client.get_me()
     if not account or isinstance(account.id, bool) or not isinstance(account.id, int) or account.id <= 0:
         raise TelegramRuntimeError("Cannot verify the Telegram account for this overview.")
-    return overview_digest([MESSAGE_WORKFLOW_VERSION, identity.company_id, identity.member_id,
+    return overview_digest([version if version is not None else MESSAGE_WORKFLOW_VERSION, identity.company_id, identity.member_id,
                             identity.connection_id, account.id, operation, scope])
 
 
@@ -3172,21 +3173,28 @@ def overview_cursor_key(identity: Identity) -> bytes:
 
 
 def overview_cursor(identity: Identity, binding: str, *, state: dict | None = None,
-                    token: str | None = None) -> dict | str:
+                    token: str | None = None, purpose: str = "overview") -> dict | str:
     """Bind resumption to this device, account and normalized request.
 
     This authenticates our own progress record, not Telegram data. It gives no
     access: every continuation still resolves peers and checks live scope.
-    Tokens are metadata only and are never a durable index of correspondence.
+    Overview tokens retain their existing bounded lifetime. A model-free
+    monitor checkpoint authenticates sequence counters, not an authorization:
+    its distinct HMAC domain/format has no session TTL. Native authorization,
+    current account and scope are still resolved before every continuation.
     """
 
+    if purpose not in ("overview", "monitor"):
+        raise TelegramRuntimeError("Cursor purpose is unavailable.")
+    durable = purpose == "monitor"
+    prefix = b"trelio-monitor-checkpoint/v1\x00" if durable else b""
     key = overview_cursor_key(identity)
     if state is not None:
-        body = json.dumps({"v": 1, "binding": binding,
-                           "expires": state["expires"], "state": state},
-                          separators=(",", ":")).encode()
+        envelope = {"v": 2, "purpose": "monitor", "binding": binding, "state": state} if durable else {
+            "v": 1, "binding": binding, "expires": state["expires"], "state": state}
+        body = json.dumps(envelope, separators=(",", ":")).encode()
         encoded = base64.urlsafe_b64encode(body).decode().rstrip("=")
-        result = encoded + "." + hmac.new(key, body, hashlib.sha256).hexdigest()
+        result = encoded + "." + hmac.new(key, prefix + body, hashlib.sha256).hexdigest()
         if len(result) > MAX_OVERVIEW_CURSOR_CHARS:
             raise TelegramRuntimeError("Overview cursor is too large; reduce --dialog-limit.")
         return result
@@ -3195,15 +3203,23 @@ def overview_cursor(identity: Identity, binding: str, *, state: dict | None = No
             raise ValueError()
         encoded, signature = token.split(".")
         body = base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
-        if not hmac.compare_digest(signature, hmac.new(key, body, hashlib.sha256).hexdigest()):
+        if not hmac.compare_digest(signature, hmac.new(key, prefix + body, hashlib.sha256).hexdigest()):
             raise ValueError()
         value = json.loads(body)
-        if (value["v"] != 1 or value["binding"] != binding
-                or not time.time() < value["expires"] <= time.time() + OVERVIEW_CURSOR_TTL
-                or value["state"]["expires"] != value["expires"]):
+        if durable:
+            if (not isinstance(value, dict) or set(value) != {"v", "purpose", "binding", "state"}
+                    or type(value["v"]) is not int or value["v"] != 2
+                    or value["purpose"] != "monitor" or value["binding"] != binding):
+                raise ValueError()
+        elif (value["v"] != 1 or value["binding"] != binding
+              or not time.time() < value["expires"] <= time.time() + OVERVIEW_CURSOR_TTL
+              or value["state"]["expires"] != value["expires"]):
             raise ValueError()
         return value["state"]
     except (ValueError, KeyError, TypeError) as error:
+        if durable:
+            raise TelegramRuntimeError("Telegram monitor checkpoint is invalid or belongs to another source; preserve the position and review recovery.",
+                                       code="TELEGRAM_MONITOR_INVALID_CURSOR") from error
         raise TelegramRuntimeError("Overview cursor is invalid, expired or belongs to another request/account. Start from the first page.") from error
 
 
@@ -5915,12 +5931,20 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
             peer_id = utils.get_peer_id(channel)
             if type(peer_id) is not int or peer_id >= 0:
                 raise TelegramRuntimeError("Telegram monitor channel identity is invalid.")
-        binding = await overview_binding(client, identity, "monitor/v1", {"channel": str(peer_id) if peer_id is not None else None})
+        # Counters survive ordinary UI/message-workflow updates. This fixed
+        # monitor protocol epoch is independent of the human preview epoch;
+        # current local account/binding still invalidates an old source cursor,
+        # even when two imported locators address the same provider session.
+        binding = await overview_binding(client, identity, "monitor/v1", {
+            "channel": str(peer_id) if peer_id is not None else None,
+            "localAccountId": identity.account["id"] if identity.account else None,
+            "companyBinding": identity.account["companyBinding"] if identity.account else None,
+        }, version="monitor-checkpoint/v1")
         token = getattr(args, "cursor", None)
-        state = overview_cursor(identity, binding, token=token) if token else None
+        state = overview_cursor(identity, binding, token=token, purpose="monitor") if token else None
         if state is not None:
             expected_keys = {"pts"} if channel is not None else {"pts", "qts", "seq", "date"}
-            if not isinstance(state, dict) or set(state) != {"expires", "position"} or not isinstance(state["position"], dict) or set(state["position"]) != expected_keys:
+            if not isinstance(state, dict) or set(state) != {"position"} or not isinstance(state["position"], dict) or set(state["position"]) != expected_keys:
                 raise TelegramRuntimeError("Telegram monitor cursor state is invalid.")
             for key, value in state["position"].items():
                 monitor_int(value, positive=key == "date" or channel is not None)
@@ -5993,11 +6017,11 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
                         unresolved_deletions.extend(str(monitor_int(item, positive=True)) for item in ids)
             if len(events) > MAX_MONITOR_EVENTS or len(channels_to_sync) > MAX_MONITOR_EVENTS or len(unresolved_deletions) > MAX_MONITOR_EVENTS:
                 raise TelegramRuntimeError("Telegram monitor page exceeds its bound; retain the cursor.", code="TELEGRAM_MONITOR_GAP")
-        next_state = {"expires": time.time() + OVERVIEW_CURSOR_TTL, "position": position}
+        next_state = {"position": position}
         return {"schemaVersion": 1, "stream": {"kind": "channel" if channel is not None else "account_cloud", "chatId": str(peer_id) if peer_id is not None else None},
                 "baselineOnly": state is None, "events": events, "channelsToSync": sorted(channels_to_sync),
                 "unresolvedDeletionIds": sorted(set(unresolved_deletions)),
-                "nextCursor": overview_cursor(identity, binding, state=next_state), "hasMore": more,
+                "nextCursor": overview_cursor(identity, binding, state=next_state, purpose="monitor"), "hasMore": more,
                 "coverage": {"historicalBackfill": False, "secretChatsIncluded": False, "otherChannelStreamsIncluded": False},
                 "readState": {"readReceiptsSent": False, "viewsRegistered": False}}
     except TelegramRuntimeError as error:

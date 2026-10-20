@@ -172,7 +172,7 @@ class Monitor(unittest.TestCase):
             self.run_page(token)
         self.assertEqual(self.provider.disconnect.await_count,3,'cleanup includes authorization failures')
 
-    def test_mutated_expired_or_other_account_cursor_cannot_continue(self):
+    def test_mutated_or_other_account_cursor_cannot_continue(self):
         token = self.baseline()
         for invalid in (token+'x', 'not-a-cursor'):
             with self.assertRaises(M.TelegramRuntimeError):
@@ -180,10 +180,64 @@ class Monitor(unittest.TestCase):
         with mock.patch.object(self.provider,'get_me',new=mock.AsyncMock(return_value=NS(id=12346))):
             with self.assertRaises(M.TelegramRuntimeError):
                 self.run_page(token)
-        with mock.patch.object(M.time,'time',return_value=M.time.time()+M.OVERVIEW_CURSOR_TTL+10):
+        self.assertEqual([type(call).__name__ for call in self.provider.calls],['GetState'])
+
+    def test_host_binding_changes_cannot_reuse_a_checkpoint_with_the_same_native_account(self):
+        fields = {"company_id": self.identity.company_id, "member_id": self.identity.member_id,
+                  "connection_id": self.identity.connection_id,
+                  "account": {"id": "44444444-4444-4444-8444-444444444444", "companyBinding": "a" * 64}}
+        self.identity = M.Identity(**fields)
+        token = self.baseline()
+        for key in ("company_id", "member_id", "connection_id", "account"):
+            changed = {**fields, key: {**fields["account"], "companyBinding": "b" * 64} if key == "account"
+                       else "55555555-5555-4555-8555-555555555555"}
+            self.identity = M.Identity(**changed)
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.run_page(token)
+            self.assertEqual(caught.exception.code, "TELEGRAM_MONITOR_INVALID_CURSOR")
+        self.identity = M.Identity(**{**fields, "account": {**fields["account"], "id": "66666666-6666-4666-8666-666666666666"}})
+        with self.assertRaises(M.TelegramRuntimeError):
+            self.run_page(token)
+        self.assertEqual([type(call).__name__ for call in self.provider.calls], ["GetState"])
+
+    def test_monitor_checkpoint_survives_downtime_and_clock_change_without_reset_or_auth_grant(self):
+        token = self.baseline()
+        self.provider.response = self.difference([message()])
+        now = M.time.time()
+        cursors = []
+        for shifted in (now + 30 * 86400, now + 366 * 86400, now - 86400):
+            with mock.patch.object(M.time, "time", return_value=shifted):
+                page = self.run_page(token)
+            self.assertFalse(page["baselineOnly"])
+            self.assertEqual(self.provider.calls[-1].pts, 10)
+            self.assertEqual(page["events"][0]["messageId"], "1")
+            cursors.append(page["nextCursor"])
+        self.assertEqual(len(set(cursors)), 1, "a checkpoint contains counters, not an authorization deadline")
+        with mock.patch.object(M, "MESSAGE_WORKFLOW_VERSION", "synthetic-human-workflow-update"):
+            self.assertEqual(self.run_page(token)["nextCursor"], cursors[0],
+                             "an unrelated human preview epoch cannot reset native monitor counters")
+        self.provider.authorized = False
+        with mock.patch.object(M.time, "time", return_value=now + 366 * 86400):
             with self.assertRaises(M.TelegramRuntimeError):
                 self.run_page(token)
-        self.assertEqual([type(call).__name__ for call in self.provider.calls],['GetState'])
+        self.assertEqual(len(self.provider.calls), 5, "live session denial occurs before another difference")
+
+    def test_monitor_hmac_domain_is_separate_and_human_overview_expiry_is_unchanged(self):
+        binding = "same-synthetic-binding"
+        now = M.time.time()
+        token = M.overview_cursor(self.identity, binding, state={"position": {"pts": 10}}, purpose="monitor")
+        human = M.overview_cursor(self.identity, binding, state={"expires": now + M.OVERVIEW_CURSOR_TTL, "inventory": {}})
+        with self.assertRaises(M.TelegramRuntimeError):
+            M.overview_cursor(self.identity, binding, token=token)
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            M.overview_cursor(self.identity, binding, token=human, purpose="monitor")
+        self.assertEqual(caught.exception.code, "TELEGRAM_MONITOR_INVALID_CURSOR")
+        with mock.patch.object(M.time, "time", return_value=now + M.OVERVIEW_CURSOR_TTL + 1):
+            with self.assertRaises(M.TelegramRuntimeError):
+                M.overview_cursor(self.identity, binding, token=human)
+            self.assertEqual(M.overview_cursor(self.identity, binding, token=token, purpose="monitor"), {"position": {"pts": 10}})
+        with self.assertRaises(M.TelegramRuntimeError):
+            M.overview_cursor(self.identity, binding, token=token, purpose="unknown")
 
     def test_channel_stream_uses_independent_pts_and_fresh_native_resolution(self):
         token = self.baseline(chat='@example')
