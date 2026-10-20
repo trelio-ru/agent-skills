@@ -78,3 +78,7 @@ account comment, `--confirm`, preview/hash или успешное выполн�
 ## Экспорт периода
 
 Полный обязательный раздел: [инструкция](scripts/instruction-guides/part-06.md)
+
+## Пассивная лента изменений
+
+Полный обязательный раздел: [инструкция](scripts/instruction-guides/part-07.md)

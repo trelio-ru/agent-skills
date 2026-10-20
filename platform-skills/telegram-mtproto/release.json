@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.6.2",
-    "summary": "Чтение, поиск и экспорт постов каналов возвращают количество просмотров. Недоступный счётчик остаётся неизвестным; чтение не увеличивает просмотры."
+    "version": "2.7.0",
+    "summary": "Пассивная лента native update references с сохранённой позицией, обработкой правок и явными gap/coverage без read receipts."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.6.2",
+    "version": "2.7.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
@@ -74,6 +74,11 @@
       {
         "source": "scripts/instruction-guides/part-06.md",
         "path": "instruction-guides/part-06.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-07.md",
+        "path": "instruction-guides/part-07.md",
         "mode": 420
       }
     ]

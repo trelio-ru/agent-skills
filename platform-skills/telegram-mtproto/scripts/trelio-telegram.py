@@ -1551,6 +1551,11 @@ def build_client(args: argparse.Namespace, identity: Identity):
     # outcome to the caller instead of silently submitting it a second time.
     # Ordinary reads retain the library's safe retry behavior.
     request_policy = {}
+    if getattr(args, "command", None) == "monitor":
+        # The fixed poll owns its explicit cursor. Disable the SDK's parallel
+        # passive update subscription; it must not create an invisible second
+        # source reader or alter the meaning of a delivered difference page.
+        request_policy = {"receive_updates": False}
     if getattr(args, "command", None) in {
         "send", "edit", "reply", "transcribe", "scheduled-edit",
         "scheduled-cancel", "scheduled-send-now",
@@ -5781,6 +5786,237 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+# This interface returns update references only. It is useful to a model-free
+# dispatcher, but is not a dispatcher, a task grant or a sending permission.
+# The host must commit the returned page and cursor together; this provider
+# never advances a separate progress file after an unconfirmed delivery.
+MAX_MONITOR_EVENTS = 100
+
+
+def monitor_int(value: Any, *, positive: bool = False) -> int:
+    if type(value) is not int or value < (1 if positive else 0) or value >= 2**31:
+        raise TelegramRuntimeError("Telegram monitor position is invalid.")
+    return value
+
+
+def monitor_date(value: Any) -> int:
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise TelegramRuntimeError("Telegram monitor state date is unavailable.")
+    return monitor_int(int(value.timestamp()), positive=True)
+
+
+def monitor_position(value: Any, *, channel: bool) -> dict:
+    if channel:
+        return {"pts": monitor_int(getattr(value, "pts", None), positive=True)}
+    return {**{key: monitor_int(getattr(value, key, None)) for key in ("pts", "qts", "seq")},
+            "date": monitor_date(getattr(value, "date", None))}
+
+
+def monitor_message(message: Any, utils: Any, *, kind: str, channel_peer: int | None) -> dict:
+    """Project native author/peer identity; never serialize a TL object or body.
+
+    A forwarded author and an account with a matching username cannot become
+    the actual sender. Opaque string IDs also avoid JavaScript integer loss.
+    The revision deliberately includes semantic content in a one-way digest,
+    without unstable file_reference/access_hash transport credentials.
+    """
+    message_id = monitor_int(getattr(message, "id", None), positive=True)
+    peer = getattr(message, "peer_id", None)
+    if type(peer).__name__ not in {"PeerUser", "PeerChat", "PeerChannel"}:
+        raise TelegramRuntimeError("Telegram monitor message peer is unavailable.")
+    peer_id = utils.get_peer_id(peer)
+    if type(peer_id) is not int or peer_id == 0 or abs(peer_id) >= 2**63 or channel_peer is not None and peer_id != channel_peer:
+        raise TelegramRuntimeError("Telegram monitor response crossed its stream.")
+    sender = getattr(message, "from_id", None)
+    sender_id = getattr(sender, "user_id", None) if type(sender).__name__ == "PeerUser" else None
+    # Telegram may omit from_id in an incoming private dialog. Its native
+    # PeerUser is then the actual interlocutor, not a display-name inference.
+    # Never apply this to outgoing messages or channel/anonymous senders.
+    if sender is None and type(peer).__name__ == "PeerUser" and getattr(message, "out", None) is False:
+        sender_id = getattr(peer, "user_id", None)
+    if type(sender_id) is not int or not 0 < sender_id < 2**63:
+        sender_id = None
+    body = getattr(message, "message", None)
+    if body is not None and (not isinstance(body, str) or len(body) > 65536):
+        raise TelegramRuntimeError("Telegram monitor message exceeds its content bound.")
+    entities = getattr(message, "entities", None) or []
+    if not isinstance(entities, list) or len(entities) > 256:
+        raise TelegramRuntimeError("Telegram monitor entity metadata exceeds its bound.")
+    formatting = []
+    for entity in entities:
+        # Only stable semantic fields enter the digest. In particular an
+        # InputUser embedded in a mention must not add its access hash.
+        fields = {key: getattr(entity, key, None) for key in ("offset", "length", "url", "language")}
+        mentioned = getattr(entity, "user_id", None)
+        fields["user_id"] = getattr(mentioned, "user_id", mentioned)
+        fields["document_id"] = getattr(entity, "document_id", None)
+        if any(value is not None and type(value) not in {str, int} for value in fields.values()):
+            raise TelegramRuntimeError("Telegram monitor entity metadata is invalid.")
+        formatting.append([type(entity).__name__, fields])
+    def timestamp(field):
+        value = getattr(message, field, None)
+        if value is None and field != "date":
+            return None
+        if not isinstance(value, datetime) or value.tzinfo is None:
+            raise TelegramRuntimeError("Telegram monitor message date is invalid.")
+        return value.isoformat()
+    media = getattr(message, "media", None)
+    media_object = getattr(message, "document", None) or getattr(message, "photo", None)
+    media_id = getattr(media_object, "id", None)
+    if media_id is not None and type(media_id) is not int:
+        raise TelegramRuntimeError("Telegram monitor media identity is invalid.")
+    topic_id = message_thread_id(message)
+    outgoing = getattr(message, "out", None)
+    if type(outgoing) is not bool:
+        raise TelegramRuntimeError("Telegram monitor message direction is unavailable.")
+    semantic = [str(peer_id), message_id, body, formatting, timestamp("date"), timestamp("edit_date"),
+                str(sender_id) if sender_id is not None else None, outgoing, topic_id,
+                getattr(getattr(message, "reply_to", None), "reply_to_msg_id", None),
+                type(media).__name__ if media is not None else None, str(media_id) if media_id is not None else None,
+                getattr(message, "fwd_from", None) is not None, getattr(message, "via_bot_id", None) is not None]
+    return {"id": f"message:{peer_id}:{message_id}", "revision": overview_digest(semantic), "kind": kind,
+            "chatId": str(peer_id), "messageId": str(message_id), "topicId": str(topic_id) if topic_id else None,
+            "senderUserId": str(sender_id) if sender_id is not None else None,
+            "senderNamespace": "telegram_user_id" if sender_id is not None else None,
+            "outgoing": outgoing, "forwarded": getattr(message, "fwd_from", None) is not None,
+            "viaBot": getattr(message, "via_bot_id", None) is not None}
+
+
+def import_telethon_monitor():
+    from telethon import utils
+    from telethon.tl.functions.updates import GetStateRequest, GetDifferenceRequest, GetChannelDifferenceRequest
+    from telethon.tl.functions.channels import GetFullChannelRequest
+    from telethon.tl.types import ChannelMessagesFilterEmpty
+    return GetStateRequest, GetDifferenceRequest, GetChannelDifferenceRequest, GetFullChannelRequest, ChannelMessagesFilterEmpty, utils
+
+
+async def command_monitor_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
+    """One bounded passive native difference. No unread-only position or ACK.
+
+    The account sequence covers private/basic-group cloud messages; channels
+    have independent pts and require their exact --chat stream. Secret chats
+    are explicitly outside this interface. A gap/oversized response retains the
+    old cursor; never jump to a server's new pts and pretend nothing was lost.
+    """
+    limit = getattr(args, "limit", MAX_MONITOR_EVENTS)
+    if type(limit) is not int or not 10 <= limit <= MAX_MONITOR_EVENTS:
+        raise TelegramRuntimeError("Monitor --limit must be 10..100.")
+    client = build_client(args, identity)
+    failure = None
+    try:
+        await ensure_authorized(client)
+        GetState, GetDifference, GetChannelDifference, GetFullChannel, Empty, utils = import_telethon_monitor()
+        channel = None
+        peer_id = None
+        if getattr(args, "chat", None):
+            channel = await resolve_entity(client, args.chat)
+            if type(channel).__name__ != "Channel":
+                raise TelegramRuntimeError("Monitor --chat requires an exact channel or supergroup; private/basic groups use the account stream.")
+            peer_id = utils.get_peer_id(channel)
+            if type(peer_id) is not int or peer_id >= 0:
+                raise TelegramRuntimeError("Telegram monitor channel identity is invalid.")
+        binding = await overview_binding(client, identity, "monitor/v1", {"channel": str(peer_id) if peer_id is not None else None})
+        token = getattr(args, "cursor", None)
+        state = overview_cursor(identity, binding, token=token) if token else None
+        if state is not None:
+            expected_keys = {"pts"} if channel is not None else {"pts", "qts", "seq", "date"}
+            if not isinstance(state, dict) or set(state) != {"expires", "position"} or not isinstance(state["position"], dict) or set(state["position"]) != expected_keys:
+                raise TelegramRuntimeError("Telegram monitor cursor state is invalid.")
+            for key, value in state["position"].items():
+                monitor_int(value, positive=key == "date" or channel is not None)
+        events = []
+        channels_to_sync = set()
+        unresolved_deletions = []
+        more = False
+        if state is None:
+            native = (await client(GetFullChannel(channel=channel))).full_chat if channel is not None else await client(GetState())
+            position = monitor_position(native, channel=channel is not None)
+        else:
+            old = state["position"]
+            if channel is not None:
+                response = await client(GetChannelDifference(channel=channel, filter=Empty(), pts=old["pts"], limit=limit, force=False))
+                constructors = {"ChannelDifference", "ChannelDifferenceEmpty"}
+            else:
+                # pts_total_limit is intentionally absent: its fast-update
+                # semantics would turn a large recoverable backlog into a
+                # synthetic TooLong. Page through the original position.
+                response = await client(GetDifference(pts=old["pts"], qts=old["qts"], date=datetime.fromtimestamp(old["date"], timezone.utc), pts_limit=limit))
+                constructors = {"Difference", "DifferenceSlice", "DifferenceEmpty"}
+            name = type(response).__name__
+            if name not in constructors:
+                # Includes native *TooLong: a resync needs explicit review and
+                # historical backfill, never silent cursor reset/new baseline.
+                raise TelegramRuntimeError("Telegram monitor has an update gap or unsupported response; retain the cursor and review backfill.", code="TELEGRAM_MONITOR_GAP")
+            if channel is not None:
+                position = monitor_position(response, channel=True)
+                more = getattr(response, "final", None) is not True
+            elif name == "DifferenceEmpty":
+                position = {**old, "date": monitor_date(response.date), "seq": monitor_int(response.seq)}
+            else:
+                position = monitor_position(response.intermediate_state if name == "DifferenceSlice" else response.state, channel=False)
+                more = name == "DifferenceSlice"
+            if position["pts"] < old["pts"] or channel is None and position["qts"] < old["qts"] or more and position == old:
+                raise TelegramRuntimeError("Telegram monitor position did not advance safely.", code="TELEGRAM_MONITOR_GAP")
+            messages = getattr(response, "new_messages", [])
+            updates = getattr(response, "other_updates", [])
+            if not isinstance(messages, list) or not isinstance(updates, list) or len(messages) + len(updates) > 1000:
+                raise TelegramRuntimeError("Telegram monitor page exceeds its bound; retain the cursor.", code="TELEGRAM_MONITOR_GAP")
+            for message in messages:
+                if type(message).__name__ == "Message":
+                    events.append(monitor_message(message, utils, kind="new", channel_peer=peer_id))
+                elif type(message).__name__ != "MessageService":
+                    raise TelegramRuntimeError("Telegram monitor message is unavailable; retain the cursor.", code="TELEGRAM_MONITOR_GAP")
+            for update in updates:
+                update_name = type(update).__name__
+                if update_name in {"UpdateEditMessage", "UpdateEditChannelMessage", "UpdateNewMessage", "UpdateNewChannelMessage"}:
+                    events.append(monitor_message(update.message, utils, kind="edit" if update_name.startswith("UpdateEdit") else "new", channel_peer=peer_id))
+                elif update_name in {"UpdateChannelTooLong", "UpdateChannel"} and channel is None:
+                    channel_id = getattr(update, "channel_id", None)
+                    if type(channel_id) is not int or channel_id <= 0:
+                        raise TelegramRuntimeError("Telegram monitor channel update is invalid.")
+                    channels_to_sync.add(str(channel_id))
+                elif update_name in {"UpdateDeleteMessages", "UpdateDeleteChannelMessages"}:
+                    ids = getattr(update, "messages", None)
+                    if not isinstance(ids, list) or len(ids) > MAX_MONITOR_EVENTS:
+                        raise TelegramRuntimeError("Telegram monitor deletion metadata exceeds its bound.")
+                    if update_name == "UpdateDeleteChannelMessages":
+                        if channel is None or getattr(update, "channel_id", None) != channel.id:
+                            raise TelegramRuntimeError("Telegram monitor deletion crossed its channel stream.")
+                        for message_id in ids:
+                            message_id = monitor_int(message_id, positive=True)
+                            events.append({"id": f"message:{peer_id}:{message_id}", "revision": overview_digest(["deleted", peer_id, message_id, position["pts"]]),
+                                           "kind": "delete", "chatId": str(peer_id), "messageId": str(message_id)})
+                    else:
+                        # Account deletion IDs do not identify their peer. Do
+                        # not invent a chat or wake it. A host may resolve only
+                        # previously journaled exact account message references.
+                        unresolved_deletions.extend(str(monitor_int(item, positive=True)) for item in ids)
+            if len(events) > MAX_MONITOR_EVENTS or len(channels_to_sync) > MAX_MONITOR_EVENTS or len(unresolved_deletions) > MAX_MONITOR_EVENTS:
+                raise TelegramRuntimeError("Telegram monitor page exceeds its bound; retain the cursor.", code="TELEGRAM_MONITOR_GAP")
+        next_state = {"expires": time.time() + OVERVIEW_CURSOR_TTL, "position": position}
+        return {"schemaVersion": 1, "stream": {"kind": "channel" if channel is not None else "account_cloud", "chatId": str(peer_id) if peer_id is not None else None},
+                "baselineOnly": state is None, "events": events, "channelsToSync": sorted(channels_to_sync),
+                "unresolvedDeletionIds": sorted(set(unresolved_deletions)),
+                "nextCursor": overview_cursor(identity, binding, state=next_state), "hasMore": more,
+                "coverage": {"historicalBackfill": False, "secretChatsIncluded": False, "otherChannelStreamsIncluded": False},
+                "readState": {"readReceiptsSent": False, "viewsRegistered": False}}
+    except TelegramRuntimeError as error:
+        failure = error
+        raise
+    except Exception as error:
+        failure = error
+        raise TelegramRuntimeError("Telegram monitor failed; no cursor page was delivered.", code="TELEGRAM_MONITOR_UNAVAILABLE") from error
+    finally:
+        try:
+            await client.disconnect()
+        except Exception as error:
+            # A failed cleanup must neither leak raw SDK/session diagnostics
+            # nor turn an undelivered page into success. Preserve an existing
+            # gap/auth failure rather than replacing its recovery meaning.
+            if failure is None:
+                raise TelegramRuntimeError("Telegram monitor cleanup failed; no cursor page was delivered.", code="TELEGRAM_MONITOR_UNAVAILABLE") from error
+
+
 def command_policy(args: argparse.Namespace) -> dict[str, Any]:
     identity = identity_from_args(args)
     if args.policy_command == "set":
@@ -5798,6 +6034,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
     with session_lock(identity):
         if args.command == "login":
             return asyncio.run(command_login_async(args, identity))
+        if args.command == "monitor":
+            return asyncio.run(command_monitor_async(args, identity))
         if args.command == "dialogs":
             return asyncio.run(command_dialogs_async(args, identity))
         if args.command == "folders":
@@ -5963,6 +6201,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_QR_REFRESH_SECONDS,
         metavar="5..60",
     )
+    monitor = commands.add_parser("monitor", help="Read one passive metadata-only native update page")
+    monitor.add_argument("--chat", help="Exact channel/supergroup stream; omit for private/basic-group account updates")
+    monitor.add_argument("--cursor", help="Exact previous monitor cursor, never an unread flag")
+    monitor.add_argument("--limit", type=int, choices=range(10, 101), default=100, metavar="10..100")
     dialogs = commands.add_parser("dialogs", help="List or narrowly search dialogs")
     dialogs.add_argument("--query")
     dialogs.add_argument("--limit", type=int, choices=range(1, 101), default=20, metavar="1..100")
