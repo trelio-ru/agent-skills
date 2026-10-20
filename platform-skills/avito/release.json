@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "release": { "skillId": "avito", "version": "0.1.1", "summary": "Исправлен первый запуск и обнаружение локальных аккаунтов через штатный host flow" },
+  "release": { "skillId": "avito", "version": "0.1.2", "summary": "Исправлено получение изображений страниц: навык требует runtime с поддержкой PNG Chromium с цветовым профилем" },
   "connection": {
     "schemaVersion": 1,
     "intro": [
@@ -10,7 +10,7 @@
     "configFields": [], "secretFields": []
   },
   "runtime": {
-    "version": "0.1.1", "minimumHostVersion": "3.9.0",
+    "version": "0.1.2", "minimumHostVersion": "3.9.2",
     "entrypoint": { "path": "trelio-avito.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
     "browserSession": { "apiVersion": 1, "sessionClass": "protected-snapshot", "manualAssist": true },

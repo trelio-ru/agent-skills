@@ -13,7 +13,7 @@ Telegram Web, WhatsApp, факсимиле для документов и ВК �
 
 Авито – прототип визуального навыка: модель получает PNG и отправляет
 координатные клики, прокрутку, обычный текст и клавиши. Ручной вход сохраняется
-локально в защищённой сессии. Нужен host visual API >=3.9.0; source и PR не
+локально в защищённой сессии. Нужен host visual API >=3.9.2; source и PR не
 означают публичную готовность до native CI и signed host/provider release.
 
 Google AI Search – instruction-only прототип на существующем browser tool:
