@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.6.2`
-публикует runtime `2.6.2`, требует Telethon `>=1.44,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.7.0`
+публикует runtime `2.7.0`, требует Telethon `>=1.44,<2` и сохраняет
 minimum host `3.7.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -491,3 +491,45 @@ API-источники: [message links](https://core.telegram.org/api/links),
 [поиск сообщений](https://core.telegram.org/method/messages.search),
 [транскрибация](https://core.telegram.org/api/transcribe),
 [очередь отправки](https://core.telegram.org/api/scheduled-messages).
+
+## Пассивная лента native updates
+
+`monitor` – один metadata-only вызов `updates.getDifference` с сохранёнными
+pts/qts/date. `monitor --chat EXACT` использует независимый channel pts через
+`updates.getChannelDifference`. Первая страница без cursor явно `baselineOnly`:
+она не загружает исторические/unread сообщения и не доказывает завершённый intake.
+Channels из native `UpdateChannelTooLong`/`UpdateChannel` перечислены отдельно;
+после final channel не опрашивается вновь без нового account hint. Ни одна
+команда не устанавливает фоновый монитор, не открывает окно и не отправляет ACK.
+
+Shared signed cursor защищает account/member/company/connection + exact stream;
+подпись не является правом Trelio, внешней записи или раскрытия. Cursor содержит
+только счётчики и живёт до 12 часов после успешной страницы. Повреждение, expiry,
+TooLong, native page overflow и отсутствие продвижения возвращают отказ, сохраняя
+старый checkpoint; автоматического нового baseline нет. Можно уменьшить limit
+10..100 для повторного чтения прежней позиции. При минимальном limit/gap/repeated
+no-progress требуется review/backfill. Host коммитит events + nextCursor вместе.
+
+Native новые/изменённые сообщения проецируются в bounded ссылки/ID/digest без
+текста, имён, phones, access hashes, file references или TL blobs. Entity mention
+IDs и media IDs участвуют в semantic digest, transport refresh не создаёт edit.
+Actual sender берётся только из native PeerUser, не forwarded author/username.
+Cloud deletion IDs без peer возвращаются отдельно; сопоставить их можно только
+с прежним exact account journal. Неизвестный peer не угадывается. Secret chats
+и невыбранные channel streams явно вне coverage. До 100 events/response и 1000
+native message/update rows; превышение не обрезается с продвижением cursor.
+
+Existing human chat-only/sending policy сохраняется. Эта read API сама не
+разрешает ассистенту создать задачу, отправить сообщение или пометить его
+прочитанным. Protected source lease, связывание со своей SQLite очередью и
+проверка owner delegation принадлежат отдельному host/backend контракту.
+
+`test_assistant_monitor.py` проверяет настоящую command/dispatcher ветку,
+account/channel positions, slice/empty/gaps, большие sender IDs, подпись/expiry/
+account binding, no ACK, privacy canaries и digest без transport churn. Fixtures
+не используют account/network/application identity; реальные Windows и signed
+release проверки остаются отдельными gates. Исходники не активируют live skill.
+
+API: [updates](https://core.telegram.org/api/updates),
+[getDifference](https://core.telegram.org/method/updates.getDifference),
+[getChannelDifference](https://core.telegram.org/method/updates.getChannelDifference).

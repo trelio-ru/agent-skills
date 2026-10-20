@@ -94,9 +94,9 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /`views`/u);
     assert.match(source, /views=null|`null`/u);
   }
-  assert.equal(releaseManifest.release.version, "2.6.2");
+  assert.equal(releaseManifest.release.version, "2.7.0");
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.6.2");
+  assert.equal(releaseManifest.runtime.version, "2.7.0");
   assert.equal(releaseManifest.runtime.minimumHostVersion, "3.7.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),
