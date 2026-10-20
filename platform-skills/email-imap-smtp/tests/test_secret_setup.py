@@ -22,16 +22,19 @@ class SecretSetupTests(unittest.TestCase):
 
     def checkout(self, value=PASSWORD.encode()):
         directory = MODULE.CONFIG_DIR / "checkout"
-        directory.mkdir(mode=0o700, exist_ok=True)
         # Each delivery is a new bridge-owned file; Windows CreateNew must not
         # be weakened merely to reuse a fixture path across malformed inputs.
         location = directory / f"value-{uuid.uuid4().hex}"
         if MODULE.sys.platform == "win32":
+            # Python mkdir inherits the Windows DACL. Let the native writer
+            # create the directory with its owner-only descriptor from the start;
+            # private-directory deliberately refuses to repair an existing one.
             helper = MODULE.native_runtime()
             native = helper.native_helper(MODULE.CONFIG_DIR)
             helper.run_private(native, ["private-directory", str(directory)])
             helper.run_private(native, ["write-private", str(location)], value=value)
         else:
+            directory.mkdir(mode=0o700, exist_ok=True)
             location.write_bytes(value)
             location.chmod(0o600)
         return location
