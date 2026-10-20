@@ -249,8 +249,17 @@ class ImapProtocolTests(unittest.TestCase):
 
     def test_imap_error_is_json_without_traceback(self):
         stderr = io.StringIO()
+        # CLI admission now checks the selected account's IMAP capability before
+        # dispatch. Supply a real synthetic full-mailbox identity so this test
+        # still exercises the protocol error, without reading device accounts.
+        account = MODULE.Account(
+            name="work", email_address="person@example.com", display_name="Synthetic",
+            username="person@example.com", imap_host="imap.example.com", imap_port=993,
+            smtp_host="smtp.example.com", smtp_port=465, smtp_security="ssl", credential_store="file",
+        )
         with (
             mock.patch.object(MODULE.sys, "argv", ["trelio-email", "folders", "--account", "work"]),
+            mock.patch.object(MODULE, "load_account", return_value=account),
             mock.patch.object(MODULE, "command_folders", side_effect=MODULE.imaplib.IMAP4.error("LIST BAD")),
             contextlib.redirect_stderr(stderr),
         ):

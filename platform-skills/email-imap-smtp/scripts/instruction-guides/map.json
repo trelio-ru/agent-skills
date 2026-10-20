@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "originalSha256": "56bc3eca61eb39b08d084ea261296e16e63796f6e739a03ab713bfe3ca2e557c",
+  "originalSha256": "06011e4b8c8289dc09399cd0a90b47772cbfa337470b4b970dc489431e667201",
   "sections": [
     {
       "file": "part-01.md",
@@ -16,15 +16,15 @@
     },
     {
       "file": "part-02.md",
-      "bytes": 5403,
-      "sha256": "72550f7831de7028259bc283ee16ec14b8dde7aa393e9bbf727604d42c81c3ed",
+      "bytes": 6118,
+      "sha256": "df3e487567213daf4e88a88ab2c9123e213b77c7d9d49f0442a03abd287a9efb",
       "relocatedLinks": [],
       "sourceSuffix": "\n"
     },
     {
       "file": "part-03.md",
-      "bytes": 7744,
-      "sha256": "77d5c44294e7cf159b56dfdfed56824f98ce0b523af319fb1e492ca0c78f21a1",
+      "bytes": 8085,
+      "sha256": "7497d3414a770e4842c0520a18c67385c7702a8e2089fa0e511d1ae0c5ee5a88",
       "relocatedLinks": [
         {
           "from": "../../docs/email-send-diagnostics.md",
@@ -51,8 +51,8 @@
     },
     {
       "file": "part-05.md",
-      "bytes": 3765,
-      "sha256": "8cb4550990fdef98a951b1239636211f77c008f8f5333caeb7da5ae3abf29531",
+      "bytes": 4535,
+      "sha256": "1b8700b7b36c670943ebb6d11d887e88b09fe5bfe7c213c5142ce2ee7d22b54e",
       "relocatedLinks": []
     }
   ]

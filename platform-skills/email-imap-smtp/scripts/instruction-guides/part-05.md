@@ -27,6 +27,12 @@ search --local-account UUID --special-use sent --to recipient@example.com --sinc
 ## Ограничения
 
 - Поддерживаются TLS IMAP и SMTP SSL/STARTTLS с паролем или паролем приложения.
+- Явный режим SMTP-only поддерживает только исходящую отправку, подпись и policy.
+  Поиск, чтение, папки, вложения входящих и `reply` отклоняются до доступа
+  к credentials/сети с `imap_unavailable_smtp_only`. Входящую пересылку
+  настраивает сервер; навык не подключает другой ящик автоматически. После
+  неизвестного SMTP-результата копии для проверки нет – запроси решение о
+  повторе у пользователя, не считай отсутствие архива доказательством отказа.
 - Рабочие операции поддерживают macOS с Command Line Tools (`swiftc`) и
   Windows 10/11 x64 со штатным .NET Framework compiler. На других ОС остаются
   только несекретные `account list/update`, `description show`, `signature` и `policy`; setup/read блокируются.
