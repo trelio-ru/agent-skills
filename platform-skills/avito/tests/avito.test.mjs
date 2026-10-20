@@ -74,3 +74,24 @@ test('materialized package exposes complete signed guides without credentials or
     assert.deepEqual((await fs.readdir(temporary)).sort(), ['references', 'trelio-avito.mjs']);
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 });
+
+test('signed provider pins text mode and routes search through the worker pacing contract', async () => {
+  const temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-avito-api-')));
+  try {
+    const host = path.join(temporary, 'host.mjs');
+    await fs.writeFile(host, 'export function runVisualSession({env,...input}) { return input; }');
+    const { pathToFileURL } = await import('node:url');
+    const env = { TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(host).href, TRELIO_SKILL_ID: 'avito' };
+    const enter = await runAvito(['submit-search', '--frameId', 'fresh'], env);
+    assert.equal(enter.observationMode, 'text');
+    assert.equal(enter.operation, 'submit');
+    assert.deepEqual(enter.args, { action: 'key', key: 'Enter', frameId: 'fresh' });
+    assert.deepEqual((await runAvito(['submit-search', '--frameId', 'fresh', '--x', '21', '--y', '32'], env)).args, { action: 'click', frameId: 'fresh', x: 21, y: 32 });
+    assert.equal((await runAvito(['search-ready', '--frameId', 'fresh'], env)).operation, 'request-ready');
+    const text = await runAvito(['read-text', '--query', 'Цена', '--offset', '6000', '--includeControls', 'false'], env);
+    assert.deepEqual(text.args, { query: 'Цена', offset: 6000, includeControls: false });
+    assert.equal((await runAvito(['screenshot'], env)).operation, 'screenshot');
+    assert.equal((await runAvito(['close'], env)).operation, 'close');
+    for (const args of [['submit-search', '--frameId', 'f', '--x', '1'], ['read-text', '--includeControls', 'sometimes'], ['navigate', '--url', 'https://www.avito.ru/', '--observationMode', 'image']]) await assert.rejects(runAvito(args, env), /AVITO_COMMAND_INVALID/);
+  } finally { await fs.rm(temporary, { recursive: true, force: true }); }
+});
