@@ -103,3 +103,7 @@ account comment, `--confirm`, preview/hash или успешное выполн�
 ## Ограничения
 
 Полный обязательный раздел: [инструкция](scripts/instruction-guides/part-05.md)
+
+## Пассивная проверка новых писем
+
+Полный обязательный раздел: [инструкция](scripts/instruction-guides/part-06.md)
