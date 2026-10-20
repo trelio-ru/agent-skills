@@ -55,7 +55,7 @@ POLICIES_DIR = CONFIG_DIR / "policies"
 KEYCHAIN_SERVICE_PREFIX = "trelio-email"
 POLICY_MODES = ("confirm", "read-only")
 CONNECTION_MODES = ("imap_smtp", "smtp_only")
-IMAP_COMMANDS = {"folders", "search", "read", "save-message", "attachments", "save-attachment", "reply"}
+IMAP_COMMANDS = {"monitor", "folders", "search", "read", "save-message", "attachments", "save-attachment", "reply"}
 MAX_ACCOUNT_DESCRIPTION_CHARS = 2_000
 MAX_SIGNATURE_BYTES = 16 * 1024
 MAX_MESSAGE_BYTES = 25 * 1024 * 1024
@@ -154,6 +154,18 @@ class MailboxError(RuntimeError):
     """Expected configuration, protocol, or user-input error."""
 
 
+class EmailMonitorError(MailboxError):
+    """Closed monitor diagnostics; never echo an IMAP response or mailbox."""
+
+    def __init__(self, code: str):
+        if code not in {"EMAIL_MONITOR_INVALID_CURSOR", "EMAIL_MONITOR_SCOPE_CHANGED",
+                        "EMAIL_MONITOR_UIDVALIDITY_CHANGED", "EMAIL_MONITOR_INVALID_RESPONSE",
+                        "EMAIL_MONITOR_UNAVAILABLE"}:
+            raise MailboxError("invalid_email_monitor_error")
+        self.code = code
+        super().__init__(code)
+
+
 class SmtpFailure(MailboxError):
     """Bounded protocol facts safe for the native worker/result boundary.
 
@@ -178,6 +190,8 @@ def error_payload(error: Exception) -> dict[str, Any]:
     result = {"ok": False, "error": str(error)}
     if isinstance(error, SmtpFailure):
         result["smtp"] = error.details
+    if isinstance(error, EmailMonitorError):
+        result["code"] = error.code
     return result
 
 
@@ -2140,6 +2154,149 @@ def command_search(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+# A cursor is a non-authorizing read checkpoint, not a secret/lease or an owner
+# command. It is scoped to the already selected native account and folder. The
+# trusted background host owns its private durable copy; model text cannot
+# advance the host journal. This provider stores no additional progress file.
+EMAIL_MONITOR_SCAN_SPAN = 10_000
+EMAIL_MONITOR_MAX_UID_BYTES = 128 * 1024
+
+
+def email_monitor_scope(account: Account, folder: str) -> str:
+    binding = selected_local_account()
+    value = ["trelio-email-monitor/v1", account.name, account.imap_host, account.imap_port,
+             account.username, folder, binding["id"] if binding else None,
+             binding["companyBinding"] if binding else None,
+             os.environ.get("TRELIO_SKILL_COMPANY_ID"), os.environ.get("TRELIO_SKILL_MEMBER_ID")]
+    return hashlib.sha256(json.dumps(value, ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def email_monitor_cursor(scope: str, validity: int, last_uid: int) -> str:
+    value = {"v": 1, "scope": scope, "uidValidity": validity, "lastUid": last_uid}
+    return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).decode().rstrip("=")
+
+
+def parse_email_monitor_cursor(value: str, scope: str | None = None) -> dict:
+    try:
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,1024}", value):
+            raise ValueError()
+        raw = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
+        current = json.loads(raw)
+        if not isinstance(current, dict) or set(current) != {"v", "scope", "uidValidity", "lastUid"} or type(current["v"]) is not int or current["v"] != 1:
+            raise ValueError()
+        if not isinstance(current["scope"], str) or not re.fullmatch(r"[a-f0-9]{64}", current["scope"]):
+            raise ValueError()
+        if type(current["uidValidity"]) is not int or not 0 < current["uidValidity"] < 2**32:
+            raise ValueError()
+        if type(current["lastUid"]) is not int or not 0 <= current["lastUid"] < 2**32:
+            raise ValueError()
+        if scope is not None and current["scope"] != scope:
+            raise EmailMonitorError("EMAIL_MONITOR_SCOPE_CHANGED")
+        return current
+    except EmailMonitorError:
+        raise
+    except (ValueError, TypeError, UnicodeError) as error:
+        raise EmailMonitorError("EMAIL_MONITOR_INVALID_CURSOR") from error
+
+
+def email_monitor_cursor_argument(value: str) -> str:
+    # Syntax validation belongs to the public parser before native guardian or
+    # credential unlock. Scope equality additionally needs the resolved native
+    # folder/account and is repeated inside the owned read below.
+    try:
+        parse_email_monitor_cursor(value)
+    except EmailMonitorError as error:
+        raise argparse.ArgumentTypeError(error.code) from None
+    return value
+
+
+def email_monitor_position(client: imaplib.IMAP4_SSL) -> tuple[int, int]:
+    """Use EXAMINE response codes, never message sequence numbers or UNSEEN."""
+    result = []
+    for key in ("UIDVALIDITY", "UIDNEXT"):
+        _kind, values = client.response(key)
+        if not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], bytes) or not re.fullmatch(rb"[1-9][0-9]{0,9}", values[0]):
+            raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+        value = int(values[0])
+        if value >= 2**32:
+            raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+        result.append(value)
+    return result[0], result[1]
+
+
+def command_monitor(args: argparse.Namespace) -> dict[str, Any]:
+    account = load_account(args.account)
+    # Keep the low-level guard as well as IMAP_COMMANDS CLI admission: an
+    # SMTP-only sender must fail before native unlock or network access.
+    require_imap(account)
+    if type(args.limit) is not int or not 1 <= args.limit <= 100:
+        raise EmailMonitorError("EMAIL_MONITOR_INVALID_CURSOR")
+    try:
+        with imap_connection(account) as client:
+            folder = select_folder(client, args.folder, special_use=args.special_use)
+            scope = email_monitor_scope(account, folder)
+            old = parse_email_monitor_cursor(args.cursor, scope) if args.cursor is not None else None
+            validity, next_uid = email_monitor_position(client)
+            if old is None:
+                return {"schemaVersion": 1, "baselineOnly": True, "events": [],
+                        "nextCursor": email_monitor_cursor(scope, validity, next_uid - 1), "hasMore": False,
+                        "coverage": {"historicalBackfill": False, "bodyContentRead": False},
+                        "readState": {"readReceiptsSent": False}}
+            if validity != old["uidValidity"]:
+                raise EmailMonitorError("EMAIL_MONITOR_UIDVALIDITY_CHANGED")
+            after = old["lastUid"]
+            if after >= next_uid:
+                raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+            through = min(next_uid - 1, after + EMAIL_MONITOR_SCAN_SPAN)
+            uids = []
+            if through > after:
+                # A finite UID range bounds the native search itself. Avoid
+                # n:*: when n exceeds the current max, IMAP reverses that range
+                # and could return the old last message. No flags/body/header
+                # read, writable SELECT, STORE, CLOSE/EXPUNGE or SMTP belongs here.
+                status, data = client.uid("search", None, "UID", f"{after + 1}:{through}")
+                if status != "OK" or not isinstance(data, list) or len(data) != 1 or data[0] is not None and not isinstance(data[0], bytes):
+                    raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+                wire = data[0] or b""
+                if len(wire) > EMAIL_MONITOR_MAX_UID_BYTES:
+                    raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+                for raw_uid in wire.split():
+                    if not re.fullmatch(rb"[1-9][0-9]{0,9}", raw_uid):
+                        raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+                    uid = int(raw_uid)
+                    if not after < uid <= through:
+                        raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+                    uids.append(uid)
+                if len(set(uids)) != len(uids):
+                    raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+                uids.sort()
+            selected = uids[:args.limit]
+            # If all matching UIDs fit, the exact finite range was examined and
+            # absent/deleted slots may be skipped. Otherwise advance only through
+            # the last returned UID, preserving the remainder for the next page.
+            committed_through = selected[-1] if len(uids) > args.limit else through
+            select_folder(client, folder)
+            fresh_validity, fresh_next = email_monitor_position(client)
+            if fresh_validity != validity:
+                raise EmailMonitorError("EMAIL_MONITOR_UIDVALIDITY_CHANGED")
+            if fresh_next < next_uid:
+                raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+            events = [{"id": f"uid:{validity}:{uid}", "revision": hashlib.sha256(f"{scope}:{validity}:{uid}".encode()).hexdigest(),
+                       "uid": str(uid), "uidValidity": str(validity), "kind": "new"} for uid in selected]
+            return {"schemaVersion": 1, "baselineOnly": False, "events": events,
+                    "nextCursor": email_monitor_cursor(scope, validity, committed_through),
+                    "hasMore": committed_through < fresh_next - 1,
+                    "coverage": {"historicalBackfill": False, "bodyContentRead": False},
+                    "readState": {"readReceiptsSent": False}}
+    except EmailMonitorError:
+        raise
+    except Exception as error:
+        # Includes SELECT/LOGIN/SEARCH/context-manager cleanup failures. Server
+        # prose can contain a mailbox, address or credential; no raw exception
+        # crosses the normal native worker result/error projection.
+        raise EmailMonitorError("EMAIL_MONITOR_UNAVAILABLE") from error
+
+
 def command_read(args: argparse.Namespace) -> dict[str, Any]:
     account = load_account(args.account)
     with imap_connection(account) as client:
@@ -2837,6 +2994,12 @@ def build_parser() -> argparse.ArgumentParser:
     folders_parser = subparsers.add_parser("folders", help="List mailbox names and special-use flags without reading messages")
     folders_parser.add_argument("--account", required=True)
     folders_parser.set_defaults(handler=command_folders)
+    monitor_parser = subparsers.add_parser("monitor", help="Read one passive bounded IMAP UID page")
+    add_mailbox_arguments(monitor_parser)
+    monitor_parser.add_argument("--cursor", type=email_monitor_cursor_argument,
+                                help="Previous scoped read checkpoint; not an authorization token")
+    monitor_parser.add_argument("--limit", type=int, default=100, choices=range(1, 101), metavar="1..100")
+    monitor_parser.set_defaults(handler=command_monitor)
     search_parser = subparsers.add_parser("search", help="Search messages using narrow server-side filters")
     add_mailbox_arguments(search_parser)
     search_parser.add_argument("--from", dest="sender")

@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.5.1",
-    "summary": "SMTP-only подключение можно настроить из существующего Agent Secret через одноразовую защищённую передачу. Пароль не требуется вводить в браузерную форму повторно."
+    "version": "2.6.0",
+    "summary": "Пассивная bounded проверка новых IMAP UID со scoped checkpoint и явной сменой UIDVALIDITY без read receipts и отправки."
   },
   "connection": null,
   "runtime": {
-    "version": "2.5.1",
+    "version": "2.6.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-email.py",
@@ -77,6 +77,11 @@
       {
         "source": "scripts/instruction-guides/part-05.md",
         "path": "instruction-guides/part-05.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-06.md",
+        "path": "instruction-guides/part-06.md",
         "mode": 420
       }
     ]
