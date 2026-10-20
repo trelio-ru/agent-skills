@@ -56,7 +56,11 @@ export async function runAvito(argv, env = process.env) {
   const { operation, args } = parseAvitoCommand(argv);
   if (operation === 'doctor') return {
     schemaVersion: 1, hostVisualAvailable: Boolean(env.TRELIO_VISUAL_SESSION_MODULE_URL),
-    accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: '3.9.0',
+    // Keep the diagnostic aligned with signed admission. Chromium may include
+    // an ICC profile in a captured PNG; host 3.9.2 normalizes its own capture
+    // before strict image projection. An already-running older MCP must enter
+    // the ordinary signed upgrade flow before opening the provider browser.
+    accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: '3.9.2',
   };
   const url = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank');
   if (url.protocol !== 'file:' || env.TRELIO_SKILL_ID !== 'avito') throw new Error('AVITO_HOST_REQUIRED');

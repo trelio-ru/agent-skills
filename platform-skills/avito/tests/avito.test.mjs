@@ -13,7 +13,10 @@ test('coordinate interface rejects script/selector/path overrides before host I/
   assert.deepEqual(parseAvitoCommand(['scroll', '--frameId', 'frame', '--x', '0', '--y', '40', '--deltaY', '900']), { operation: 'scroll', args: { frameId: 'frame', x: 0, y: 40, deltaY: 900 } });
   for (const args of [['evaluate', '--script', 'document.body'], ['click', '--selector', '#login'], ['setup', '--executable', '/browser'], ['status', '--path', '/private'], ['key', '--frameId', 'frame', '--key', 'Enter', '--key', 'Tab']]) assert.throws(() => parseAvitoCommand(args), /AVITO_COMMAND_INVALID/);
   assert.equal((await runAvito(['commands'], {})).schemaVersion, 1);
-  assert.equal((await runAvito(['doctor'], {})).hostVisualAvailable, false);
+  const doctor = await runAvito(['doctor'], {});
+  assert.equal(doctor.hostVisualAvailable, false);
+  const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
+  assert.equal(doctor.minimumHostVersion, release.runtime.minimumHostVersion);
   await assert.rejects(runAvito(['screenshot'], {}), /AVITO_HOST_REQUIRED/);
 });
 
