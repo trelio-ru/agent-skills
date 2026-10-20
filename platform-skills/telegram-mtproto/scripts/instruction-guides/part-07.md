@@ -27,14 +27,21 @@ file_reference и session в ответ/cursor не включаются. Бол
 тексты и другие channel streams не считаются прочитанными. Новые и изменённые
 ссылки нужно отдельно читать в разрешённом рабочем контексте.
 
-Cursor подписан прежним локальным механизмом и привязан к account/connection и
-stream. Он содержит только checkpoint metadata и живёт до 12 часов после
-последней успешной страницы. Истёкший/повреждённый cursor, `TELEGRAM_MONITOR_GAP`,
+Cursor подписан общим локальным механизмом с отдельным monitor HMAC purpose и
+привязан к account/member/company/connection и stream. Он содержит только
+счётчики и не истекает вместе с сессией: после простоя host продолжает с exact
+checkpoint, каждый раз заново проверяя живую авторизацию и account. Это не
+продлевает session/admission, не разрешает вход или новые действия. Обычные
+overview/export cursors сохраняют прежний TTL 12 часов. Повреждённый cursor,
+`TELEGRAM_MONITOR_INVALID_CURSOR`, `TELEGRAM_MONITOR_GAP`,
 слишком большая native страница или `*DifferenceTooLong` сохраняют прежнюю позицию:
 не объявляй отсутствие событий, не сбрасывай вход и не начинай новый baseline.
 При превышении страницы можно уменьшить `--limit` и безопасно повторить именно
 чтение со старым cursor. При минимальном limit, пропуске истории или повторном
 отсутствии продвижения останови этот источник и запроси review/backfill.
+Monitor protocol epoch отделён от human message preview: обычное обновление
+навыка не сбрасывает counters. Смена host local account/companyBinding или
+фактического Telegram account требует отдельного источника, не старого cursor.
 Обычная сетевая ошибка имеет отдельный `TELEGRAM_MONITOR_UNAVAILABLE` и не
 разрешает смену транспорта или повтор mutation.
 
