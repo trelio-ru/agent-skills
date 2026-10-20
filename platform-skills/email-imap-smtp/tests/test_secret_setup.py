@@ -5,6 +5,7 @@ import io
 import os
 from pathlib import Path
 import unittest
+import uuid
 from unittest import mock
 
 import test_browser_configure as browser
@@ -22,7 +23,9 @@ class SecretSetupTests(unittest.TestCase):
     def checkout(self, value=PASSWORD.encode()):
         directory = MODULE.CONFIG_DIR / "checkout"
         directory.mkdir(mode=0o700, exist_ok=True)
-        location = directory / "value"
+        # Each delivery is a new bridge-owned file; Windows CreateNew must not
+        # be weakened merely to reuse a fixture path across malformed inputs.
+        location = directory / f"value-{uuid.uuid4().hex}"
         if MODULE.sys.platform == "win32":
             helper = MODULE.native_runtime()
             native = helper.native_helper(MODULE.CONFIG_DIR)
