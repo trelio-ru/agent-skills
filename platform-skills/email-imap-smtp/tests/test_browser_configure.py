@@ -249,8 +249,11 @@ const assert = require("node:assert/strict");
 const vm = require("node:vm");
 const fs = require("node:fs");
 const source = fs.readFileSync(0, "utf8");
-const input = name => ({name, value: "", events: {}, addEventListener(event, fn) { this.events[event] = fn; }});
-const elements = Object.fromEntries(["email", "imap_host", "smtp_host", "smtp_security", "smtp_port"].map(name => [name, input(name)]));
+const input = name => ({name, value: "", events: {}, label: {hidden: false},
+  closest(selector) { assert.equal(selector, "label"); return this.label; },
+  addEventListener(event, fn) { this.events[event] = fn; }});
+const elements = Object.fromEntries(["email", "connection_mode", "imap_host", "imap_port", "smtp_host", "smtp_security", "smtp_port"].map(name => [name, input(name)]));
+elements.connection_mode.value = "imap_smtp";
 elements.namedItem = name => elements[name];
 elements.smtp_port.value = "465";
 const hints = ["gmail", "mailru", "yandex"].map(provider => ({dataset: {provider}, hidden: true}));
@@ -268,6 +271,18 @@ const context = vm.createContext({URLSearchParams, Map,
   fetch() { requests++; throw Error("Network forbidden"); },
 });
 vm.runInContext(source, context);
+assert.equal(elements.imap_host.required, true);
+elements.connection_mode.value = "smtp_only";
+elements.connection_mode.events.change();
+for (const name of ["imap_host", "imap_port"]) {
+  assert.equal(elements[name].disabled, true);
+  assert.equal(elements[name].required, false);
+  assert.equal(elements[name].label.hidden, true);
+}
+elements.connection_mode.value = "imap_smtp";
+elements.connection_mode.events.change();
+assert.equal(elements.imap_host.disabled, false);
+assert.equal(elements.imap_host.label.hidden, false);
 function change(name, value) { elements[name].value = value; elements[name].events.input(); }
 function provider() { return hints.filter(item => !item.hidden).map(item => item.dataset.provider); }
 change("email", "person@gmail.com");

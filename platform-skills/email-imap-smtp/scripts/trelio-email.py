@@ -54,6 +54,8 @@ SECRETS_DIR = CONFIG_DIR / "secrets"
 POLICIES_DIR = CONFIG_DIR / "policies"
 KEYCHAIN_SERVICE_PREFIX = "trelio-email"
 POLICY_MODES = ("confirm", "read-only")
+CONNECTION_MODES = ("imap_smtp", "smtp_only")
+IMAP_COMMANDS = {"folders", "search", "read", "save-message", "attachments", "save-attachment", "reply"}
 MAX_ACCOUNT_DESCRIPTION_CHARS = 2_000
 MAX_SIGNATURE_BYTES = 16 * 1024
 MAX_MESSAGE_BYTES = 25 * 1024 * 1024
@@ -266,6 +268,20 @@ class Account:
     # Provider-specific message content stays with the configured mailbox,
     # not in the host's shared account comment or company working rules.
     signature: str = ""
+    # Absence in older TOML means the original full mailbox. An explicit mode,
+    # never an empty host or a transient IMAP failure, opts out of Sent storage.
+    connection_mode: str = "imap_smtp"
+
+
+def connection_mode(value: str = "imap_smtp") -> str:
+    if value not in CONNECTION_MODES:
+        raise MailboxError("invalid_email_connection_mode")
+    return value
+
+
+def require_imap(account: Account) -> None:
+    if account.connection_mode == "smtp_only":
+        raise MailboxError("imap_unavailable_smtp_only; this account supports outgoing SMTP only")
 
 
 def ensure_private_directory(path: Path) -> None:
@@ -441,11 +457,13 @@ def write_raw_config(data: dict[str, Any]) -> None:
             "smtp_port",
             "smtp_security",
             "credential_store",
+            "connection_mode",
         ):
             # Older rows lack the optional content fields. Every rewrite must
             # retain descriptions/signatures for all accounts, not just its target.
             value = (
                 normalize_account_description(item.get(key, "")) if key == "description"
+                else connection_mode(item.get(key, "imap_smtp")) if key == "connection_mode"
                 else normalize_signature(item.get(key, "")) if key == "signature" else item[key]
             )
             lines.append(f"{key} = {value if isinstance(value, int) else toml_string(str(value))}")
@@ -476,10 +494,13 @@ def load_account(name: str) -> Account:
             credential_store=str(raw.get("credential_store", "file")).strip().lower(),
             description=normalize_account_description(raw.get("description", "")),
             signature=normalize_signature(raw.get("signature", "")),
+            connection_mode=connection_mode(raw.get("connection_mode", "imap_smtp")),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise MailboxError(f'Account "{normalized_name}" has an invalid configuration: {error}') from error
-    if not all((account.email_address, account.username, account.imap_host, account.smtp_host)):
+    if not all((account.email_address, account.username, account.smtp_host)) or (
+        account.connection_mode == "imap_smtp" and not account.imap_host
+    ):
         raise MailboxError(f'Account "{normalized_name}" has empty required fields.')
     if account.smtp_security not in {"ssl", "starttls"}:
         raise MailboxError("smtp_security must be ssl or starttls.")
@@ -565,10 +586,15 @@ def browser_password_page(
         # Values are escaped into attributes/text only, never into executable JS.
         # In particular an existing description is untrusted local content.
         def field(name: str, label: str, value: Any, kind: str = "text", extra: str = "") -> str:
-            return (f'<label>{label}<input name="{name}" type="{kind}" '
+            return (f'<label>{label}<input id="{name}" name="{name}" type="{kind}" '
                     f'value="{html.escape(str(value), quote=True)}" {extra}></label>')
 
         account_fields = "\n".join([
+            '<label>Режим подключения<select id="connection_mode" name="connection_mode">' + "".join(
+                f'<option value="{mode}" {"selected" if mode == account.connection_mode else ""}>{label}</option>'
+                for mode, label in (("imap_smtp", "Чтение и отправка (IMAP + SMTP)"),
+                                    ("smtp_only", "Только отправка (SMTP)"))
+            ) + '</select></label><small>Только SMTP: чтение писем и сохранение копий отправленных отключены. Входящую пересылку настраивает ваш почтовый сервер.</small>',
             field("email", "Адрес почты", account.email_address, "email", 'maxlength="320" required autofocus'),
             field("username", "Логин IMAP/SMTP (если отличается от адреса)", account.username, extra='maxlength="1024"'),
             field("display_name", "Имя отправителя (необязательно)", account.display_name, extra='maxlength="256"'),
@@ -667,12 +693,12 @@ def browser_password_page(
     {account_fields}
     <p class="warning">Сохранять данные в браузере не нужно – подключение будет сохранено отдельно на этом устройстве. Если браузер предложит сохранить данные, выберите «Нет, спасибо».</p>
     <label>Пароль или пароль приложения
-    <input {'' if configure else 'autofocus'} name="password" type="password" autocomplete="off"
+    <input {'' if configure else 'autofocus'} id="password" name="password" type="password" autocomplete="off"
       autocapitalize="none" spellcheck="false" maxlength="{MAX_PASSWORD_CHARS}" required></label>
     <p id="error" class="error" hidden></p>
     <div class="actions">
       <button type="button" id="cancel">Отмена</button>
-      <button class="primary" type="submit">Продолжить</button>
+      <button class="primary" id="submit" type="submit">Продолжить</button>
     </div>
   </form>
 </main>
@@ -690,6 +716,19 @@ const expiryTimer = setTimeout(() => {{
 }}, {max(0, int(remaining_seconds * 1000))});
 const address = form.elements.namedItem("email");
 if (address) {{
+  // Disabled IMAP fields are omitted from FormData. Server validation also
+  // clears them in SMTP-only mode; DOM state is never the authority boundary.
+  const mode = form.elements.connection_mode;
+  const updateMode = () => {{
+    const smtpOnly = mode.value === "smtp_only";
+    for (const input of [form.elements.imap_host, form.elements.imap_port]) {{
+      input.disabled = smtpOnly;
+      input.required = !smtpOnly;
+      input.closest("label").hidden = smtpOnly;
+    }}
+  }};
+  mode.addEventListener("change", updateMode);
+  updateMode();
   // Defaults are convenience only: Python validates the complete submission.
   // Never overwrite an operator's custom server or an existing configuration.
   const providers = {json.dumps({key: {field: value[field] for field in ('domains', 'imap', 'smtp', 'hosts')} for key, value in EMAIL_SETUP_PROVIDERS.items()})};
@@ -1070,6 +1109,7 @@ def configure_account(name: str, fields: dict[str, str]) -> Account:
     A blank username means the email address; recognized domains have defaults.
     """
 
+    mode = connection_mode(fields.get("connection_mode", "imap_smtp"))
     limits = {"email": 320, "username": 1024, "display_name": 256,
               "imap_host": 253, "smtp_host": 253, "smtp_security": 8}
     values = {}
@@ -1083,6 +1123,11 @@ def configure_account(name: str, fields: dict[str, str]) -> Account:
     domain = values["email"].rsplit("@", 1)[-1].lower()
     provider = next((item for item in EMAIL_SETUP_PROVIDERS.values() if domain in item["domains"]), None)
     for key, protocol in (("imap_host", "imap"), ("smtp_host", "smtp")):
+        if protocol == "imap" and mode == "smtp_only":
+            # Do not infer an IMAP server from an address or retain a stale one
+            # when the operator explicitly chooses a forward-only sender.
+            values[key] = ""
+            continue
         host = values[key] or (provider[protocol] if provider else "")
         if not host or any(char.isspace() or char in "/\\@?#" for char in host):
             raise MailboxError("Укажите имена серверов IMAP и SMTP без URL и пути.")
@@ -1092,6 +1137,9 @@ def configure_account(name: str, fields: dict[str, str]) -> Account:
         raise MailboxError("Выберите TLS или STARTTLS для SMTP.")
     ports = {}
     for key, default_port in (("imap_port", 993), ("smtp_port", 465 if security == "ssl" else 587)):
+        if key == "imap_port" and mode == "smtp_only":
+            ports[key] = 993
+            continue
         value = fields.get(key, "").strip() or str(default_port)
         if not re.fullmatch(r"[0-9]{1,5}", value) or not 1 <= int(value) <= 65535:
             raise MailboxError("Порт должен быть целым числом от 1 до 65535.")
@@ -1102,7 +1150,7 @@ def configure_account(name: str, fields: dict[str, str]) -> Account:
         signature=normalize_signature(fields.get("signature", "")),
         imap_host=values["imap_host"], imap_port=ports["imap_port"],
         smtp_host=values["smtp_host"], smtp_port=ports["smtp_port"],
-        smtp_security=security, credential_store="file",
+        smtp_security=security, credential_store="file", connection_mode=mode,
     )
 
 
@@ -1123,6 +1171,7 @@ class BrowserConfigureSession(BrowserPasswordSession):
             imap_port=existing.get("imap_port", 993), smtp_host=str(existing.get("smtp_host", "")),
             smtp_port=existing.get("smtp_port", 587 if existing.get("smtp_security") == "starttls" else 465),
             smtp_security=str(existing.get("smtp_security", "ssl")), credential_store="file",
+            connection_mode=connection_mode(existing.get("connection_mode", "imap_smtp")),
         ))
 
     def render_page(self) -> bytes:
@@ -1130,7 +1179,7 @@ class BrowserConfigureSession(BrowserPasswordSession):
 
     def accept_fields(self, fields: dict[str, str]) -> None:
         allowed = {"email", "username", "display_name", "description", "signature", "imap_host", "imap_port",
-                   "smtp_host", "smtp_port", "smtp_security", "password"}
+                   "smtp_host", "smtp_port", "smtp_security", "password", "connection_mode"}
         if set(fields) - allowed or "email" not in fields or "password" not in fields:
             raise MailboxError("Проверьте поля формы.")
         candidate = configure_account(self.account.name, {
@@ -1138,6 +1187,7 @@ class BrowserConfigureSession(BrowserPasswordSession):
             # Older callers omit the additive field; the current browser sends
             # an explicit empty value when the operator intentionally clears it.
             "signature": fields.get("signature", self.account.signature),
+            "connection_mode": fields.get("connection_mode", self.account.connection_mode),
         })
         raw_password = fields["password"]
         if not raw_password or len(raw_password) > MAX_PASSWORD_CHARS:
@@ -1354,11 +1404,12 @@ def prompt_configuration_terminal(args: argparse.Namespace, name: str, existing:
             normalize_account_description(existing.get("description", "")),
         )
     description = normalize_account_description(raw_description)
-    imap_host = prompt(
+    mode = connection_mode(existing.get("connection_mode", "imap_smtp"))
+    imap_host = "" if mode == "smtp_only" else prompt(
         "IMAP host",
         str(existing.get("imap_host", GMAIL_IMAP_HOST if gmail_by_address else "")),
     )
-    imap_port = int(prompt("IMAP TLS port", str(existing.get("imap_port", 993))))
+    imap_port = 993 if mode == "smtp_only" else int(prompt("IMAP TLS port", str(existing.get("imap_port", 993))))
     smtp_host = prompt(
         "SMTP host",
         str(existing.get("smtp_host", GMAIL_SMTP_HOST if gmail_by_address else "")),
@@ -1381,6 +1432,7 @@ def prompt_configuration_terminal(args: argparse.Namespace, name: str, existing:
         # The opt-in single-line terminal flow must not erase a multiline
         # signature on reconnect. Its own signature command edits it separately.
         signature=normalize_signature(existing.get("signature", "")),
+        connection_mode=mode,
     )
     if candidate.smtp_security not in {"ssl", "starttls"}:
         raise MailboxError("SMTP security must be ssl or starttls.")
@@ -1395,14 +1447,17 @@ def command_configure(args: argparse.Namespace) -> dict[str, Any]:
         args.description = binding["comment"]
     name = normalize_account_name(args.account)
     existing = load_raw_config().get("accounts", {}).get(name, {})
+    # Form defaults are not evidence of a previously saved account: a new
+    # SMTP-only row must not trigger the legacy-config backup path below.
+    setup_existing = {**existing, "connection_mode": "smtp_only"} if args.smtp_only else existing
     requested_password_mode = "terminal" if args.terminal_prompts else args.password_input
     password_input_mode = canonical_password_input_mode(requested_password_mode)
     # Select the complete input flow before touching stdin. The old implementation
     # switched only the password prompt, leaving detached MCP at "Email address".
     if password_input_mode == "browser":
-        candidate, raw_password = prompt_configuration_browser(name, existing, args.description)
+        candidate, raw_password = prompt_configuration_browser(name, setup_existing, args.description)
     else:
-        candidate, raw_password = prompt_configuration_terminal(args, name, existing)
+        candidate, raw_password = prompt_configuration_terminal(args, name, setup_existing)
     if binding:
         candidate = replace(candidate, description=binding["comment"])
     password = normalize_password_for_account(candidate, raw_password)
@@ -1439,6 +1494,7 @@ def command_configure(args: argparse.Namespace) -> dict[str, Any]:
         "smtp_port": candidate.smtp_port,
         "smtp_security": candidate.smtp_security,
         "credential_store": credential_store,
+        "connection_mode": candidate.connection_mode,
     }
     write_raw_config(data)
     return {
@@ -1447,6 +1503,7 @@ def command_configure(args: argparse.Namespace) -> dict[str, Any]:
         "credentialStore": credential_store,
         "configPath": str(CONFIG_PATH),
         "passwordInput": password_input_mode,
+        "connectionMode": candidate.connection_mode,
         **({"previousConfigPath": str(backup_path)} if backup_path else {}),
         **({"appPasswordUrl": GOOGLE_APP_PASSWORDS_URL} if is_gmail_account(candidate.email_address) else {}),
     }
@@ -1519,6 +1576,7 @@ def attachment_rows(message: Message) -> list[dict[str, Any]]:
 
 
 def imap_connection(account: Account) -> imaplib.IMAP4_SSL:
+    require_imap(account)
     password = load_password(account)
     try:
         client = imaplib.IMAP4_SSL(
@@ -1827,6 +1885,7 @@ def command_accounts(_args: argparse.Namespace) -> dict[str, Any]:
                 "imapHost": item.get("imap_host", ""),
                 "smtpHost": item.get("smtp_host", ""),
                 "credentialStore": item.get("credential_store", "file"),
+                "connectionMode": connection_mode(item.get("connection_mode", "imap_smtp")),
             }
             for name, item in sorted(data.items())
         ],
@@ -1835,13 +1894,17 @@ def command_accounts(_args: argparse.Namespace) -> dict[str, Any]:
 
 def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
     account = load_account(args.account)
-    with imap_connection(account) as imap_client:
-        status, _ = imap_client.noop()
-        imap_ok = status == "OK"
+    imap_ok = None
+    if account.connection_mode == "imap_smtp":
+        with imap_connection(account) as imap_client:
+            status, _ = imap_client.noop()
+            imap_ok = status == "OK"
     with smtp_connection(account) as smtp_client:
         smtp_code, _ = smtp_client.noop()
         smtp_ok = 200 <= smtp_code < 400
     return {"account": account.name, "imap": imap_ok, "smtp": smtp_ok,
+            "connectionMode": account.connection_mode,
+            "imapStatus": "disabled" if imap_ok is None else "ok" if imap_ok else "failed",
             "smtpChecks": ["connection", "authentication", "noop"], "messageAcceptanceChecked": False}
 
 
@@ -2171,6 +2234,11 @@ def save_sent_copy(account: Account, wire_message: bytes, message_id: str, sent_
     if subsequent search or LOGOUT fails; verification is reported separately.
     """
 
+    if account.connection_mode == "smtp_only":
+        # An intentional capability choice is not an APPEND failure. Do not
+        # open IMAP or save a local .eml as an implicit alternative archive.
+        return {"saved": False, "verified": False, "status": "disabled",
+                "reasonCode": "smtp_only_account", "folder": None, "uid": None, "appendAttempted": False}
     result: dict[str, Any] = {
         "saved": False, "verified": False, "status": "not_saved",
         "folder": None, "uid": None, "appendAttempted": False,
@@ -2642,6 +2710,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     configure_parser = subparsers.add_parser("configure", help="Configure one account interactively")
     configure_parser.add_argument("--account", required=True)
+    configure_parser.add_argument("--smtp-only", action="store_true",
+                                  help="Configure outgoing SMTP without IMAP or saved Sent copies")
     configure_parser.add_argument(
         "--description",
         help=f"Optional local mailbox purpose (up to {MAX_ACCOUNT_DESCRIPTION_CHARS} characters; no secrets); otherwise prompted.",
@@ -2814,6 +2884,11 @@ def main(*, _owned: bool = False) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        # Reject unsupported read/reply routes before starting a native worker
+        # or unlocking its credential store. The low-level guard also protects
+        # internal callers that do not enter through this CLI.
+        if args.command in IMAP_COMMANDS:
+            require_imap(load_account(args.account))
         if not _owned and args.command not in {"accounts", "description", "signature", "policy"}:
             terminal = args.command == "configure" and (
                 args.terminal_prompts or args.password_input == "terminal")
