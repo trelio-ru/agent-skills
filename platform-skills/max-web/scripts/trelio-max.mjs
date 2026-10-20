@@ -47,7 +47,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "46";
+const ADAPTER_VERSION = "47";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 // A cold worker must launch Chrome, hydrate home and then resolve the exact
@@ -108,6 +108,7 @@ const ASSIST_MESSAGE_TARGET_COMMANDS = new Set([
   "delete", "download", "edit", "forward", "react", "reply",
 ]);
 const SUPPORTED_COMMANDS = new Set([
+  "monitor",
   "assist-click",
   "assist-contextmenu",
   "assist-fill",
@@ -296,6 +297,7 @@ const parseArguments = (argv, environment = process.env) => {
     query: "",
     chat: "",
     contextRef: "",
+    cursor: "",
     contact: "",
     title: "",
     description: null,
@@ -352,6 +354,7 @@ const parseArguments = (argv, environment = process.env) => {
     else if (argument === "--timeout-ms") options.timeoutMs = Number(value());
     else if (argument === "--query") options.query = value();
     else if (argument === "--chat") options.chat = value();
+    else if (argument === "--cursor") options.cursor = value();
     else if (argument === "--context-ref") options.contextRef = normalizeChatContextRef(value());
     else if (argument === "--contact") options.contact = value();
     else if (argument === "--title") options.title = value();
@@ -494,6 +497,7 @@ Usage:
   trelio-max.mjs contacts --query "Имя, @username или +79990000000"
   trelio-max.mjs profile --chat "Точное название или URL" [--context-ref TASK_URL]
   trelio-max.mjs read --chat "Название или URL" --limit 20 --pages 2 [--context-ref TASK_URL]
+  trelio-max.mjs monitor --chat "https://web.max.ru/123" [--cursor POSITION] [--limit 20] [--pages 2]
   trelio-max.mjs unread --limit 10 --pages 1
   trelio-max.mjs watch --limit 10 --iterations 4 --interval-ms 15000
   trelio-max.mjs download --chat "Название" --message-id ID --attachment-index 1 --output PATH
@@ -1270,6 +1274,21 @@ const normalizeUniqueMembers = (members) => {
 };
 
 const validateCommandOptions = (options) => {
+  if (options.cursor && options.command !== "monitor") {
+    throw new MaxRuntimeError("MAX_MONITOR_INVALID_CURSOR", "--cursor belongs only to the passive monitor command.");
+  }
+  if (options.command === "monitor") {
+    if (!options.chat || normalizeChatUrl(options.chat) !== options.chat
+      || options.confirm || options.dryRun || options.query || options.targetText || options.targetAuthor || options.messageId
+      || options.contact || options.title || options.members.length || options.reaction || options.toChat
+      || options.approvalHash || options.fallbackFor || options.assistSession || options.assistSnapshot
+      || options.assistRef || options.assistText || options.assistKey || options.assistDeltaY
+      || options.assistX !== null || options.assistY !== null || options.holdMsExplicit
+      || options.iterations !== 1 || options.intervalMs !== 15_000) {
+      throw new MaxRuntimeError("MAX_MONITOR_SCOPE_REQUIRED", "Monitor needs one exact canonical chat URL and no mutation/discovery arguments.");
+    }
+    if (options.cursor) parseMaxMonitorCursor(options.cursor);
+  }
   if (options.contextRef && !["dialogs", "read", "profile"].includes(options.command)) {
     throw new Error(`${options.command} does not accept --context-ref. Task bindings are read-only and never select a mutation recipient.`);
   }
@@ -4695,6 +4714,119 @@ const readChatMessages = async (page, options) => {
   };
 };
 
+// A bounded DOM timeline is not a native server update sequence. Require the
+// previous real provider ID to overlap and refuse a gap instead of silently
+// treating the recent window/unread badge as a durable delivery position.
+const MAX_MONITOR_WINDOW = 500;
+const monitorRef = value => typeof value === "string" && /^[^\s\x00-\x1f\x7f]{1,256}$/u.test(value);
+const monitorDigest = value => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+const parseMaxMonitorCursor = value => {
+  try {
+    if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,2048}$/u.test(value)) throw new Error();
+    const cursor = JSON.parse(Buffer.from(value,"base64url").toString("utf8"));
+    if (!cursor || Object.getPrototypeOf(cursor) !== Object.prototype
+      || Object.keys(cursor).sort().join(",") !== "anchorId,anchorRevision,scope,v" || cursor.v !== 1
+      || !monitorDigest(cursor.scope) || cursor.anchorId !== null && !monitorRef(cursor.anchorId)
+      || (cursor.anchorId === null ? cursor.anchorRevision !== null : !monitorDigest(cursor.anchorRevision))) throw new Error();
+    return cursor;
+  } catch {
+    throw new MaxRuntimeError("MAX_MONITOR_INVALID_CURSOR", "MAX monitor checkpoint is invalid; preserve the previous position.");
+  }
+};
+
+const projectMaxMonitorSnapshot = (snapshot, options) => {
+  const reference = snapshot?.chatReference;
+  let expectedReference = null;
+  try {
+    if (reference && typeof reference.url === "string" && normalizeChatUrl(reference.url) === reference.url) {
+      expectedReference = chatReferenceValue({ url: reference.url, titles: [], contextRefs: [] });
+    }
+  } catch { /* A malformed provider route is a scope failure, never a new source. */ }
+  if (!hasChatReferenceIdentity(options) || !expectedReference
+    || reference.url !== options.chat || !monitorRef(reference.stableId)
+    || reference.stableId !== expectedReference.stableId
+    || options.account && (!UUID_PATTERN.test(options.account.id || "")
+      || !monitorDigest(options.account.companyBinding))) {
+    throw new MaxRuntimeError("MAX_MONITOR_SCOPE_CHANGED", "The actual MAX chat does not match the registered source.");
+  }
+  const scope = sha256(JSON.stringify(["trelio-max-monitor/v1",options.companyId,options.memberId,
+    options.connectionId,options.account?.id ?? null,options.account?.companyBinding ?? null,reference.url,reference.stableId]));
+  const previous = options.cursor ? parseMaxMonitorCursor(options.cursor) : null;
+  if (previous && previous.scope !== scope) {
+    throw new MaxRuntimeError("MAX_MONITOR_SCOPE_CHANGED", "The MAX account, company binding or source changed.");
+  }
+  if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100
+    || !Array.isArray(snapshot.messages) || snapshot.messages.length > MAX_MONITOR_WINDOW) {
+    throw new MaxRuntimeError("MAX_MONITOR_GAP", "MAX monitor history exceeds its bounded window; review backfill.");
+  }
+  const seen = new Set();
+  const messages = snapshot.messages.map(row => {
+    if (!row || !monitorRef(row.providerMessageId) || seen.has(row.providerMessageId) || typeof row.text !== "string"
+      || row.text.length > 65536 || row.replyText != null
+        && (typeof row.replyText !== "string" || row.replyText.length > 65536)
+      || !Array.isArray(row.attachments) || row.attachments.length > 20
+      || row.attachments.some(item => !item || typeof item !== "object" || Array.isArray(item)
+        || ["kind", "name"].some(key => item[key] != null
+          && (typeof item[key] !== "string" || item[key].length > 4096)))) {
+      throw new MaxRuntimeError("MAX_MONITOR_REFERENCE_UNAVAILABLE", "MAX did not return unique stable message references; text hashes are not message IDs.");
+    }
+    seen.add(row.providerMessageId);
+    // DOM authors/times and signed attachment hrefs are not stable identity.
+    // Bodies stay in this one read, never in the returned cursor/event queue.
+    const digest = sha256(JSON.stringify([row.providerMessageId,row.text,row.replyText ?? null,
+      row.attachments.map(item => [item.kind ?? null,item.name ?? null])]));
+    return {id:`message:${row.providerMessageId}`,revision:digest,kind:"new",chatId:reference.stableId,
+      messageId:row.providerMessageId,senderUserId:null,senderNamespace:null};
+  });
+  if (!messages.length && !["favorites-empty","direct-chat-empty"].includes(snapshot.emptyState)) {
+    throw new MaxRuntimeError("MAX_MONITOR_GAP", "MAX did not prove an empty timeline.");
+  }
+  let selected = [], hasMore = false, anchor;
+  if (!previous) {
+    anchor = messages.at(-1) ?? null;
+  } else if (previous.anchorId === null) {
+    // Without a previous real message anchor the bounded UI cannot establish
+    // whether an initially empty chat has more older rows offscreen. Require
+    // backfill review once; never mark unseen/unknown messages read or reset.
+    if (messages.length) throw new MaxRuntimeError("MAX_MONITOR_GAP", "The previously empty MAX stream needs initial-history review.");
+    anchor = null;
+  } else {
+    const index = messages.findIndex(row => row.messageId === previous.anchorId);
+    if (index < 0) throw new MaxRuntimeError("MAX_MONITOR_GAP", "The previous MAX message anchor is outside the current window; review backfill.");
+    const changedAnchor = messages[index].revision !== previous.anchorRevision;
+    const pending = [...(changedAnchor ? [{...messages[index],kind:"edit"}] : []),...messages.slice(index + 1)];
+    selected = pending.slice(0,options.limit);
+    hasMore = pending.length > selected.length;
+    anchor = selected.at(-1) ?? messages[index];
+  }
+  const nextCursor = Buffer.from(JSON.stringify({v:1,scope,anchorId:anchor?.messageId ?? null,
+    anchorRevision:anchor?.revision ?? null})).toString("base64url");
+  return {schemaVersion:1,baselineOnly:previous===null,events:selected,nextCursor,hasMore,
+    coverage:{historicalBackfill:false,earlierEditsIncluded:false,otherChatsIncluded:false,ownerIdentityAvailable:false},
+    readState:{readReceiptsSent:false}};
+};
+
+const readMaxMonitor = async (page, options) => {
+  try {
+    return projectMaxMonitorSnapshot(await readChatMessages(page,{...options,limit:MAX_MONITOR_WINDOW}),options);
+  } catch (error) {
+    if (error instanceof MaxRuntimeError && /^MAX_MONITOR_/u.test(error.code)) throw error;
+    // Discovery failures can contain names/candidates. Preserve only the safe
+    // condition, not their prose, DOM, cursor or a second provider/login path.
+    const normalized = normalizeMaxRuntimeError(error);
+    const code = ["MAX_LOGIN_REQUIRED","MAX_UI_UNSUPPORTED","MAX_SERVICE_HTTP_ERROR"].includes(normalized?.code)
+      ? normalized.code : "MAX_MONITOR_UNAVAILABLE";
+    // Keep the common HTTP observer's two safe fields. Never forward the raw
+    // error details: discovery can include a private URL, names or DOM text.
+    const details = code === "MAX_SERVICE_HTTP_ERROR"
+      && Number.isInteger(normalized.details?.httpStatus)
+      && normalized.details.httpStatus >= 400 && normalized.details.httpStatus <= 599
+      && normalized.details.origin === MAX_WEB_ORIGIN
+      ? { httpStatus: normalized.details.httpStatus, origin: MAX_WEB_ORIGIN } : undefined;
+    throw new MaxRuntimeError(code,"MAX passive monitor is unavailable; preserve the registered source and checkpoint.",details);
+  }
+};
+
 const readUnreadDialogs = async (page, options) => {
   await openHome(page, options);
   const snapshot = await collectHomeDialogs(page, { ...options, limit: 100 });
@@ -6000,6 +6132,9 @@ const executeBrowserCommand = async (page, options, readGuard) => {
       securityBoundary: "chat-only",
     };
   }
+  if (options.command === "monitor") {
+    return {...await readMaxMonitor(page,options),passiveReadProtection:passiveReadSummary(readGuard),securityBoundary:"chat-only"};
+  }
   if (options.command === "unread") {
     return {
       ...(await readUnreadDialogs(page, options)),
@@ -6183,6 +6318,9 @@ export {
   validateCommandOptions,
   withBrowser,
   readUnreadDialogs,
+  projectMaxMonitorSnapshot,
+  parseMaxMonitorCursor,
+  readMaxMonitor,
   runBrowserCommand,
   assertMutationAllowed,
   assertSendAllowed,
