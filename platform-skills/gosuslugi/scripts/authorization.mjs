@@ -189,13 +189,13 @@ export function createAuthorizationBroker({
       }
       // Request, response and document commit are separate Playwright events.
       // Even a verified callback response can arrive while page.url() still
-      // points to ESIA. Fast SSO needs no input: wait for both its HTTP proof
-      // and the actual document return before considering credential access.
+      // points to ESIA. Callback observation below uses a separate return-only
+      // claim; it must never be sent through the credential readiness guard.
       // A direct popup may also start at about:blank while its first ESIA
       // response is loading. The already-bound request must reach that auth
       // document before claim; waiting here still precedes the vault/key read.
       const returnDeadline = Date.now() + 5000;
-      while ((portal.serviceFlow.callbackSeen || !authOrigin(portal.page.url())) &&
+      while (!portal.serviceFlow.callbackSeen && !authOrigin(portal.page.url()) &&
         !hasReturned() &&
         !portal.serviceFlow.error && Date.now() < returnDeadline) {
         await permit(); await new Promise(resolve => setTimeout(resolve, 50));
@@ -208,11 +208,21 @@ export function createAuthorizationBroker({
         authorization = null;
         return { claimed: false, returned: true };
       }
-      portal.serviceFlow.allowSecret();
-      requireThat(authOrigin(portal.page.url()), 'authorization_not_ready');
+      // Fast SSO can revoke secret access before the separate authorizer claims
+      // the transaction. Its callback response/document (or official role
+      // chooser) may still be pending. Claim only the return observation in
+      // that case: allowSecret must stay closed and the worker must not unlock
+      // a vault merely to wait for an already-started callback. HTTP + document
+      // proof is still required by auth-state/complete; no success is inferred.
+      requireThat(!portal.serviceFlow.error, portal.serviceFlow.error || 'authorization_not_ready');
+      const returning = portal.serviceFlow.callbackSeen === true;
+      if (!returning) {
+        portal.serviceFlow.allowSecret();
+        requireThat(authOrigin(portal.page.url()), 'authorization_not_ready');
+      }
       claim = { lease: packet.authorizationLease, guardPid: packet.guardPid };
       portal.authLocked = true;
-      return { claimed: true, expiresAt: config.expiresAt };
+      return { claimed: true, expiresAt: config.expiresAt, ...(returning ? { returning: true } : {}) };
     }
     requireThat(claim && packet.authorizationLease === claim.lease, 'authorization_claim_required');
     try {

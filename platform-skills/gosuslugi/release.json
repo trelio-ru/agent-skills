@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.5",
-    "summary": "Короткая основная инструкция и проверяемые полные сценарии ЕСИА, Госключа и ПОС без потери правил безопасности."
+    "version": "4.5.6",
+    "summary": "Исправлен отказ при быстром возврате ЕСИА перед загрузкой формы: ожидание callback без повторного доступа к паролю."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.5",
+    "version": "3.5.6",
     "minimumHostVersion": "3.7.1",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",

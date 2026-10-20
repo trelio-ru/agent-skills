@@ -5,15 +5,18 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { parseArguments as gosArguments, run as gosRun } from '../scripts/trelio-gosuslugi.mjs';
 import { atomicWrite, nativeHelper, ensurePrivateDirectory } from '../scripts/native.mjs';
 import { browserSessionDirectory, readAuthorization, requestLocal } from '../scripts/transport.mjs';
 import { createAuthorizationBroker } from '../scripts/authorization.mjs';
-import { LEASE_MS, RUNTIME_VERSION, RuntimeError } from '../scripts/core.mjs';
+import { childEnvironment, LEASE_MS, RUNTIME_VERSION, RuntimeError } from '../scripts/core.mjs';
 import { observeEsiaAuthorization, safeAuthorizationFailure } from '../scripts/playwright-client.mjs';
 import { EsiaAuthorizer } from '../scripts/esia-authorizer.mjs';
 import { authRpc } from '../scripts/auth-rpc.mjs';
 import { waitForSessionChange, withSessionContinuation } from '../scripts/session-wait.mjs';
+import { ServiceFlow, serviceForOrigin } from '../scripts/esia-flow.mjs';
 
 const supported = ['darwin', 'win32'].includes(process.platform);
 const identity = {
@@ -335,7 +338,8 @@ test(
 
     // A fresh synthetic SSO transaction has already received its callback HTTP
     // response, but Playwright has not committed the caller document yet. The
-    // broker must wait without invoking allowSecret or prompting for a key.
+    // broker must grant only return observation, never invoke allowSecret or
+    // prompt for a key while the separate document commit is still pending.
     const ssoSession = crypto.randomUUID();
     const ssoDirectory = browserSessionDirectory(root, identity, ssoSession);
     await ensurePrivateDirectory(ssoDirectory, helper);
@@ -346,12 +350,14 @@ test(
       onCancel: async () => {}, show: async () => {},
     });
     await sso.refresh();
-    const commit = setTimeout(() => { at = origin + '/cabinet'; }, 100);
-    try {
-      assert.deepEqual(await sso.handle({ ...claim, sessionId: ssoSession,
-        requestId: sso.authorization.requestId }), { claimed: false, returned: true });
-      assert.equal(sso.authorization, null);
-    } finally { clearTimeout(commit); }
+    const ssoPacket = { ...packet, sessionId: ssoSession, requestId: sso.authorization.requestId };
+    assert.deepEqual(await sso.handle({ ...claim, ...ssoPacket }),
+      { claimed: true, returning: true, expiresAt: config.expiresAt });
+    assert.equal((await sso.handle({ ...ssoPacket, command: 'auth-state' })).returned, false);
+    at = origin + '/cabinet';
+    assert.equal((await sso.handle({ ...ssoPacket, command: 'auth-state' })).returned, true);
+    await sso.handle({ ...ssoPacket, command: 'complete' });
+    assert.equal(sso.authorization, null);
     await fs.rm(root, { recursive: true, force: true });
   },
 );
@@ -364,6 +370,131 @@ test('local protocol rejects endpoints without a private bounded capability', ()
   ])
     assert.throws(() => requestLocal(value, {}), /local_control_invalid/);
 });
+
+test('claim after an SSO callback waits without credentials until its exact return is verified',
+  { skip: !supported }, async () => {
+    const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'late-callback-claim-'));
+    try {
+      const helper = await nativeHelper(root);
+      for (const stage of ['response_pending', 'document_pending', 'role_pending']) {
+        const session = crypto.randomUUID(), leaseId = crypto.randomUUID();
+        const directory = browserSessionDirectory(root, identity, session);
+        await ensurePrivateDirectory(directory, helper);
+        const now = Date.now(), service = serviceForOrigin(origin), flow = new ServiceFlow(service);
+        flow.observeNavigation('https://esia.gosuslugi.ru/aas/oauth2/ac?' + new URLSearchParams({
+          redirect_uri: origin + '/callback', state: 'synthetic-state', client_id: 'SYNTHETIC', response_type: 'code',
+        }));
+        let returned = false;
+        const portal = { service, serviceFlow: flow, authLocked: false,
+          page: { url: () => stage === 'role_pending' ? 'https://roles.gosuslugi.ru/roles' : origin + '/callback' } };
+        const broker = createAuthorizationBroker({
+          config: { directory, helper, identity, leaseId: session, startedAt: now, expiresAt: now + LEASE_MS },
+          portal, permit: async () => {}, port: 12345, onCancel: async () => {}, show: async () => {},
+          hasReturned: () => returned && flow.hasAuthenticatedReturn,
+        });
+        await broker.refresh();
+        const packet = { sessionId: session, requestId: broker.authorization.requestId, authorizationLease: leaseId };
+        const callback = origin + '/callback?state=synthetic-state&code=synthetic-code';
+        flow.observeNavigation(callback);
+        if (stage !== 'response_pending') flow.observeResponse(callback, 200);
+        const authorizer = new EsiaAuthorizer({ identity, leaseId, guardPid: process.pid, authorization: { origin } },
+          { permit: async () => {}, onPhase: async () => {} });
+        authorizer.call = (command, extra = {}) => broker.handle({ ...packet, command, ...extra });
+        assert.equal((await authorizer.claim()).returning, true, stage);
+        assert.equal(authorizer.returnOnly, true);
+        assert.equal(authorizer.completed, false, 'claim is not proof of a committed callback');
+        assert.throws(() => flow.allowSecret(), /service_authorization_request_required/);
+        await assert.rejects(authorizer.call('protect-input', { text: 'synthetic-secret' }),
+          /service_authorization_request_required/);
+        await assert.rejects(authorizer.call('complete'), /authorization_return_required/);
+        const state = await authorizer.call('auth-state');
+        assert.equal(state.atAuth, false); assert.equal(state.returning, true); assert.equal(state.returned, false);
+        assert.equal(state.personalRolePending, stage === 'role_pending');
+        // Keep a real manual chooser resumable without a decrypted record.
+        if (stage === 'role_pending') {
+          assert.equal(await authorizer.authenticate(null, 'manual'), false);
+          assert.equal(authorizer.manualReason, 'role_choice_required');
+        }
+        flow.observeResponse(callback, 200); returned = true;
+        assert.equal(await authorizer.authenticate(null), true);
+        assert.equal(authorizer.completed, true);
+        assert.equal(broker.authorization, null);
+        await assert.rejects(fs.stat(path.join(directory, 'authorization.json')), /ENOENT/);
+        await assert.rejects(authorizer.call('auth-state'), /authorization_request_mismatch/);
+      }
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+
+test('a return-only authorizer never falls back to observing or entering credentials', async () => {
+  const authorizer = new EsiaAuthorizer({}, { permit: async () => {}, onPhase: async () => {} });
+  authorizer.call = async command => {
+    assert.equal(command, 'auth-state'); return { atAuth: true, returning: false, returned: false };
+  };
+  authorizer.returnOnly = true;
+  await assert.rejects(authorizer.authenticate(null), /authorization_return_required/);
+});
+
+test('the native-supervised worker completes a pending callback without any credential vault or key helper',
+  { skip: !supported, timeout: 30000 }, async () => {
+    const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'return-only-worker-'));
+    let child, server;
+    try {
+      const helper = await nativeHelper(root), session = crypto.randomUUID(), now = Date.now();
+      const directory = path.join(root, 'worker');
+      const brokerDirectory = browserSessionDirectory(root, identity, session);
+      await ensurePrivateDirectory(directory, helper); await ensurePrivateDirectory(brokerDirectory, helper);
+      const flow = { binding: {}, callbackSeen: true, callbackAccepted: true, hasAuthenticatedReturn: true,
+        error: null, allowSecret() { throw new Error('secret access must stay revoked'); } };
+      let returned = false, claims = 0, observations = 0;
+      const broker = createAuthorizationBroker({
+        config: { directory: brokerDirectory, helper, identity, leaseId: session,
+          startedAt: now, expiresAt: now + LEASE_MS },
+        portal: { service: { origin }, serviceFlow: flow, page: { url: () => origin + '/callback' } },
+        permit: async () => {}, port: 12345, onCancel: async () => {}, show: async () => {},
+        hasReturned: () => returned,
+      });
+      await broker.refresh();
+      server = http.createServer(async (req, res) => {
+        try {
+          assert.equal(req.headers.authorization, `Bearer ${broker.token}`);
+          let body = ''; for await (const chunk of req) body += chunk;
+          const packet = JSON.parse(body);
+          const result = await broker.handle(packet);
+          if (packet.command === 'claim') { claims++; assert.equal(result.returning, true); }
+          if (packet.command === 'auth-state') {
+            // The first observation explicitly returns pending; the next one
+            // supplies the synthetic document proof. No timing-based race can
+            // make this fixture exercise the already-completed shortcut.
+            observations++; returned = true;
+          }
+          res.end(JSON.stringify(result));
+        } catch (error) { res.writeHead(400); res.end(JSON.stringify({ error: error.code || 'fixture_failed' })); }
+      });
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+      const authorization = { ...broker.authorization, port: server.address().port };
+      child = spawn(helper, ['guard', process.execPath,
+        fileURLToPath(new URL('../scripts/worker.mjs', import.meta.url)), '20000'],
+      { env: childEnvironment(), stdio: ['pipe', 'ignore', 'ignore'], detached: true, windowsHide: true });
+      const exited = new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject); });
+      child.stdin.end(JSON.stringify({ identity, root, directory, helper,
+        // Intentionally impossible: a regression into vault unlock must fail,
+        // never show a real OS prompt or access the user's credential storage.
+        keyHelper: path.join(root, 'forbidden-key-helper'), guardPid: child.pid,
+        leaseId: crypto.randomUUID(), startedAt: now, expiresAt: now + LEASE_MS,
+        mode: 'authorize', authorization }) + '\n');
+      await exited;
+      const receipt = JSON.parse(await fs.readFile(path.join(directory, 'status.json'), 'utf8'));
+      assert.equal(receipt.phase, 'authorized', JSON.stringify(receipt));
+      assert.equal(receipt.authorization.status, 'callback_verified');
+      assert.equal(claims, 1); assert.ok(observations >= 2);
+      await assert.rejects(fs.stat(path.join(directory, 'vault.json')), /ENOENT/);
+      assert.equal(broker.authorization, null);
+    } finally {
+      if (child?.exitCode === null) child.kill();
+      server?.close(); server?.closeAllConnections();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 
 test('an accepted callback permits one bounded personal-role click but no earlier or ambiguous choice',
   { skip: !supported }, async () => {

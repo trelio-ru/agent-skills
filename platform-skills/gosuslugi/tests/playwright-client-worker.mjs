@@ -322,6 +322,55 @@ try {
     assert.match(await page.locator('h1').innerText(), /Следующий шаг/);
     await context.close();
   }
+  await markStage('claim_during_sso_callback');
+  {
+    const context = await owned.browser.newContext(), origin = 'https://www.gosuslugi.ru';
+    const callback = origin + '/callback?state=synthetic-state&code=synthetic-code';
+    const auth = new URL('https://esia.gosuslugi.ru/aas/oauth2/ac');
+    auth.search = new URLSearchParams({ redirect_uri: origin + '/callback', state: 'synthetic-state',
+      client_id: 'SYNTHETIC', response_type: 'code' });
+    let callbackStarted, releaseCallback;
+    const started = new Promise(resolve => { callbackStarted = resolve; });
+    const released = new Promise(resolve => { releaseCallback = resolve; });
+    await context.route('**/*', async route => {
+      const url = new URL(route.request().url());
+      assert.equal(route.request().method(), 'GET', 'SSO return must not submit any credentials');
+      if (url.origin === origin && url.pathname === '/callback') {
+        callbackStarted(); await released;
+        return route.fulfill({ contentType: 'text/html', body: '<h1>Кабинет</h1>' });
+      }
+      if (url.origin === 'https://esia.gosuslugi.ru') return route.fulfill({ contentType: 'text/html',
+        body: `<script>location.replace(${JSON.stringify(callback)})</script>` });
+      if (url.origin === origin) return route.fulfill({ contentType: 'text/html',
+        body: `<a href="${auth.href.replaceAll('&', '&amp;')}">Вход через ЕСИА</a>` });
+      return route.abort();
+    });
+    try {
+      const page = await context.newPage(); await page.goto(origin);
+      current = await createEsiaAuthorization(page, { ...identity, configHome: config.root, origin, confirm: true });
+      const observer = observeEsiaAuthorization(current);
+      // Do not await this click: its navigation intentionally waits for the
+      // callback response. Claim through the real native-permit protocol while
+      // callbackSeen has revoked inputs but HTTP/document proof is still absent.
+      const clicked = page.getByRole('link', { name: 'Вход через ЕСИА' }).click();
+      clicked.catch(() => {}); // A failed claim still closes the pending navigation in finally.
+      await started;
+      const info = await current.request;
+      const authorization = await readAuthorization(config.root, identity, info.sessionId, info.requestId, origin, helper);
+      const authorizer = new EsiaAuthorizer({ identity, leaseId, guardPid: process.pid, authorization, authorizerControl },
+        { permit, onPhase: async () => {} });
+      assert.equal((await authorizer.claim()).returning, true);
+      assert.equal(authorizer.completed, false);
+      assert.equal(observer.snapshot().phase, 'esia_authorization_required');
+      releaseCallback(); await clicked;
+      assert.equal(await authorizer.authenticate(null), true);
+      const result = await current.authenticated;
+      assert.equal(result.page, page); assert.equal(result.context, context);
+      assert.deepEqual(result.serviceResponse, { httpStatus: 200, httpOrigin: origin });
+      await authorizer.close(); await current.close(); current = null;
+      assert.equal(page.isClosed(), false);
+    } finally { releaseCallback(); await context.close(); }
+  }
   // Exercise actual Playwright main-document HTTP status propagation, including
   // failure before any OAuth binding. Only the ESIA response is a provider
   // failure: the entry error stays caller-owned and the verified callback error

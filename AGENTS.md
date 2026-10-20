@@ -206,6 +206,10 @@ Advisory wait без запроса требует осмотра промежу
 разрешённая процедура может подключить новый helper к той же подготовленной Page
 после verified callback и оценки прежнего бизнес-результата. Pending/failure либо
 неизвестная подача не превращаются в replay; файлы/consent не пересоздаются.
+Поздний claim после наблюдённого callback Госуслуг получает только return-only
+доступ: ожидание verified HTTP/document и разрешённая роль без vault/key unlock.
+Callback не открывает credentials повторно; worker без record сохраняет resume
+и исходную lease. Проверяй настоящий worker без vault и задержанный browser return.
 Для protected input обязателен [контракт продолжения](docs/agent-skill-connections.md#human-input-completion):
 безопасный result/continuation без обязательного chat acknowledgement, с исходной
 lease и отдельной mutation authority; тестируется submit и cleanup.

@@ -30,6 +30,7 @@ export class EsiaAuthorizer {
     this.personalRoleDeadline = null;
     this.roleChoiceRequired = false;
     this.completed = false;
+    this.returnOnly = false;
     this.qrSent = false;
     this.manualReason = null;
     this.manualPostCount = null;
@@ -54,6 +55,9 @@ export class EsiaAuthorizer {
       guardPid: this.config.guardPid,
       nativeControl: this.config.authorizerControl,
     });
+    // This is a one-way mode for this exact callback, never an invitation to
+    // reopen credentials if the caller navigates back to an authentication UI.
+    this.returnOnly = result.returning === true;
     if (result.returned === true) {
       this.completed = true;
       await this.onPhase('authorized');
@@ -189,6 +193,7 @@ export class EsiaAuthorizer {
         await new Promise((resolve) => setTimeout(resolve, 500));
         continue;
       }
+      requireThat(!this.returnOnly, 'authorization_return_required');
       try {
         let current;
         try {
