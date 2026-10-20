@@ -354,9 +354,17 @@ try {
       // callbackSeen has revoked inputs but HTTP/document proof is still absent.
       const clicked = page.getByRole('link', { name: 'Вход через ЕСИА' }).click();
       clicked.catch(() => {}); // A failed claim still closes the pending navigation in finally.
-      // A missing/misdecoded fixture link must fail with Playwright's bounded
-      // click timeout instead of waiting for the native guardian's outer cap.
-      await Promise.race([started, clicked.then(() => { throw new Error('callback_request_not_observed'); })]);
+      // A click can settle at the intermediate ESIA document before its SSO
+      // redirect starts. Only the callback event resolves this wait; a failed
+      // click or bounded deadline rejects it, without relying on task ordering
+      // or waiting for the native guardian's outer cap on a broken fixture.
+      let callbackTimer;
+      try {
+        await Promise.race([started, new Promise((_resolve, reject) => {
+          callbackTimer = setTimeout(() => reject(new Error('callback_request_not_observed')), 15000);
+          clicked.catch(reject);
+        })]);
+      } finally { clearTimeout(callbackTimer); }
       const info = await current.request;
       const authorization = await readAuthorization(config.root, identity, info.sessionId, info.requestId, origin, helper);
       const authorizer = new EsiaAuthorizer({ identity, leaseId, guardPid: process.pid, authorization, authorizerControl },
