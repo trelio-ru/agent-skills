@@ -14,7 +14,9 @@ lease; новый tool call её не продлевает. Фоновые ст�
 
 Host запускает обычный managed Chromium без remote-debugging pipe/port,
 `--enable-automation` и fingerprint spoof. Локальный extension использует
-фиксированные Page/Input команды внутреннего debugger API. Текст считывает фиксированный isolated-world adapter без произвольного script
+фиксированные Page/Input команды и response-only Fetch guard внутреннего
+debugger API. Guard разрешает HTTP-редирект по status и требует HTML у конечного
+ответа; файлы/вложения запрещены до body. Headers и body не выдаются модели. Текст считывает фиксированный isolated-world adapter без произвольного script
 или scripting permission. Только закрытые bounded results переходят к модели. Browser binary обновляется закреплённым
 host release, без отдельного обслуживания администратора компании.
 

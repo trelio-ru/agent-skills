@@ -2,8 +2,9 @@
 
 Runtime использует общий host visual-browser API и поддерживает macOS, Windows
 и desktop Linux с доступным системным хранилищем и графической сессией.
-Требуется host >=3.10.0: bounded text projection, общий pacing controller и
-лимит вкладок. Minimum в подписанном release запускает штатное обновление bridge
+Требуется host >=3.10.1: корректная обработка HTTP-редиректов без Content-Type
+с запретом конечных файлов, bounded text projection, pacing и лимит вкладок.
+Minimum в подписанном release запускает штатное обновление bridge
 до browser IO. Сохранённая авторизация переиспользуется; новый вход не нужен.
 Если активен старый image worker, `observation_mode_mismatch` требует обычного
 `close`, затем нового `navigate`, без disconnect или сброса snapshot.

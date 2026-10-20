@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "avito",
-    "version": "0.2.0",
-    "summary": "Текст страницы и координаты элементов по умолчанию, PNG по запросу; задержки поисков 2–15 секунд и максимум пять вкладок за сессию"
+    "version": "0.2.1",
+    "summary": "Исправлено открытие коротких ссылок объявлений: безопасные HTTP-редиректы без Content-Type проходят без сброса входа"
   },
   "connection": {
     "schemaVersion": 1,
@@ -15,8 +15,8 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.2.0",
-    "minimumHostVersion": "3.10.0",
+    "version": "0.2.1",
+    "minimumHostVersion": "3.10.1",
     "entrypoint": {
       "path": "trelio-avito.mjs",
       "interpreter": "node"
