@@ -52,3 +52,50 @@
    Ошибка native helper/OS store не разрешает plaintext fallback или сброс Keychain.
 
 ## Безопасный порядок работы
+
+## Настройка SMTP-only из существующего Agent Secret
+
+Если пользователь поручил подключить этот ящик и уже выбрал подходящий
+Agent Secret, используй его без повторного ручного ввода. Нужен существующий
+активный Run той же задачи/области; не создавай фиктивный Run ради входа.
+Без такого Run остаётся обычная защищённая форма. Перед checkout прочитай
+свежие metadata exact секрета и проверь canCheckout, scope и поле password.
+Разрешение хранения в локальном почтовом клиенте следует из поручения подключить
+его; сам факт доступности секрета не разрешает другое назначение или отправку.
+
+1. Возьми текущие company/project/skill/release/runtimeSessionId из exact
+   `runtimeExecution.localAction`; выбери уже созданный bound account UUID.
+   Проверь несекретные email, username, SMTP host/port/security по поручению
+   и источнику подключения. Не угадывай endpoint и не читай password value.
+2. Вызови `prepare_agent_secret_checkout`: exact runId/secretId,
+   `deliveryMode=file`, `fieldKeys=[password]`, `executable=trelio-workspace`.
+   Исполни только его возвращённый `bridge.action` в exact открытом workspace.
+   Не меняй grant/executable и не копируй временный файл.
+3. В `parameters.arguments` этого action добавь child arguments
+   `skill run --company COMPANY --project PROJECT --skill email-imap-smtp
+   --release RELEASE --runtime-session SESSION -- configure --smtp-only
+   --from-agent-secret --email EMAIL --username USERNAME --smtp-host HOST
+   --smtp-port PORT --smtp-security starttls --local-account ACCOUNT_UUID`.
+   Для TLS передай `--smtp-security ssl`; необязательное имя – `--display-name`.
+   COMPANY/PROJECT/RELEASE/SESSION берутся только из текущего localAction;
+   optional project опускается целиком, если отсутствует. Secret-exec сам
+   передаёт значение exact подписанному runtime с обычными admission/ACL;
+   reserved executable не ищется в PATH. Не запускай Python/source/cache напрямую.
+4. Bridge создаёт owner-only временный файл и передаёт только ссылку. Native
+   guardian доставляет value-free reference owned worker-у; тот после permit
+   проверяет file/parent ownership и permissions, размер/UTF-8, и сохраняет пароль
+   обычным Keychain/DPAPI writer. Значение не идёт в argv, ambient env, stdout,
+   Workspace или guardian protocol. Bridge удаляет свой временный файл после
+   исхода. Не подменяй этот маршрут ad hoc producer/script/file.
+5. `passwordInput=agent_secret_file` и `configured` подтверждают сохранение.
+   Затем выполни обычный exact signed `doctor --local-account UUID`: для
+   SMTP-only ожидаются smtp=true, imap=null, imapStatus=disabled. Это не отправка
+   тестового письма. Grant и локальный credential не разрешают отправку.
+
+`agent_secret_setup_file_required/invalid` означают конкретный отказ защищённого
+ввода. Не печатай/читай файл для диагностики, не ослабляй ACL и не повторяй
+consume вслепую. При неизвестном сохранении сначала doctor exact аккаунта.
+Новая попытка после доказанного отсутствия подключения получает новый grant.
+Не используй TRELIO_SECRET_FILE как обычный пользовательский env workaround: он
+принимается только в explicit --from-agent-secret и исключается из окружения
+compiler/guardian/worker; password отсутствует в environment в обоих режимах.

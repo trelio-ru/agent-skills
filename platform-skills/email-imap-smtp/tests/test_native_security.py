@@ -56,10 +56,11 @@ class NativeBoundaryTests(unittest.TestCase):
             imap.assert_not_called(); send.assert_not_called(); command.assert_not_called()
 
     def test_ambient_credentials_and_python_injection_are_not_inherited(self):
-        with mock.patch.dict(os.environ, {"TRELIO_EMAIL_PASSWORD_WORK": "synthetic", "PYTHONPATH": "synthetic", "HOME": "/synthetic"}):
+        with mock.patch.dict(os.environ, {"TRELIO_EMAIL_PASSWORD_WORK": "synthetic", "TRELIO_SECRET_FILE": "/synthetic/checkout", "PYTHONPATH": "synthetic", "HOME": "/synthetic"}):
             environment = NATIVE.child_environment()
         self.assertNotIn("TRELIO_EMAIL_PASSWORD_WORK", environment)
         self.assertNotIn("PYTHONPATH", environment)
+        self.assertNotIn("TRELIO_SECRET_FILE", environment)
         self.assertEqual(environment["HOME"], "/synthetic")
 
     def test_unsupported_os_blocks_before_store_or_compiler(self):
@@ -180,7 +181,7 @@ class NativeLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(NATIVE.NativeError, "unsafe_storage"):
             NATIVE.native_helper(alias)
 
-    def run_real_worker(self, arguments, opener):
+    def run_real_worker(self, arguments, opener, setup_secret_file=None):
         # Give the actual child its own empty HOME. It cannot inspect the user's
         # real accounts, and all generated native/cache files stay in this test.
         home = self.root / ("home-" + str(time.time_ns()))
@@ -192,7 +193,8 @@ class NativeLifecycleTests(unittest.TestCase):
              mock.patch.object(NATIVE, "child_environment", return_value=environment), \
              contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             code = NATIVE.supervise(home / ".config/trelio/email", arguments, terminal=False,
-                                    started_at=int(time.time() * 1000), opener=opener)
+                                    started_at=int(time.time() * 1000), opener=opener,
+                                    setup_secret_file=setup_secret_file)
         return code, stdout.getvalue(), stderr.getvalue()
 
     def test_real_worker_error_is_structured_without_reading_real_accounts(self):
@@ -201,6 +203,18 @@ class NativeLifecycleTests(unittest.TestCase):
         self.assertEqual(stdout, "")
         self.assertFalse(json.loads(stderr)["ok"])
         self.assertIn("not configured", json.loads(stderr)["error"])
+
+    def test_real_worker_receives_checkout_reference_without_opening_browser(self):
+        from test_secret_setup import SETUP
+        private_path = str(self.root / "missing-checkout")
+        opener = mock.Mock(side_effect=AssertionError("Unexpected browser"))
+        code, stdout, stderr = self.run_real_worker(SETUP, opener, private_path)
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertEqual(json.loads(stderr)["error"], "agent_secret_setup_file_invalid")
+        self.assertNotIn(private_path, stderr)
+        self.assertNotIn("Traceback", stderr)
+        opener.assert_not_called()
 
     def test_real_browser_cancel_closes_form_and_never_returns_nonce(self):
         opened = []

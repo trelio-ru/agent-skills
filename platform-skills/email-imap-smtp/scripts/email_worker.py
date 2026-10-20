@@ -2,7 +2,8 @@
 
 The worker cannot reach email code until its native owner has sent the initial
 configuration. On Windows this barrier occurs after assignment to the Job.
-The protocol carries only permits, CLI arguments and ordinary command results.
+The protocol carries permits, CLI arguments, an optional value-free checkout
+file reference and ordinary command results. Secret bytes never cross it.
 """
 
 import importlib.util
@@ -67,6 +68,7 @@ def main():
     sys.modules[spec.name] = runtime
     spec.loader.exec_module(runtime)
     runtime.require_credential_lease = permit
+    runtime.SETUP_SECRET_FILE = config.get("setupSecretFile")
     runtime.install_native_network_barriers()
     def open_browser(url):
         if not request("open", url=url):

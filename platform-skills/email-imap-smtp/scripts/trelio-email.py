@@ -111,6 +111,9 @@ MAX_PROMPT_BODY_BYTES = 128 * 1024
 BROWSER_LOAD_TIMEOUT_SECONDS = 8
 BROWSER_INPUT_TIMEOUT_SECONDS = 5 * 60
 _NATIVE_RUNTIME = None
+# Installed only by the owned worker from its private guardian configuration.
+# The public process never reads the checkout value or inherits it into helpers.
+SETUP_SECRET_FILE = None
 
 
 def native_runtime():
@@ -1457,7 +1460,23 @@ def command_configure(args: argparse.Namespace) -> dict[str, Any]:
     password_input_mode = canonical_password_input_mode(requested_password_mode)
     # Select the complete input flow before touching stdin. The old implementation
     # switched only the password prompt, leaving detached MCP at "Email address".
-    if password_input_mode == "browser":
+    if args.from_agent_secret:
+        if not args.smtp_only or args.terminal_prompts or args.password_input == "terminal":
+            raise MailboxError("agent_secret_setup_requires_smtp_only")
+        # Validate all nonsecret routing metadata before opening the one-use
+        # checkout file. No host, identity or password is inferred from content.
+        candidate = configure_account(name, {
+            "connection_mode": "smtp_only", "email": args.setup_email or "",
+            "username": args.setup_username or "", "display_name": args.setup_display_name or "",
+            "smtp_host": args.setup_smtp_host or "",
+            "smtp_port": "" if args.setup_smtp_port is None else str(args.setup_smtp_port),
+            "smtp_security": args.setup_smtp_security or "starttls",
+            "description": args.description or existing.get("description", ""),
+            "signature": existing.get("signature", ""),
+        })
+        raw_password = read_setup_secret_file()
+        password_input_mode = "agent_secret_file"
+    elif password_input_mode == "browser":
         candidate, raw_password = prompt_configuration_browser(name, setup_existing, args.description)
     else:
         candidate, raw_password = prompt_configuration_terminal(args, name, setup_existing)
@@ -1510,6 +1529,45 @@ def command_configure(args: argparse.Namespace) -> dict[str, Any]:
         **({"previousConfigPath": str(backup_path)} if backup_path else {}),
         **({"appPasswordUrl": GOOGLE_APP_PASSWORDS_URL} if is_gmail_account(candidate.email_address) else {}),
     }
+
+
+def read_setup_secret_file() -> str:
+    """Consume only the native owner's private, bounded checkout reference.
+
+    Trelio's one-use secret-exec creates/removes the owner-only temporary file.
+    This provider neither discovers secrets nor copies them into another file,
+    ambient env or protocol packet. Only the ordinary OS-vault writer receives
+    the password after the live native permit has been checked.
+    """
+    require_credential_lease()
+    if not isinstance(SETUP_SECRET_FILE, str) or not SETUP_SECRET_FILE:
+        raise MailboxError("agent_secret_setup_file_required")
+    try:
+        source = Path(SETUP_SECRET_FILE)
+        if source.is_symlink() or source.parent.is_symlink():
+            raise MailboxError("agent_secret_setup_file_invalid")
+        # macOS's system /var alias is legitimate; validate the resolved private
+        # file and its immediate owner-only checkout directory, not that alias.
+        source = source.resolve(strict=True)
+        helper = native_runtime()
+        if sys.platform == "win32":
+            native = helper.native_helper(CONFIG_DIR)
+            helper.run_private(native, ["verify-directory", str(source.parent)])
+            helper.run_private(native, ["verify-file", str(source)])
+        else:
+            helper.verify_path(source.parent, directory=True)
+            helper.verify_path(source, directory=False)
+        with source.open("rb") as value:
+            raw = value.read(MAX_PASSWORD_CHARS * 4 + 1)
+        if not raw or len(raw) > MAX_PASSWORD_CHARS * 4:
+            raise MailboxError("agent_secret_setup_file_invalid")
+        value = raw.decode("utf-8", errors="strict")
+        if "\x00" in value:
+            raise MailboxError("agent_secret_setup_file_invalid")
+        return value
+    except (OSError, UnicodeError, native_runtime().NativeError):
+        # Never echo a private path, source bytes or OS diagnostic in stdout.
+        raise MailboxError("agent_secret_setup_file_invalid") from None
 
 
 def decode_mail_bytes(payload: bytes, charset: str | None) -> str:
@@ -2715,6 +2773,14 @@ def build_parser() -> argparse.ArgumentParser:
     configure_parser.add_argument("--account", required=True)
     configure_parser.add_argument("--smtp-only", action="store_true",
                                   help="Configure outgoing SMTP without IMAP or saved Sent copies")
+    configure_parser.add_argument("--from-agent-secret", action="store_true",
+                                  help="Use a one-use Run-bound Agent Secret file; never a literal password")
+    configure_parser.add_argument("--email", dest="setup_email")
+    configure_parser.add_argument("--username", dest="setup_username")
+    configure_parser.add_argument("--display-name", dest="setup_display_name")
+    configure_parser.add_argument("--smtp-host", dest="setup_smtp_host")
+    configure_parser.add_argument("--smtp-port", dest="setup_smtp_port", type=int)
+    configure_parser.add_argument("--smtp-security", dest="setup_smtp_security", choices=("ssl", "starttls"))
     configure_parser.add_argument(
         "--description",
         help=f"Optional local mailbox purpose (up to {MAX_ACCOUNT_DESCRIPTION_CHARS} characters; no secrets); otherwise prompted.",
@@ -2899,7 +2965,9 @@ def main(*, _owned: bool = False) -> int:
                 raise ProtectedPromptUnavailable("Terminal setup requires explicit mode and visible stdin/stderr TTY.")
             try:
                 return native_runtime().supervise(CONFIG_DIR, argv, terminal=terminal,
-                                                  started_at=int(time.time() * 1000), opener=open_browser_url)
+                                                  started_at=int(time.time() * 1000), opener=open_browser_url,
+                                                  setup_secret_file=(os.environ.get("TRELIO_SECRET_FILE")
+                                                      if args.command == "configure" and args.from_agent_secret else None))
             except native_runtime().NativeError as error:
                 raise MailboxError(str(error)) from None
         result = args.handler(args)

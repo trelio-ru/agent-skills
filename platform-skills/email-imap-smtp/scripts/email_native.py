@@ -144,12 +144,16 @@ def windows_config_backup(config_directory: Path, filename: str, value: bytes) -
 
 
 def supervise(config_directory: Path, arguments: list[str], *, terminal: bool,
-              started_at: int, opener) -> int:
+              started_at: int, opener, setup_secret_file: str | None = None) -> int:
     helper = native_helper(config_directory)
     config = json.dumps({"arguments": arguments, "terminal": terminal,
                          "terminalDevice": os.ttyname(sys.stdin.fileno()) if terminal and os.name == "posix" else None,
                          "consoleOwner": os.getpid() if terminal and os.name == "nt" else None,
-                         "startedAt": started_at, "expiresAt": started_at + MAXIMUM_LEASE_MS}, ensure_ascii=False)
+                         "startedAt": started_at, "expiresAt": started_at + MAXIMUM_LEASE_MS,
+                         # A value-free checkout reference, never file contents.
+                         # It stays in the private owner protocol, outside argv
+                         # and the compiler/guardian/worker ambient environment.
+                         "setupSecretFile": setup_secret_file}, ensure_ascii=False)
     if len(config.encode()) >= 65536:
         raise NativeError("native_email_arguments_too_large")
     process = subprocess.Popen(
