@@ -60,10 +60,10 @@ export async function runAvito(argv, env = process.env) {
   const { operation, args } = parseAvitoCommand(argv);
   if (operation === 'doctor') return {
     schemaVersion: 1, hostVisualAvailable: Boolean(env.TRELIO_VISUAL_SESSION_MODULE_URL),
-    // Text projection and the worker-owned pacing/tab budget require the new
+    // Headerless redirects and final HTML/download guards require the fixed
     // signed host before any browser I/O. An older live worker is finished
     // through close; auth storage is reused without reset or re-login.
-    accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: '3.10.0',
+    accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: '3.10.1',
   };
   const url = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank');
   if (url.protocol !== 'file:' || env.TRELIO_SKILL_ID !== 'avito') throw new Error('AVITO_HOST_REQUIRED');
