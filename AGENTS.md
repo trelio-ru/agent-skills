@@ -115,7 +115,7 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 Комментируй неочевидные инварианты, права, состояния, retries и восстановление.
 Для Avito читай [визуальный контракт](platform-skills/avito/references/workflow.md)
 и [защиту сессии](platform-skills/avito/references/security.md). Только
-host image/input API, без прямого HTTP, model-facing DOM/AX, code extraction
+host bounded text/image/input API, без прямого HTTP, DOM/AX-дерева, code extraction
 или fallback. Локальный fixed link router может обработать href exact click
 для same-tab навигации; модель не получает код или DOM. Active private profile
 и stopped AEAD archive различаются; crash не перезаписывает durable snapshot.
@@ -128,9 +128,13 @@ host проверяется отдельно на macOS, Windows и Linux до �
 Первый host account flow Avito обязан проходить реальный packaged
 `__trelio_accounts_import`: отсутствие legacy store даёт пустой bounded envelope
 без native/browser/credential IO, не ошибку и не сброс существующих snapshots.
-Avito minimum host >=3.9.2 фиксирует обработку PNG Chromium с цветовым профилем;
+Avito minimum host >=3.10.0 фиксирует text-first, pacing и лимит пяти вкладок;
 старый долгоживущий bridge обновляется через signed admission до browser IO.
-Диагностический minimum provider должен совпадать с release.json.
+Диагностический minimum provider должен совпадать с release.json. Новые поиски
+проходят submit-search/search-ready: тот же completion-based интервал 2–15с
+с зачётом размышлений; обычное чтение и открытие источника не задерживаются.
+Пять вкладок за browser lifetime, close при завершении; overflow onCreated
+не обещает предотвратить transient появление popup.
 Изменение поведения одновременно обновляет контракт и содержательные тесты.
 Google AI Search следует полному [контракту](platform-skills/google-ai-search/SKILL.md):
 instruction-only browser tool, скрытая вкладка без изменения host launch policy,

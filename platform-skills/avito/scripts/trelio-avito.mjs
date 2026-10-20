@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const commands = {
   doctor: {}, setup: {}, 'show-login': {}, status: {}, wait: {}, ready: {}, screenshot: {}, close: {}, disconnect: {},
+  'read-text': { query: 'string?', offset: 'number?', includeControls: 'boolean?' },
+  'submit-search': { frameId: 'string', x: 'number?', y: 'number?' }, 'search-ready': { frameId: 'string' },
   navigate: { url: 'string' }, click: { frameId: 'string', x: 'number', y: 'number' },
   scroll: { frameId: 'string', x: 'number', y: 'number', deltaY: 'number', deltaX: 'number?' },
   'type-text': { frameId: 'string', text: 'string' }, key: { frameId: 'string', key: 'string' },
@@ -19,10 +21,12 @@ export function parseAvitoCommand(argv) {
     const field = flags[i].slice(2);
     if (!Object.hasOwn(commands[operation], field) || Object.hasOwn(args, field)) fail();
     const type = commands[operation][field].replace('?', '');
-    args[field] = type === 'number' ? Number(flags[i + 1]) : flags[i + 1];
+    if (type === 'boolean' && !['true', 'false'].includes(flags[i + 1])) fail();
+    args[field] = type === 'number' ? Number(flags[i + 1]) : type === 'boolean' ? flags[i + 1] === 'true' : flags[i + 1];
     if (type === 'number' && !Number.isSafeInteger(args[field])) fail();
   }
   for (const [name, type] of Object.entries(commands[operation])) if (!type.endsWith('?') && args[name] === undefined) fail();
+  if (operation === 'submit-search' && (Object.hasOwn(args, 'x') !== Object.hasOwn(args, 'y'))) fail();
   return { operation, args };
 }
 
@@ -56,20 +60,26 @@ export async function runAvito(argv, env = process.env) {
   const { operation, args } = parseAvitoCommand(argv);
   if (operation === 'doctor') return {
     schemaVersion: 1, hostVisualAvailable: Boolean(env.TRELIO_VISUAL_SESSION_MODULE_URL),
-    // Keep the diagnostic aligned with signed admission. Chromium may include
-    // an ICC profile in a captured PNG; host 3.9.2 normalizes its own capture
-    // before strict image projection. An already-running older MCP must enter
-    // the ordinary signed upgrade flow before opening the provider browser.
-    accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: '3.9.2',
+    // Text projection and the worker-owned pacing/tab budget require the new
+    // signed host before any browser I/O. An older live worker is finished
+    // through close; auth storage is reused without reset or re-login.
+    accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: '3.10.0',
   };
   const url = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank');
   if (url.protocol !== 'file:' || env.TRELIO_SKILL_ID !== 'avito') throw new Error('AVITO_HOST_REQUIRED');
   const { runVisualSession } = await import(url.href);
   // Domain policy and initial URL belong to this signed provider. The common
-  // host owns storage, Chromium, images, frame guards and process lifecycle.
+  // host owns storage, Chromium, bounded observations, guards and lifecycle.
   // There is no alternate transport, local executable override or site script.
-  return runVisualSession({ origins: ['https://www.avito.ru', 'https://avito.ru'], domains: ['avito.ru'],
-    operation, args: operation === 'setup' ? { url: 'https://www.avito.ru/' } : args, env });
+  // The literal opt-in is part of this signed implementation. It cannot be
+  // changed by a model flag, browser page or an inherited mode environment.
+  let hostOperation = operation, hostArgs = args;
+  if (operation === 'submit-search') {
+    hostOperation = 'submit';
+    hostArgs = Object.hasOwn(args, 'x') ? { action: 'click', ...args } : { action: 'key', key: 'Enter', ...args };
+  } else if (operation === 'search-ready') hostOperation = 'request-ready';
+  return runVisualSession({ observationMode: 'text', origins: ['https://www.avito.ru', 'https://avito.ru'], domains: ['avito.ru'],
+    operation: hostOperation, args: operation === 'setup' ? { url: 'https://www.avito.ru/' } : hostArgs, env });
 }
 
 if (process.argv[1] && await fs.realpath(process.argv[1]) === await fs.realpath(fileURLToPath(import.meta.url))) {
