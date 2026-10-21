@@ -8,11 +8,11 @@ JSON передаётся через `request --session ID --input ABSOLUTE_FILE
 | command | Поля |
 | --- | --- |
 | me | без полей; возвращает chatId подключённого аккаунта и isSelf=true |
-| dialogs | optional query, limit, cursor |
+| dialogs | optional query, limit, cursor, order=newest/oldest, since/until=RFC 3339 с offset |
 | contacts | query, optional limit, cursor |
 | read | chat, optional limit, before=message ID |
 | unread | optional limit (не больше 20 сообщений на выбранный чат) |
-| search | query, optional chat, limit, cursor, since/until=RFC 3339 с offset |
+| search | optional query, chat, limit, cursor, order=newest/oldest, since/until=RFC 3339 с offset |
 | resolve | phone=точный международный номер +…; возвращает подтверждённый chatId |
 | history-fetch | chat, optional before=известный message ID, limit |
 | history-status | requestId из history-fetch |
@@ -100,13 +100,56 @@ SDK отдаёт ограниченную синхронизацию устро�
 `read.coverage.nextBeforeId` продолжает предыдущую страницу. `unread` отдельно
 показывает число чатов с неизвестным счётчиком и покрытие истории каждого чата.
 
+## Последние чаты и сообщения
+
+`dialogs` по умолчанию сортирует последние известные чаты по времени активности,
+новые первыми (`order:newest`); `order:oldest` меняет направление. Время – Unix
+seconds, неизвестное null находится после известных значений в обоих направлениях.
+`lastActivityTimestamp` – максимум provider `conversationTimestamp` и timestamp
+сохранённых сообщений. `lastMessageTimestamp` и `lastMessageId` относятся только
+к последнему известному сохранённому сообщению; при одинаковой секунде ID – один
+из сообщений этого времени, не доказательство их внутреннего порядка. Более
+новая activity без тела сообщения не выдаётся за его успешную синхронизацию.
+since/until фильтруют activity; ID/имя/unreadCount не определяют порядок.
+
+`search` по умолчанию возвращает новые сообщения первыми, по числовому timestamp,
+с устойчивым порядком chat/message ID для одинаковых секунд. `order:oldest`
+возвращает старые первыми. query необязателен: отсутствующий, пустой либо
+состоящий из пробелов query означает чтение всей доступной выборки, включая
+вложения без подписи. Непустой query ищет подстроку в тексте и имени вложения.
+since/until включительны, задаются RFC 3339 с offset; без достоверного timestamp
+сообщение/чат не включается в выборку с датами. Свежая сохранённая версия
+сообщения имеет приоритет над старым on-demand snapshot.
+
+Последние чаты: `{"command":"dialogs","limit":20}`.
+Последние сообщения: `{"command":"search","limit":20}`.
+Все типы сообщений за выбранный день:
+`{"command":"search","since":"2026-01-15T00:00:00+03:00","until":"2026-01-15T23:59:59.999+03:00","limit":20}`.
+Для следующей страницы передай coverage.nextCursor с прежними фильтрами/order.
+coverage.hasMore не означает полный архив; при изменении live данных snapshot
+не фиксируется. Смена order/дат/query с прежним cursor даёт cursor_context_mismatch.
+
+Предполагаемое имя/слово – гипотеза: после пустого совпадения убери query и
+проверь период, последние чаты и exact историю кандидата. Сначала используй
+доступные данные, затем уточняй оставшуюся неоднозначность. `unread` показывает
+непрочитанное, а не последнюю переписку всего аккаунта. historyReceivedThisSession
+и syncedAt относятся только к пакетному messaging-history.set текущей сессии;
+false/null совместимы со свежими сохранёнными и live-сообщениями. Нельзя выводить
+устаревание всего аккаунта из даты одного unread-чата либо флага batch history.
+
+query_required (у contacts), invalid_input/invalid_order, ошибки дат/cursor –
+ошибки запроса. Исправь их по help. Пустая/неполная выборка и ошибки поиска не
+означают logout, не считаются основанием browser fallback и не разрешают
+предлагать новый QR/сброс привязки. history-fetch получает более старые страницы,
+не является командой гарантированного обновления последних сообщений.
+
 После сбоя сначала используй `result` с исходным requestId. Новые попытки
 сохраняют chatId/messageId до provider call, включая ambiguous outcome.
 `serverAcknowledged` проверяется по exact исходящему сообщению в локальной
 синхронизации. `false` не доказывает неотправку. Старые записи без ID остаются
 неопределёнными; журнал не очищается и новый UUID ради повтора не создаётся.
 
-`cursor` непрозрачен и связан с командой, query, chat/message и датами; передавай
+`cursor` непрозрачен и связан с командой, query, chat/message, датами и order; передавай
 его без изменений с теми же фильтрами. При изменившемся наборе возможна ошибка
 курсора – начни чтение заново. `history-fetch` запрашивает у телефона страницу
 старше before (по умолчанию самого старого известного сообщения). Если нет
