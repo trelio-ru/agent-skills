@@ -505,6 +505,11 @@ class Monitor(unittest.TestCase):
             self.assertIs(constructor.call_args.kwargs['receive_updates'],False)
             BUILD_CLIENT(NS(command='read-reference'),self.identity)
             self.assertIs(constructor.call_args.kwargs['receive_updates'],False)
+            BUILD_CLIENT(NS(command='ack-reference'),self.identity)
+            self.assertIs(constructor.call_args.kwargs['receive_updates'],False)
+            self.assertEqual(constructor.call_args.kwargs['request_retries'],0)
+            self.assertEqual(constructor.call_args.kwargs['flood_sleep_threshold'],0)
+            self.assertTrue(constructor.call_args.kwargs['raise_last_call_error'])
             BUILD_CLIENT(NS(command='read'),self.identity)
             self.assertNotIn('receive_updates',constructor.call_args.kwargs)
             BUILD_CLIENT(NS(command='send'),self.identity)
@@ -679,6 +684,179 @@ class ReferenceRead(unittest.TestCase):
         with mock.patch.object(M, 'identity_from_args', return_value=self.identity), \
              mock.patch.object(M, 'session_lock', return_value=mock.MagicMock()):
             self.assertEqual(M.run_async_command(args)['reference']['revision'], self.revision())
+
+class ReferenceAck(unittest.TestCase):
+    """Native range/read-back composition; no real session or external writes."""
+    def setUp(self):
+        self.provider = Provider()
+        self.entity = tl('User', id=77)
+        self.utils = NS(get_peer_id=lambda value: value.id if type(value).__name__ in {'User', 'Chat'} else peer_id(value))
+        self.rows = [message(9), message(8)]
+        self.boundary = 7
+        self.history = [tl('MessagesSlice', messages=self.rows), tl('Messages', messages=[])]
+        self.write_error = None
+        self.post_boundary = None
+        self.identity = M.Identity(company_id='11111111-1111-4111-8111-111111111111',
+            member_id='22222222-2222-4222-8222-222222222222', connection_id='33333333-3333-4333-8333-333333333333')
+        self.build = self.enterContext(mock.patch.object(M, 'build_client', return_value=self.provider))
+        self.resolve = self.enterContext(mock.patch.object(M, 'resolve_entity', new=mock.AsyncMock(side_effect=lambda *_a, **_kw: self.entity)))
+        self.enterContext(mock.patch.object(M, 'import_telethon_workflows', return_value=(NS(), NS(), self.utils, None, None)))
+        self.enterContext(mock.patch.object(M, 'import_telethon_reference_ack', return_value=(
+            request('Dialogs'), request('History'), request('Read'), request('ReadChannel'), request('InputDialog'), self.utils)))
+        self.policy = self.enterContext(mock.patch.object(M, 'assert_send_allowed'))
+        self.provider.get_messages = mock.AsyncMock(side_effect=lambda *_a, **_kw: self.rows[0])
+        self.provider.get_input_entity = mock.AsyncMock(return_value=tl('InputPeerUser', user_id=77))
+        async def dispatch(_provider, call):
+            self.provider.calls.append(call)
+            name = type(call).__name__
+            if name == 'Dialogs':
+                return NS(dialogs=[tl('Dialog', peer=self.rows[0].peer_id, read_inbox_max_id=self.boundary)])
+            if name == 'History':
+                return self.history.pop(0)
+            if name in {'Read', 'ReadChannel'}:
+                self.boundary = call.max_id if self.post_boundary is None else self.post_boundary
+                if self.write_error:
+                    raise self.write_error
+                return True if name == 'ReadChannel' else tl('AffectedMessages', pts=1, pts_count=1)
+            raise AssertionError(name)
+        self.enterContext(mock.patch.object(Provider, '__call__', dispatch))
+
+    def revision(self, row):
+        return M.monitor_message(row, self.utils, kind='new', channel_peer=None)['revision']
+
+    def args(self, **changes):
+        values = dict(command='ack-reference', chat=str(peer_id(self.rows[0].peer_id)), message_id=9,
+            expected_revision=self.revision(self.rows[0]), confirm=True, verify_only=False,
+            covered_reference=[f'{row.id}:{self.revision(row)}' for row in self.rows])
+        values.update(changes)
+        return NS(**values)
+
+    def ack(self, args=None):
+        return asyncio.run(M.command_reference_ack_async(args or self.args(), self.identity))
+
+    def writes(self):
+        return [call for call in self.provider.calls if type(call).__name__ in {'Read', 'ReadChannel'}]
+
+    def test_exact_range_single_write_readback_keeps_higher_messages_unread(self):
+        result = self.ack()
+        self.assertEqual(result['protocol'], 'telegram-message-ack/v1')
+        self.assertTrue(result['readState']['acknowledged'])
+        self.assertEqual(result['readState']['writeOutcome'], 'confirmed')
+        self.assertEqual(len(self.writes()), 1)
+        self.assertEqual(self.writes()[0].max_id, 9)
+        self.assertEqual(self.policy.call_count, 2)
+        history = [call for call in self.provider.calls if type(call).__name__ == 'History']
+        self.assertEqual([(c.offset_id, c.min_id, c.max_id, c.limit) for c in history], [(10, 7, 10, 100), (8, 7, 10, 1)])
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        self.assertFalse(result['readState']['snapshotAtomic'])
+        self.assertEqual(self.provider.disconnect.await_count, 1)
+
+    def test_native_channel_uses_channel_read_history_without_view_increment(self):
+        self.entity = tl('Channel', id=55)
+        for row in self.rows: row.peer_id = tl('PeerChannel', channel_id=55)
+        result = self.ack()
+        self.assertTrue(result['readState']['acknowledged'])
+        self.assertEqual(type(self.writes()[0]).__name__, 'ReadChannel')
+        self.assertIs(self.writes()[0].channel, self.entity)
+        self.assertFalse(result['readState']['viewsRegistered'])
+
+    def test_already_read_and_verify_only_never_write_or_fetch_history(self):
+        for verify, boundary in [(False, 10), (True, 7), (True, 10)]:
+            self.provider.calls.clear(); self.boundary = boundary
+            value = self.ack(self.args(confirm=not verify, verify_only=verify))
+            self.assertEqual(value['readState']['acknowledged'], boundary >= 9)
+            self.assertFalse(value['readState']['writeAttempted'])
+            self.assertEqual([type(c).__name__ for c in self.provider.calls], ['Dialogs'])
+        self.assertEqual(self.writes(), [])
+
+    def test_missing_processed_row_changed_revision_or_nonempty_probe_prevents_range_write(self):
+        cases = [([tl('Messages', messages=self.rows), tl('Messages', messages=[])], [self.args().covered_reference[0]]),
+            ([tl('Messages', messages=self.rows), tl('Messages', messages=[])], [self.args().covered_reference[0], '8:'+'0'*64]),
+            ([tl('Messages', messages=[self.rows[0]]), tl('Messages', messages=[self.rows[1]])], self.args().covered_reference),
+            ([tl('Messages', messages=[self.rows[1]]), tl('Messages', messages=[])], self.args().covered_reference),
+            ([tl('Messages', messages=[self.rows[0], tl('MessageService', id=8)])], self.args().covered_reference),
+            ([tl('Messages', messages=list(reversed(self.rows)))], self.args().covered_reference)]
+        for history, covered in cases:
+            self.history = list(history)
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.ack(self.args(covered_reference=covered))
+            self.assertEqual(caught.exception.code, 'TELEGRAM_ACK_RANGE_INCOMPLETE')
+            self.assertFalse(caught.exception.details['writeAttempted'])
+        self.assertEqual(self.writes(), [])
+
+    def test_lost_write_and_failed_readback_remain_unknown_then_readonly_reconcile(self):
+        args = self.args()
+        self.write_error = RuntimeError('PRIVATE_TRANSPORT_AFTER_WRITE')
+        with self.assertRaises(M.TelegramRuntimeError) as caught: self.ack(args)
+        self.assertEqual(caught.exception.code, 'TELEGRAM_ACK_OUTCOME_UNKNOWN')
+        self.assertEqual(caught.exception.details, dict(writeAttempted=True, writeOutcome='unknown', automaticRetryAllowed=False))
+        self.assertNotIn('PRIVATE', json.dumps(caught.exception.public_payload()))
+        self.assertEqual(len(self.writes()), 1)
+        self.write_error = None
+        value = self.ack(self.args(confirm=False, verify_only=True, covered_reference=[]))
+        self.assertTrue(value['readState']['acknowledged'])
+        self.assertEqual(len(self.writes()), 1, 'reconcile cannot repeat native readHistory')
+
+    def test_cleanup_and_unconfirmed_native_boundary_cannot_report_success(self):
+        self.post_boundary = 7
+        with self.assertRaises(M.TelegramRuntimeError) as caught: self.ack()
+        self.assertEqual(caught.exception.code, 'TELEGRAM_ACK_OUTCOME_UNKNOWN')
+        self.assertTrue(caught.exception.details['writeAttempted'])
+        self.boundary = 9
+        self.provider.disconnect.side_effect = RuntimeError('PRIVATE_CLEANUP')
+        with self.assertRaises(M.TelegramRuntimeError) as caught: self.ack(self.args(confirm=False, verify_only=True))
+        self.assertFalse(caught.exception.details['writeAttempted'])
+        self.assertNotIn('PRIVATE', json.dumps(caught.exception.public_payload()))
+
+    def test_local_readonly_forum_or_changed_target_prevents_write(self):
+        self.policy.side_effect = RuntimeError('PRIVATE_POLICY_PATH')
+        with self.assertRaises(M.TelegramRuntimeError) as caught: self.ack()
+        self.assertEqual(caught.exception.code, 'TELEGRAM_ACK_UNAVAILABLE')
+        self.assertNotIn('PRIVATE', json.dumps(caught.exception.public_payload()))
+        self.build.assert_not_called()
+        self.policy.side_effect = None
+        self.entity = tl('Channel', id=55, forum=True)
+        for row in self.rows: row.peer_id = tl('PeerChannel', channel_id=55)
+        with self.assertRaises(M.TelegramRuntimeError) as caught: self.ack()
+        self.assertEqual(caught.exception.code, 'TELEGRAM_ACK_RANGE_UNSUPPORTED')
+        self.entity.forum = False
+        args = self.args(); self.rows[0].message = 'CHANGED'
+        with self.assertRaises(M.TelegramRuntimeError) as caught: self.ack(args)
+        self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_CHANGED')
+        self.assertEqual(self.writes(), [])
+
+    def test_exact_peer_and_complete_hundred_row_bound_are_checked_before_write(self):
+        self.rows = [message(i) for i in range(109, 9, -1)]
+        self.boundary = 9
+        self.history = [tl('MessagesSlice', messages=self.rows), tl('Messages', messages=[])]
+        value = self.ack(self.args(message_id=109))
+        self.assertTrue(value['readState']['acknowledged'])
+        self.assertEqual(self.writes()[0].max_id, 109)
+        self.provider.calls.clear(); self.boundary = 9
+        self.history = [tl('MessagesSlice', messages=self.rows), tl('Messages', messages=[message(9)])]
+        with self.assertRaises(M.TelegramRuntimeError) as caught: self.ack(self.args(message_id=109))
+        self.assertEqual(caught.exception.code, 'TELEGRAM_ACK_RANGE_INCOMPLETE')
+        self.assertEqual(self.writes(), [])
+        self.history = [tl('Messages', messages=[message(109, peer=tl('PeerUser', user_id=88))])]
+        with self.assertRaises(M.TelegramRuntimeError) as caught: self.ack(self.args(message_id=109))
+        self.assertEqual(caught.exception.code, 'TELEGRAM_ACK_UNAVAILABLE')
+        self.assertEqual(self.writes(), [])
+
+    def test_malformed_modes_refs_fail_before_bootstrap_and_do_not_extend_task_policy(self):
+        for changes in [dict(confirm=False), dict(verify_only=True), dict(covered_reference=[]),
+                dict(covered_reference=['9:bad']), dict(covered_reference=self.args().covered_reference*2),
+                dict(covered_reference=['10:'+'a'*64]), dict(message_id=2**31-1)]:
+            with self.assertRaises(M.TelegramRuntimeError): self.ack(self.args(**changes))
+        self.build.assert_not_called()
+        import contextlib, io
+        argv = ['trelio-telegram.py', 'ack-reference', '--chat', '77', '--message-id', '9', '--expected-revision', 'a'*64, '--confirm']
+        with mock.patch.object(M.sys, 'argv', argv), mock.patch.object(M, 'reexec_in_runtime_if_needed') as bootstrap, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(M.main(), 2)
+        bootstrap.assert_not_called()
+        args = M.build_parser().parse_args(argv[1:] + ['--covered-reference', '9:'+'a'*64])
+        self.assertEqual(M.validate_reference_ack(args), {9:'a'*64})
+        policy = json.loads((PATH.parent/'trelio-assistant-execution.json').read_text())
+        self.assertNotIn('ack-reference', json.dumps(policy))
 
 if __name__=='__main__':
     unittest.main()

@@ -25,6 +25,9 @@ New account hints use `--initial-account-cursor` instead: authenticate the old
 account checkpoint date and include messages already read on another device.
 Never use it to reset an existing cursor or claim historical edit recovery.
 `read-reference` сверяет exact native ID/revision без context/ACK и требует полный текст;
+`ack-reference` uses native range coverage, one non-retried write and read-back;
+only committed exact refs may cover unread history. Verify-only reconciles an
+unknown result without writing; generic task/source read admission never grants ACK.
 baseline/gap/ACK и отдельный HMAC purpose – в том же контракте сообщений.
 Task-команды Telegram отдельно перечислены в signed `trelio-assistant-execution.json`;
 новые parser leaves не открываются ассистенту автоматически, login/admin/ACK

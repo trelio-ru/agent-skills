@@ -1630,7 +1630,7 @@ def build_client(args: argparse.Namespace, identity: Identity):
     request_policy = {}
     if getattr(args, "command", None) in (import_community_tools().COMMANDS | import_authoring_tools().COMMANDS | import_interaction_tools().COMMANDS | import_conversation_tools().COMMANDS):
         request_policy = {"receive_updates": False}
-    if getattr(args, "command", None) in {"monitor", "read-reference", "audience-count", "channel-stats", "album"}:
+    if getattr(args, "command", None) in {"monitor", "read-reference", "ack-reference", "audience-count", "channel-stats", "album"}:
         # The fixed poll owns its explicit cursor. Disable the SDK's parallel
         # passive update subscription; it must not create an invisible second
         # source reader or alter the meaning of a delivered difference page.
@@ -1644,6 +1644,11 @@ def build_client(args: argparse.Namespace, identity: Identity):
     }:
         request_policy = {"request_retries": 0, "flood_sleep_threshold": 0,
                           "raise_last_call_error": True}
+    if getattr(args, "command", None) == "ack-reference":
+        # A read receipt is a mutation too. Telethon must not resubmit it after
+        # a lost response, even though the selected target is monotonic.
+        request_policy = {"receive_updates": False, "request_retries": 0,
+                          "flood_sleep_threshold": 0, "raise_last_call_error": True}
     if getattr(args, "command", None) in (import_community_tools().MUTATIONS | import_authoring_tools().MUTATIONS | import_interaction_tools().MUTATIONS | import_conversation_tools().MUTATIONS):
         # Even metadata writes (pins, reactions, admissions) are not safe to
         # re-submit after a lost reply. Read-only previews use the same client.
@@ -4414,6 +4419,140 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
                                            code="TELEGRAM_REFERENCE_UNAVAILABLE" if exact_reference else None) from error
 
 
+def validate_reference_ack(args: argparse.Namespace) -> dict[int, str]:
+    """An ACK needs exact processed revisions, never a guessed maximum ID.
+
+    Native readHistory marks a RANGE. The host must have durably committed each
+    supplied reference; this provider additionally proves that no visible row
+    in the current unread range is missing. Neither CLI flags nor these hashes
+    replace the host's accepted-task/read-proof/processing/ACK-lease checks.
+    """
+    validate_reference_read(args)
+    entries = getattr(args, "covered_reference", None)
+    if (type(getattr(args, "confirm", None)) is not bool
+            or type(getattr(args, "verify_only", None)) is not bool
+            or args.confirm == args.verify_only or not isinstance(entries, list)
+            or len(entries) > 100 or args.message_id >= 2**31 - 1):
+        raise TelegramRuntimeError("An exact ACK mode and bounded processed range are required.", code="TELEGRAM_ACK_INPUT_INVALID")
+    covered = {}
+    for entry in entries:
+        match = re.fullmatch(r"([1-9]\d{0,9}):([a-f0-9]{64})", entry) if isinstance(entry, str) else None
+        if not match or not 0 < int(match[1]) <= args.message_id or int(match[1]) in covered:
+            raise TelegramRuntimeError("Processed range references are invalid.", code="TELEGRAM_ACK_INPUT_INVALID")
+        covered[int(match[1])] = match[2]
+    if args.confirm and covered.get(args.message_id) != args.expected_revision:
+        raise TelegramRuntimeError("The target must be in the processed range.", code="TELEGRAM_ACK_INPUT_INVALID")
+    return covered
+
+
+def import_telethon_reference_ack():
+    from telethon import utils
+    from telethon.tl.functions.messages import GetPeerDialogsRequest, GetHistoryRequest, ReadHistoryRequest
+    from telethon.tl.functions.channels import ReadHistoryRequest as ReadChannelHistoryRequest
+    from telethon.tl.types import InputDialogPeer
+    return GetPeerDialogsRequest, GetHistoryRequest, ReadHistoryRequest, ReadChannelHistoryRequest, InputDialogPeer, utils
+
+
+async def command_reference_ack_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
+    covered = validate_reference_ack(args)
+    client = None
+    attempted, failure, observed = False, None, None
+    def ack_error(code, message):
+        return TelegramRuntimeError(message, code=code, details={"writeAttempted": attempted,
+            "writeOutcome": "unknown" if attempted else "not_attempted", "automaticRetryAllowed": False})
+    try:
+        if args.confirm:
+            assert_send_allowed(identity, confirmed=True)
+        client = build_client(args, identity)
+        await ensure_authorized(client)
+        Dialogs, History, Read, ReadChannel, InputDialog, utils = import_telethon_reference_ack()
+        entity, native = await resolve_message_target(client, message_reference(args))
+        # Forum topics have independent read counters; a dialog-wide range is
+        # not a substitute. Keep them closed until their own native contract.
+        if getattr(entity, "forum", False):
+            raise ack_error("TELEGRAM_ACK_RANGE_UNSUPPORTED", "Topic read ranges require a separate native contract.")
+        observed = monitor_message(native, utils, kind="new", channel_peer=int(args.chat))
+        if observed["revision"] != args.expected_revision:
+            raise ack_error("TELEGRAM_REFERENCE_CHANGED", "The processed Telegram message changed.")
+        peer = await client.get_input_entity(entity)
+        async def read_boundary():
+            response = await client(Dialogs(peers=[InputDialog(peer=peer)]))
+            rows = getattr(response, "dialogs", None)
+            if (not isinstance(rows, list) or len(rows) != 1 or type(rows[0]).__name__ != "Dialog"
+                    or utils.get_peer_id(getattr(rows[0], "peer", None)) != int(args.chat)):
+                raise ack_error("TELEGRAM_ACK_UNAVAILABLE", "The exact read boundary is unavailable.")
+            return monitor_int(getattr(rows[0], "read_inbox_max_id", None))
+        before = await read_boundary()
+        if before < args.message_id and args.confirm:
+            # A short history page does NOT prove exhaustion. At most 100
+            # processed rows are allowed, followed by one explicit empty
+            # continuation probe. This bounds native work without skipping an
+            # unseen/service/foreign row or trusting contiguous numeric IDs.
+            offset, seen = args.message_id + 1, set()
+            for page_index in range(2):
+                result = await client(History(peer=peer, offset_id=offset, offset_date=None, add_offset=0,
+                    limit=100 if page_index == 0 else 1, max_id=args.message_id + 1, min_id=before, hash=0))
+                rows = getattr(result, "messages", None)
+                if type(result).__name__ not in {"Messages", "MessagesSlice", "ChannelMessages"} or not isinstance(rows, list) or len(rows) > (100 if page_index == 0 else 1):
+                    raise ack_error("TELEGRAM_ACK_RANGE_INCOMPLETE", "The unread range cannot be proved complete.")
+                if not rows:
+                    break
+                if page_index:
+                    raise ack_error("TELEGRAM_ACK_RANGE_INCOMPLETE", "The unread range exceeds the processed page.")
+                for row in rows:
+                    if type(row).__name__ != "Message":
+                        raise ack_error("TELEGRAM_ACK_RANGE_INCOMPLETE", "An unsupported unread row remains.")
+                    ref = monitor_message(row, utils, kind="new", channel_peer=int(args.chat))
+                    current = int(ref["messageId"])
+                    if not before < current < offset or covered.get(current) != ref["revision"]:
+                        raise ack_error("TELEGRAM_ACK_RANGE_INCOMPLETE", "An unread message has not been committed at its current revision.")
+                    offset = current
+                    seen.add(current)
+            else:
+                raise ack_error("TELEGRAM_ACK_RANGE_INCOMPLETE", "The unread range has no verified end.")
+            if args.message_id not in seen:
+                raise ack_error("TELEGRAM_ACK_RANGE_INCOMPLETE", "The unread target is missing from history.")
+            # Recheck local read-only policy immediately before the ONLY write.
+            # New messages have higher IDs and stay outside this fixed range.
+            assert_send_allowed(identity, confirmed=True)
+            attempted = True
+            reply = await client(ReadChannel(channel=entity, max_id=args.message_id) if type(entity).__name__ == "Channel"
+                                 else Read(peer=peer, max_id=args.message_id))
+            if type(entity).__name__ == "Channel":
+                if reply is not True:
+                    raise ack_error("TELEGRAM_ACK_OUTCOME_UNKNOWN", "The Telegram read receipt is unconfirmed.")
+            elif type(reply).__name__ != "AffectedMessages":
+                raise ack_error("TELEGRAM_ACK_OUTCOME_UNKNOWN", "The Telegram read receipt is unconfirmed.")
+            after = await read_boundary()
+            if after < args.message_id:
+                raise ack_error("TELEGRAM_ACK_OUTCOME_UNKNOWN", "The native read boundary did not confirm the receipt.")
+        else:
+            after = before
+        return {"schemaVersion": 1, "protocol": "telegram-message-ack/v1",
+            "reference": {key: value for key, value in observed.items() if key != "kind"},
+            "readState": {"acknowledged": after >= args.message_id, "writeAttempted": attempted,
+                "writeOutcome": "confirmed" if attempted else "not_attempted", "automaticRetryAllowed": False,
+                "viewsRegistered": False, "verifyOnly": args.verify_only, "snapshotAtomic": False}}
+    except Exception as error:
+        if isinstance(error, TelegramRuntimeError) and not attempted and error.code in {
+                "TELEGRAM_REFERENCE_CHANGED", "TELEGRAM_ACK_RANGE_INCOMPLETE", "TELEGRAM_ACK_RANGE_UNSUPPORTED"}:
+            failure = error
+        else:
+            failure = ack_error("TELEGRAM_ACK_OUTCOME_UNKNOWN" if attempted else "TELEGRAM_ACK_UNAVAILABLE",
+                "Telegram read receipt outcome is unknown; reconcile without writing." if attempted else "Telegram read receipt preflight failed; no write was attempted.")
+        if failure is error:
+            raise
+        raise failure from error
+    finally:
+        try:
+            if client is not None:
+                await client.disconnect()
+        except Exception as error:
+            if failure is None:
+                raise ack_error("TELEGRAM_ACK_OUTCOME_UNKNOWN" if attempted else "TELEGRAM_ACK_UNAVAILABLE",
+                    "Telegram read receipt cleanup failed; reconcile without writing.") from error
+
+
 async def command_thread_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
     reference = message_reference(args)
     functions, _types, utils, _events, _markdown = import_telethon_workflows()
@@ -6460,6 +6599,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
             return asyncio.run(command_monitor_async(args, identity))
         if args.command == "read-reference":
             return asyncio.run(command_message_read_async(args, identity))
+        if args.command == "ack-reference":
+            return asyncio.run(command_reference_ack_async(args, identity))
         if args.command == "dialogs":
             return asyncio.run(command_dialogs_async(args, identity))
         if args.command == "folders":
@@ -6688,6 +6829,14 @@ def build_parser() -> argparse.ArgumentParser:
     reference_read.add_argument("--chat", required=True, help="Exact native marked peer ID from the monitor reference")
     reference_read.add_argument("--message-id", type=positive_message_id, required=True)
     reference_read.add_argument("--expected-revision", required=True, help="Exact semantic SHA-256 from the observed reference")
+    reference_ack = commands.add_parser("ack-reference", help="Acknowledge only a fully committed native unread range, or reconcile without writing")
+    reference_ack.add_argument("--chat", required=True)
+    reference_ack.add_argument("--message-id", type=positive_message_id, required=True)
+    reference_ack.add_argument("--expected-revision", required=True)
+    reference_ack.add_argument("--covered-reference", action="append", default=[], help="Committed native MESSAGE_ID:REVISION, repeat for every unread row")
+    ack_mode = reference_ack.add_mutually_exclusive_group(required=True)
+    ack_mode.add_argument("--confirm", action="store_true")
+    ack_mode.add_argument("--verify-only", action="store_true")
     read = commands.add_parser("read", help="Read recent messages in one exact chat")
     add_message_target_arguments(read)
     read.add_argument("--context", type=int, choices=range(0, 11), default=0, metavar="0..10")
@@ -6866,6 +7015,8 @@ def main() -> int:
             validate_monitor_input(args)
         if args.command == "read-reference":
             validate_reference_read(args)
+        if args.command == "ack-reference":
+            validate_reference_ack(args)
         reexec_in_runtime_if_needed(args.command)
         if args.command == "bootstrap":
             result = command_bootstrap(args)
