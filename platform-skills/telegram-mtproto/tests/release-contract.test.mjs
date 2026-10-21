@@ -105,9 +105,9 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /`views`/u);
     assert.match(source, /views=null|`null`/u);
   }
-  assert.equal(releaseManifest.release.version, "2.11.0");
+  assert.equal(releaseManifest.release.version, "2.11.1");
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.11.0");
+  assert.equal(releaseManifest.runtime.version, "2.11.1");
   assert.equal(releaseManifest.runtime.minimumHostVersion, "3.7.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),
@@ -116,7 +116,9 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
   assert.deepEqual(releaseManifest.connection.deprecatedConfigKeys, ["apiId", "allowAutonomous"]);
   assert.deepEqual(releaseManifest.connection.secretFields, []);
   assert.deepEqual(releaseManifest.runtime.capabilities, ["local-session", "network", "local-accounts-v1"]);
-  assert.deepEqual(releaseManifest.runtime.files[1], {
+  const identityDeclarations = releaseManifest.runtime.files.filter(file => file.path === 'telegram-app-credentials.json');
+  assert.equal(identityDeclarations.length, 1);
+  assert.deepEqual(identityDeclarations[0], {
     sourceEnvironment: "TRELIO_TELEGRAM_APP_CREDENTIAL_JSON",
     releaseInputExposure: "package-recipient",
     path: "telegram-app-credentials.json",
@@ -167,6 +169,10 @@ test("Telegram package embeds only the declared distributable release input", ()
   );
 
   assert.ok(credentialFile);
+  const policy = runtimePackage.files.find(file => file.path === 'trelio-assistant-execution.json');
+  assert.ok(policy, 'the task restriction must be signed file content');
+  assert.deepEqual(JSON.parse(Buffer.from(policy.contentBase64, 'base64').toString('utf8')).taskCommands
+    .filter(prefix => ['login', 'bootstrap', 'monitor', 'delete', 'edit'].includes(prefix[0])), []);
   assert.equal(
     Buffer.from(credentialFile.contentBase64, "base64").toString("utf8"),
     distributableInput,
