@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 import {
   buildRuntimePackage,
@@ -13,6 +15,19 @@ import {
   validateConnectionDefinition,
   validatePackagePath,
 } from "./build-runtime-package.mjs";
+
+test('email assistant command policy travels in the signed content inventory, not unsigned release metadata', () => {
+  const root = fileURLToPath(new URL('../email-imap-smtp', import.meta.url));
+  const built = buildRuntimePackage(root);
+  const parsed = JSON.parse(built.packageBytes);
+  const file = parsed.files.find(file => file.path === 'trelio-assistant-execution.json');
+  assert.ok(file, 'provider opt-in must actually be packaged');
+  const source = fs.readFileSync(path.join(root, 'scripts', file.path));
+  assert.deepEqual(Buffer.from(file.contentBase64, 'base64'), source);
+  assert.equal(file.sha256, createHash('sha256').update(source).digest('hex'));
+  assert.equal(parsed.assistantExecution, undefined, 'there is no second unsigned permission declaration');
+  assert.deepEqual(buildRuntimePackage(root).packageBytes, built.packageBytes);
+});
 
 const writeFixture = (root, overrides = {}) => {
   const skillDirectory = path.join(root, "fixture-skill");

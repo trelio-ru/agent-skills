@@ -1,5 +1,10 @@
 # Работа с общими Agent Skills
 
+Task execution цифрового ассистента требует подписанный provider-owned
+`trelio-assistant-execution.json`; общий host проверяет его до account/provider
+I/O. Наличие setup/ACK CLI или account binding не открывает эти команды task-у.
+Контракт – [личные подключения](docs/agent-skill-connections.md#assistant-command-policy).
+
 Этот репозиторий содержит только общие provider-инструкции, runtime-код,
 синтетические тесты и безопасные инструменты разработки. Корпоративные навыки,
 реальные данные компаний, credentials, sessions, application identity и signing

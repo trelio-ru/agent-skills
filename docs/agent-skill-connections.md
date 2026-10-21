@@ -118,6 +118,35 @@ Python mailbox/Telegram tests и ESIA authorization tests. Реальные cred
 в migration fixtures не используются; OS/browser gates остаются обязательными.
 
 
+<a id="assistant-command-policy"></a>
+
+## Команды цифрового ассистента
+
+Provider включает `trelio-assistant-execution.json` в обычный signed package
+как файл с проверенными bytes/SHA-256. Формат v1 содержит только
+`schemaVersion:1` и `taskCommands`: 1–64 literal positional prefixes из 1–3
+CLI-токенов `[a-z][a-z0-9-]{0,63}` без повторов. Общий host, а не инструкция
+модели, проверяет этот файл до account selection и повторно перед запуском
+того же process engine. Нет файла/неизвестная версия/неизвестная команда –
+закрытый отказ, без попытки legacy provider или human authorization.
+
+Prefix должен однозначно задавать действие в настоящем parser provider-а;
+global options перед ним, wildcard/regex, option-skipping и shell отсутствуют.
+Например, `["policy","show"]` разрешает только просмотр, а `["policy"]`
+ошибочно открыл бы и изменение. Новая CLI-подкоманда не становится доступной
+ассистенту автоматически. Provider tests проверяют реальные parser choices;
+host composition отдельно проверяет отказ до bootstrap/credentials.
+
+Email разрешает task-у чтение, сохранение выбранных источников и обычные
+send/reply с прежними независимыми основаниями. Configure, policy/signature
+изменения, importer, passive monitor и exact ACK не включены. Protected source
+configure и model-free monitor идут по отдельным native owner/source admissions,
+ACK требует committed processing/read proof/lease. Host account list/CRUD имеют
+собственные прежние guards. Подпись файла не разрешает отправку, не заменяет
+согласование владельца и не ослабляет read-only/unknown-outcome правила.
+Обычные human calls сохраняют прежний CLI и не требуют этого opt-in; файл
+ограничивает dedicated task execution, не создаёт новый executor или vault.
+
 <a id="human-input-completion"></a>
 
 ## Продолжение после ввода
