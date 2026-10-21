@@ -656,6 +656,29 @@ pts catch-up. Источник с существующим gap не сбрасы
 review/history recovery остаётся отдельной процедурой. Начальное перечисление
 всех чатов аккаунта и durable host stream/hint journal не устанавливаются этой
 командой. Старый host, не понимающий coverage, сохраняет отказ, не reset.
+
+Для **нового channel hint из уже идущего account stream** unread-флаг недостаточен:
+сообщение могли прочитать на другом устройстве после сохранённой позиции host-а.
+`monitor --chat MARKED_ID --initial-account-cursor OLD_ACCOUNT_CURSOR` получает
+именно исходный account checkpoint **до** страницы с этим hint. Provider
+проверяет его прежний monitor HMAC и native account/member/company/local binding,
+constructor account-cloud и полный state. Числовая дата, overview/channel token,
+чужой account/binding или одновременный channel cursor/unread mode отклоняются.
+Новых authority/session tokens это не создаёт.
+
+Общий history helper включает видимые сообщения с native `date >= old.date`
+до замороженного `top_message`, независимо от `read_inbox_max_id`. Дата включительна:
+равные timestamps не теряются. Сохраняются lower date, upper/exclusive message
+offset и последняя native дата; неубывающий ID или возрастающая дата дают gap.
+Все строки bounded страницы, включая находящиеся за границей даты, проверяются
+по exact peer/type/order до результата. Пустая страница либо доказанная нижняя
+дата завершает history, после чего обязателен тот же исходный-pts difference.
+Coverage: `initialAccountInterval=true`, `historicalBackfill=true`,
+`snapshotAtomic=false`, `earlierEditsIncluded=false`. Правки старых сообщений и
+удалённые bytes **до** первой channel pts не восстановлены; это не полный
+исторический snapshot. Существующие channel checkpoints не заменяются новым
+seed. Host обязан хранить исходный account seed с durable hint, не передавать
+вместо него более позднюю позицию и не переводить общий cursor в channel cursor.
 Channels из native `UpdateChannelTooLong`/`UpdateChannel` перечислены отдельно;
 после final channel не опрашивается вновь без нового account hint. Ни одна
 команда не устанавливает фоновый монитор, не открывает окно и не отправляет ACK.
@@ -728,6 +751,45 @@ metadata, `attachmentsContentRead=false`; доступ к text не доказы
 После фактического чтения host всё ещё обязан связать сообщение с принятой
 задачей и committed processing до отдельного read acknowledgement. Source merge,
 успех этой команды и message body не создают задачи/разрешения на другие системы.
+
+### Отметка прочитанного после зафиксированной обработки
+
+`ack-reference --chat NATIVE_ID --message-id ID --expected-revision SHA256
+--covered-reference ID:SHA256 [--covered-reference ID:SHA256 ...] --confirm`
+использует тот же private account/session и exact native message resolver. Перед
+запуском trusted host обязан проверить принятую задачу, фактическое полное чтение
+нужного содержания, committed processing каждого указанного события и отдельную
+ACK lease. Hash/CLI-флаг сами этого не доказывают; обычный task skill и passive
+source profile не получают новую mutation authority. Production composition
+этих проверок остаётся отдельным release gate.
+
+Telegram readHistory меняет **диапазон**, поэтому одной ссылки на позднее сообщение
+недостаточно. Provider перечитывает его semantic revision и exact dialog read
+boundary, затем весь видимый интервал `read_inbox_max_id < id <= target`. До 100
+строк с убывающими native IDs: каждая должна совпасть с зафиксированным digest
+из covered refs. Short page не доказывает конец: обязателен отдельный empty
+continuation probe. Uncovered, edited, foreign, unsupported/service row, слишком
+большая область, отсутствие target или недоказанное окончание блокируют запись.
+Числовые пропуски ID не заменяют историю. Forum topics пока закрыты: dialog-wide
+read counter не подменяет их отдельный native read state.
+
+После повторной проверки local read-only policy отправляется ровно один native
+`messages.readHistory` либо `channels.readHistory` с fixed max_id; новые большие
+IDs не затрагиваются. SDK retries/flood replay отключены, increment views и send
+не вызываются. Native ответ отдельно подтверждается свежим dialog read-back.
+Уже прочитанный target не вызывает повторного readHistory. Ответ содержит только
+exact reference и closed read-state facts; `snapshotAtomic=false` сохраняет
+неатомарность native preflight/write. Более поздние edits – самостоятельные
+события, старый processed digest ими не заменяется.
+
+При неизвестном результате host сохраняет write fence и вызывает тот же exact
+reference с `--verify-only` **вместо** `--confirm`. Это только resolver/read-boundary,
+без history mutation; `acknowledged=false` не разрешает автоматическую отправку.
+Ошибка после начала записи, включая cleanup/read-back, сохраняет
+`writeAttempted=true,writeOutcome=unknown,automaticRetryAllowed=false` без raw SDK
+diagnostics. Никакого второго progress journal/session store/executor не создаётся.
+Нормативные методы: [messages.readHistory](https://core.telegram.org/method/messages.readHistory),
+[channels.readHistory](https://core.telegram.org/method/channels.readHistory).
 
 ## Темы, реакции, опросы, закрепы и администрирование
 
