@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 2,
+  "taskCommands": [
+    ["guides"], ["help"], ["doctor"], ["probe"], ["policy", "show"],
+    ["dialogs"], ["contacts"], ["profile"], ["read"], ["read-reference"],
+    ["unread"], ["download"], ["members"], ["send"], ["reply"]
+  ],
+  "deniedOptions": ["--chrome", "--headed", "--headless", "--hold-ms", "--timeout-ms"]
+}

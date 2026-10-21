@@ -1,5 +1,27 @@
 # Пассивное чтение MAX для цифрового ассистента
 
+## Отдельная поверхность task-команд
+
+Source 2.10.2 включает `trelio-assistant-execution.json` в прежний signed package.
+Policy v2 сохраняет literal task prefixes и добавляет provider-owned
+`deniedOptions`. MAX перечисляет `--chrome`, `--headed`, `--headless`, `--hold-ms`,
+`--timeout-ms`: обычный human parser поддерживает эти overrides, но task не может
+подменить browser executable, открыть окно либо задавать собственный budget.
+Общий host должен отклонять отдельный токен и форму `--flag=value` до account/
+browser I/O, включая malformed/unknown policy. Unknown v2 на старом host означает
+отказ, не fallback. Human CLI и fixed native source profiles не меняются.
+
+Task surface ограничена чтением/metadata, скачиванием выбранного файла и
+обычными send/reply с прежней sending authority. Login/bootstrap, policy writes,
+assist/manual-control, watch/monitor, admin/chat mutations и ACK не включены.
+Новый parser command не получает доступ автоматически. Это классификация,
+не новый browser/vault/executor, owner proof или разрешение отправки.
+Generic host v2 enforcement и реальный Windows business E2E остаются отдельными
+gates до активации. `ownerIdentityAvailable=false` не меняется: новые задачи по
+display name/username/forward по-прежнему запрещены.
+
+## Пассивный источник
+
 Source `max-web` 2.10.0 добавляет bounded read primitive `monitor`, а не готовый
 глобальный crawler. Он использует обычный dedicated browser, protected session,
 host account selection и WebSocket read guard. Отдельного входа, credentials
