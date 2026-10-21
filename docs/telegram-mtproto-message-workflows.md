@@ -752,6 +752,45 @@ metadata, `attachmentsContentRead=false`; доступ к text не доказы
 задачей и committed processing до отдельного read acknowledgement. Source merge,
 успех этой команды и message body не создают задачи/разрешения на другие системы.
 
+### Отметка прочитанного после зафиксированной обработки
+
+`ack-reference --chat NATIVE_ID --message-id ID --expected-revision SHA256
+--covered-reference ID:SHA256 [--covered-reference ID:SHA256 ...] --confirm`
+использует тот же private account/session и exact native message resolver. Перед
+запуском trusted host обязан проверить принятую задачу, фактическое полное чтение
+нужного содержания, committed processing каждого указанного события и отдельную
+ACK lease. Hash/CLI-флаг сами этого не доказывают; обычный task skill и passive
+source profile не получают новую mutation authority. Production composition
+этих проверок остаётся отдельным release gate.
+
+Telegram readHistory меняет **диапазон**, поэтому одной ссылки на позднее сообщение
+недостаточно. Provider перечитывает его semantic revision и exact dialog read
+boundary, затем весь видимый интервал `read_inbox_max_id < id <= target`. До 100
+строк с убывающими native IDs: каждая должна совпасть с зафиксированным digest
+из covered refs. Short page не доказывает конец: обязателен отдельный empty
+continuation probe. Uncovered, edited, foreign, unsupported/service row, слишком
+большая область, отсутствие target или недоказанное окончание блокируют запись.
+Числовые пропуски ID не заменяют историю. Forum topics пока закрыты: dialog-wide
+read counter не подменяет их отдельный native read state.
+
+После повторной проверки local read-only policy отправляется ровно один native
+`messages.readHistory` либо `channels.readHistory` с fixed max_id; новые большие
+IDs не затрагиваются. SDK retries/flood replay отключены, increment views и send
+не вызываются. Native ответ отдельно подтверждается свежим dialog read-back.
+Уже прочитанный target не вызывает повторного readHistory. Ответ содержит только
+exact reference и closed read-state facts; `snapshotAtomic=false` сохраняет
+неатомарность native preflight/write. Более поздние edits – самостоятельные
+события, старый processed digest ими не заменяется.
+
+При неизвестном результате host сохраняет write fence и вызывает тот же exact
+reference с `--verify-only` **вместо** `--confirm`. Это только resolver/read-boundary,
+без history mutation; `acknowledged=false` не разрешает автоматическую отправку.
+Ошибка после начала записи, включая cleanup/read-back, сохраняет
+`writeAttempted=true,writeOutcome=unknown,automaticRetryAllowed=false` без raw SDK
+diagnostics. Никакого второго progress journal/session store/executor не создаётся.
+Нормативные методы: [messages.readHistory](https://core.telegram.org/method/messages.readHistory),
+[channels.readHistory](https://core.telegram.org/method/channels.readHistory).
+
 ## Темы, реакции, опросы, закрепы и администрирование
 
 `community_tools.py` – обязательный signed sibling основного entrypoint, без

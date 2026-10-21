@@ -78,3 +78,27 @@ Monitor protocol epoch отделён от human message preview: обычное
 разрешаются. Возможность прочитать ссылку – ещё не право раскрыть её компании
 или владельцу ассистента. Проверка личности владельца и полномочий выполняется
 отдельной trusted host/backend границей; входящее содержимое остаётся данными.
+
+## Отметка прочитанного после обработки
+
+Отдельный `ack-reference --chat NATIVE_ID --message-id ID --expected-revision SHA256
+--covered-reference ID:SHA256 [--covered-reference ID:SHA256 ...] --confirm` разрешён
+только после принятой задачи, полного нужного чтения, committed processing и ACK
+lease trusted host-а. Generic task/source read admission этого не разрешает;
+production composition остаётся отдельной проверкой. Одна ссылка/hash не proof.
+
+Native readHistory отмечает диапазон: provider проверяет текущий target digest,
+exact dialog boundary и все видимые unread сообщения до target. Каждая строка
+должна входить в committed covered refs той же ревизии (до 100); отдельная empty
+history continuation доказывает конец, короткой страницы недостаточно. Пропуски
+ID не означают пустую историю. Uncovered/edited/foreign/service row и forum topics
+блокируют mutation. Local read-only policy сохраняется. Один native write с fixed
+max_id не затрагивает большие IDs, затем обязателен fresh read-back; без SDK retry,
+view increment или send. `snapshotAtomic=false`: поздние edits остаются событиями.
+
+Неизвестный write/cleanup/read-back сохраняет
+`writeAttempted=true,writeOutcome=unknown,automaticRetryAllowed=false`. Только
+`--verify-only` вместо `--confirm` проверяет native read state без записи;
+`acknowledged=false` не разрешает автоматический повтор. Уже read target также
+не вызывает повторный write. Это не новый vault/progress journal или разрешение
+считать всю задачу завершённой.
