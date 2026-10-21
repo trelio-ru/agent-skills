@@ -19,6 +19,9 @@ gate обходит все provider-ы; native gate выполняется на 
 метаданных; export cursor продвигается только после возвращённого сообщения.
 Archive scope повторно проверяется до history, включая exact сохранённый ID.
 Пассивный `monitor` хранит durable checkpoint отдельно от unread/session TTL;
+initial channel `--unread-backfill` freezes the native unread interval, pages
+metadata under the pre-history pts, then requires its difference catch-up.
+Never use it to reset an existing cursor or claim historical edit recovery.
 `read-reference` сверяет exact native ID/revision без context/ACK и требует полный текст;
 baseline/gap/ACK и отдельный HMAC purpose – в том же контракте сообщений.
 Task-команды Telegram отдельно перечислены в signed `trelio-assistant-execution.json`;

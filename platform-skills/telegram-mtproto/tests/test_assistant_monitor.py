@@ -109,6 +109,121 @@ class Monitor(unittest.TestCase):
         return tl('Difference', new_messages=messages or [], other_updates=updates or [],
                   state=position(pts=12), **extra)
 
+    def unread_backfill(self, history=None, dialog=None):
+        self.enterContext(mock.patch.object(M, 'import_telethon_monitor_history', return_value=(
+            request('GetDialogs'), request('GetHistory'), request('InputDialogPeer'))))
+        self.provider.get_input_entity = mock.AsyncMock(return_value=tl('InputPeerChannel', channel_id=55))
+        old = self.provider.__class__.__call__
+        self.history = list(history or [])
+        self.dialog = dialog or tl('Dialog', peer=tl('PeerChannel', channel_id=55), read_inbox_max_id=5, top_message=9)
+        async def dispatch(provider, call):
+            if type(call).__name__ in ('GetDialogs', 'GetHistory'):
+                provider.calls.append(call)
+                if type(call).__name__ == 'GetDialogs':
+                    return NS(dialogs=[self.dialog])
+                result = self.history.pop(0)
+                if isinstance(result, Exception):
+                    raise result
+                return result
+            return await old(provider, call)
+        self.enterContext(mock.patch.object(self.provider.__class__, '__call__', dispatch))
+
+    def test_unread_backfill_freezes_interval_and_catches_up_original_pts_without_ack(self):
+        rows = [message(i, peer=tl('PeerChannel', channel_id=55)) for i in (9, 8)]
+        self.unread_backfill([tl('ChannelMessages', messages=rows),
+            tl('MessagesSlice', messages=[message(6, peer=tl('PeerChannel', channel_id=55))]), tl('Messages', messages=[])])
+        first = self.run_page(chat='-1000000000055', unread_backfill=True)
+        self.assertFalse(first['baselineOnly'])
+        self.assertTrue(first['coverage']['initialUnreadOnly'])
+        self.assertFalse(first['coverage']['snapshotAtomic'])
+        self.assertEqual([row['messageId'] for row in first['events']], ['9', '8'])
+        self.assertNotIn('PRIVATE', json.dumps(first))
+        self.assertTrue(first['hasMore'])
+        # Another device reads the dialog and new traffic moves its top. The
+        # signed checkpoint, not this changed unread flag, retains 5 < id <= 9.
+        self.dialog.read_inbox_max_id = 100
+        self.dialog.top_message = 101
+        second = self.run_page(first['nextCursor'], chat='-1000000000055')
+        self.assertEqual([row['messageId'] for row in second['events']], ['6'])
+        empty = self.run_page(second['nextCursor'], chat='-1000000000055')
+        self.assertTrue(empty['hasMore'], 'history exhaustion still requires the original-pts difference')
+        self.provider.response = tl('ChannelDifference', pts=15, final=True,
+            new_messages=[message(10, peer=tl('PeerChannel', channel_id=55))], other_updates=[])
+        done = self.run_page(empty['nextCursor'], chat='-1000000000055')
+        self.assertFalse(done['hasMore'])
+        self.assertEqual(done['events'][0]['messageId'], '10')
+        self.assertEqual(self.provider.calls[-1].pts, 10, 'the pre-history pts is never replaced by current state')
+        calls = self.provider.calls
+        self.assertEqual([type(call).__name__ for call in calls],
+            ['GetFullChannel', 'GetDialogs', 'GetHistory', 'GetHistory', 'GetHistory', 'GetChannelDifference'])
+        history = [call for call in calls if type(call).__name__ == 'GetHistory']
+        self.assertEqual([(call.offset_id, call.min_id, call.max_id, call.limit) for call in history],
+            [(10, 5, 10, 100), (8, 5, 10, 100), (6, 5, 10, 100)])
+
+    def test_initial_unread_empty_interval_still_needs_difference_not_fresh_baseline(self):
+        self.unread_backfill(dialog=tl('Dialog', peer=tl('PeerChannel', channel_id=55), read_inbox_max_id=9, top_message=9))
+        first = self.run_page(chat='-1000000000055', unread_backfill=True)
+        self.assertFalse(first['baselineOnly'])
+        self.assertEqual(first['events'], [])
+        self.assertTrue(first['hasMore'])
+        self.assertEqual([type(call).__name__ for call in self.provider.calls], ['GetFullChannel', 'GetDialogs'])
+
+    def test_unread_backfill_foreign_duplicate_unavailable_and_oversized_pages_never_return_cursor(self):
+        wrong = message(9, peer=tl('PeerChannel', channel_id=56))
+        valid = message(9, peer=tl('PeerChannel', channel_id=55))
+        for rows in ([wrong], [valid, valid], [message(10, peer=tl('PeerChannel', channel_id=55))],
+                     [tl('MessageEmpty', id=8)], [valid]*101):
+            with self.subTest(rows=len(rows)):
+                # Each attempt is a read-only initial call, not mutation replay.
+                with mock.patch.object(M, 'import_telethon_monitor_history', return_value=(request('GetDialogs'), request('GetHistory'), request('InputDialogPeer'))):
+                    self.provider.get_input_entity = mock.AsyncMock(return_value=tl('InputPeerChannel', channel_id=55))
+                    original = self.provider.__class__.__call__
+                    async def dispatch(provider, call):
+                        if type(call).__name__ == 'GetDialogs':
+                            return NS(dialogs=[tl('Dialog', peer=tl('PeerChannel', channel_id=55), read_inbox_max_id=5, top_message=9)])
+                        if type(call).__name__ == 'GetHistory':
+                            return tl('Messages', messages=rows)
+                        return await original(provider, call)
+                    with mock.patch.object(self.provider.__class__, '__call__', dispatch), self.assertRaises(M.TelegramRuntimeError):
+                        self.run_page(chat='-1000000000055', unread_backfill=True)
+
+    def test_unread_backfill_failure_retains_exact_checkpoint_and_service_only_page_advances(self):
+        service = tl('MessageService', id=8, peer_id=tl('PeerChannel', channel_id=55))
+        self.unread_backfill([tl('MessagesSlice', messages=[service]), TimeoutError('PRIVATE SESSION'),
+            tl('Messages', messages=[])])
+        first = self.run_page(chat='-1000000000055', unread_backfill=True)
+        self.assertEqual(first['events'], [])
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            self.run_page(first['nextCursor'], chat='-1000000000055')
+        self.assertEqual(caught.exception.code, 'TELEGRAM_MONITOR_UNAVAILABLE')
+        self.assertNotIn('PRIVATE', json.dumps(caught.exception.public_payload()))
+        done = self.run_page(first['nextCursor'], chat='-1000000000055')
+        self.assertTrue(done['hasMore'])
+        self.assertEqual(self.provider.calls[-1].offset_id, 8)
+        self.assertEqual(self.provider.calls[-2].offset_id, 8)
+
+    def test_unread_backfill_cannot_reset_cursor_or_guess_channel_before_session_io(self):
+        with mock.patch.object(M, 'build_client') as build:
+            for chat, cursor in ((None, None), ('@name', None), ('-1000000000055', 'old-cursor')):
+                with self.assertRaises(M.TelegramRuntimeError) as caught:
+                    self.run_page(cursor, chat=chat, unread_backfill=True)
+                self.assertEqual(caught.exception.code, 'TELEGRAM_MONITOR_INVALID_INPUT')
+            build.assert_not_called()
+        self.assertEqual(self.provider.calls, [])
+        self.assertEqual(self.provider.connect.await_count, 0)
+
+    def test_unread_backfill_rejects_unknown_dialog_scope_or_read_boundary(self):
+        self.unread_backfill()
+        for dialog in (tl('DialogFolder', peer=tl('PeerChannel', channel_id=55)),
+                       tl('Dialog', peer=tl('PeerChannel', channel_id=56), read_inbox_max_id=5, top_message=9),
+                       tl('Dialog', peer=tl('PeerChannel', channel_id=55), read_inbox_max_id=None, top_message=9),
+                       tl('Dialog', peer=tl('PeerChannel', channel_id=55), read_inbox_max_id=True, top_message=9),
+                       tl('Dialog', peer=tl('PeerChannel', channel_id=55), read_inbox_max_id=0, top_message=2**31-1)):
+            self.dialog = dialog
+            with self.assertRaises(M.TelegramRuntimeError):
+                self.run_page(chat='-1000000000055', unread_backfill=True)
+        self.assertNotIn('GetHistory', [type(call).__name__ for call in self.provider.calls])
+
     def test_baseline_is_explicit_and_only_reads_current_position(self):
         self.baseline()
         self.assertEqual([type(call).__name__ for call in self.provider.calls], ['GetState'])
