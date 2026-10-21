@@ -347,5 +347,82 @@ class ChannelToolsTests(unittest.TestCase):
         self.client.forward_messages.assert_not_awaited()
 
 
-if __name__ == "__main__":
+class ScheduledBulkTests(unittest.TestCase):
+    files = ChannelToolsTests.files
+    album_argv = ChannelToolsTests.album_argv
+    setUpBase = base.MessageWorkflowsTests.setUp
+    setUp = ChannelToolsTests.setUp
+    message = ChannelToolsTests.message
+    graph = ChannelToolsTests.graph
+    run_cli = ChannelToolsTests.run_cli
+    source_forward = ChannelToolsTests.source_forward
+
+    def setUp(self):
+        ChannelToolsTests.setUp(self)
+        self.client._call = mock.AsyncMock()
+
+    def test_forward_of_incoming_original_and_schedule_verified_in_queue_namespace(self):
+        argv = self.source_forward() + ['--schedule-at', '2026-10-30T12:00:00Z']
+        self.client.messages[(-1000000000077, 42)].out = False
+        queued = self.client.forward_messages.return_value[0]
+        queued.date = M.parse_schedule_at('2026-10-30T12:00:00Z')
+        with mock.patch.object(M, 'get_scheduled_target', new=mock.AsyncMock(return_value=queued)) as read_queue:
+            preview = self.run_cli(*argv, '--dry-run')
+            result = self.run_cli(*argv, '--confirm', '--approval-hash', preview['approvalHash'])
+            self.assertTrue(result['scheduled'])
+            self.assertFalse(result['sent'])
+            read_queue.assert_awaited_once_with(self.client, self.group, 100)
+            self.assertEqual(self.client.forward_messages.call_args.kwargs['schedule'], queued.date)
+
+    def test_schedule_change_requires_new_preview_and_missing_queue_is_unknown(self):
+        argv = self.source_forward()
+        schedule = ['--schedule-at', '2026-10-30T12:00:00Z']
+        preview = self.run_cli(*argv, *schedule, '--dry-run')
+        with self.assertRaises(M.TelegramRuntimeError):
+            self.run_cli(*argv, '--confirm', '--approval-hash', preview['approvalHash'])
+        self.client.forward_messages.assert_not_awaited()
+        with mock.patch.object(M, 'get_scheduled_target', new=mock.AsyncMock(side_effect=M.TelegramRuntimeError('missing'))):
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.run_cli(*argv, *schedule, '--confirm', '--approval-hash', preview['approvalHash'])
+            self.assertEqual(caught.exception.code, 'TELEGRAM_BULK_DELIVERY_UNKNOWN')
+
+    def test_incoming_album_can_be_read_without_own_queue_restrictions(self):
+        self.message(41, grouped_id=11, out=False, media=base.TL(), photo=base.TL())
+        self.message(42, grouped_id=11, out=False, media=base.TL(), photo=base.TL())
+        result = self.run_cli('album', '--chat', '@group', '--message-id', '42')
+        self.assertEqual([row['id'] for row in result['messages']], [41, 42])
+
+    def test_schedule_below_lead_time_fails_before_upload_or_send(self):
+        argv = self.source_forward()
+        with self.assertRaises(M.TelegramRuntimeError):
+            self.run_cli(*argv, '--schedule-at', '2026-09-05T00:00:30Z', '--dry-run')
+        self.client.forward_messages.assert_not_awaited()
+
+    def test_album_schedule_keeps_bytes_and_verifies_every_queue_entry(self):
+        argv = self.album_argv() + ['--schedule-at', '2026-10-30T12:00:00Z']
+        date = M.parse_schedule_at('2026-10-30T12:00:00Z')
+        rows = [self.message(100, date=date, message='Альбом', entities=base.markdown('**Альбом**')[1], grouped_id=99, media=base.TL(), photo=base.TL()),
+                self.message(101, date=date, message='', grouped_id=99, media=base.TL(), photo=base.TL())]
+        self.client.send_file = mock.AsyncMock(return_value=rows)
+        with mock.patch.object(M, 'get_scheduled_target', new=mock.AsyncMock(side_effect=rows)) as queue:
+            preview = self.run_cli(*argv, '--dry-run')
+            result = self.run_cli(*argv, '--confirm', '--approval-hash', preview['approvalHash'])
+            self.assertTrue(result['scheduled'])
+            self.assertFalse(result['sent'])
+            self.assertEqual(queue.await_count, 2)
+            self.assertEqual(self.client.send_file.call_args.kwargs['schedule'], date)
+            self.assertTrue(all(file.closed for file in self.client.send_file.call_args.args[1]))
+
+    def test_slow_upload_cannot_turn_scheduled_album_into_immediate_send(self):
+        date = M.parse_schedule_at('2026-10-30T12:00:00Z')
+        original = self.client._call
+        with self.assertRaises(M.TelegramRuntimeError):
+            with C.scheduled_request_fence(self.client, date, M):
+                with mock.patch.object(M, 'utc_now', return_value=date):
+                    asyncio.run(self.client._call('sender', TL('SendMultiMediaRequest')()))
+        original.assert_not_awaited()
+        self.assertIs(self.client._call, original)
+
+
+if __name__ == '__main__':
     unittest.main()

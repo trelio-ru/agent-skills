@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.8.0",
-    "summary": "Подписчики и аналитика каналов, пересылки и комментарии в метриках постов, чтение и отправка альбомов и пересылка оригиналов с проверкой перед отправкой."
+    "version": "2.9.0",
+    "summary": "Темы групп, реакции, опросы, закрепы, отложенные альбомы и пересылки, статистика постов, пригласительные ссылки и обработка заявок."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.8.0",
+    "version": "2.9.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
@@ -49,6 +49,11 @@
       {
         "source": "scripts/channel_tools.py",
         "path": "channel_tools.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/community_tools.py",
+        "path": "community_tools.py",
         "mode": 420
       },
       {
@@ -89,6 +94,11 @@
       {
         "source": "scripts/instruction-guides/part-08.md",
         "path": "instruction-guides/part-08.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-09.md",
+        "path": "instruction-guides/part-09.md",
         "mode": 420
       }
     ]
