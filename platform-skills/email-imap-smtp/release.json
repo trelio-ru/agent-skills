@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.6.0",
-    "summary": "Пассивная bounded проверка новых IMAP UID со scoped checkpoint и явной сменой UIDVALIDITY без read receipts и отправки."
+    "version": "2.6.1",
+    "summary": "Точное чтение IMAP monitor reference по scope/UIDVALIDITY/UID с проверкой полного literal до allocation, без Seen и частичного результата."
   },
   "connection": null,
   "runtime": {
-    "version": "2.6.0",
+    "version": "2.6.1",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-email.py",

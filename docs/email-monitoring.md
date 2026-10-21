@@ -46,3 +46,36 @@ source merge не устанавливает монитор и не меняет
 
 Нормативные границы: [UID/UIDNEXT/UIDVALIDITY](https://www.rfc-editor.org/rfc/rfc9051.html#section-2.3.1.1),
 [EXAMINE](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.3.3).
+
+## Чтение точной ссылки
+
+`read-reference --uid UID --uid-validity UIDVALIDITY --expected-revision SHA256`
+использует тот же выбранный account/folder, native guardian и credential lease.
+Синтаксический отказ предшествует native unlock; SMTP-only остаётся закрытым.
+Общий `email_reference_revision` вычисляет прежний monitor digest из native
+scope/UIDVALIDITY/UID. Это IMAP identity, не body hash и не право создавать задачу.
+Неверная папка/account/company binding или смена UIDVALIDITY дают
+`EMAIL_REFERENCE_CHANGED` до FETCH; после чтения readonly EXAMINE повторяется.
+Перезапись сервером тела при сохранённом UID не заявлена как отдельное событие.
+
+Используются общий `fetch_raw_message` и обычная проекция письма. В строгом режиме
+запрашиваются UID/RFC822.SIZE/BODY.PEEK[]; native ответ должен содержать ровно одну
+полную literal, тот же UID и совпадающие размеры. Порядок attributes до/после
+literal допустим; неизвестные/повторные fields либо другая запись отклоняются.
+Длина literal проверяется до чтения/выделения памяти через временный reader
+только этой owned connection; он восстанавливается в finally. Global SDK,
+общая сеть, другие accounts и обычный wire contract не меняются.
+
+Ответ `email-message-read/v1` содержит точную reference, общую content projection,
+SHA-256 оригинальных RFC822 bytes и coverage. Проекция свыше 256 КиБ либо literal
+свыше общего 25 МиБ bound дают `EMAIL_REFERENCE_INCOMPLETE`, без усечения.
+Вложения представлены metadata; `attachmentsContentRead=false` не доказывает их
+анализа. Parser/server/cleanup failure возвращает `EMAIL_REFERENCE_UNAVAILABLE`
+без raw diagnostics или частичного успешного ответа. Нет writable SELECT,
+STORE, EXPUNGE, SMTP, read receipt, сброса cursor или чтения других сообщений.
+
+Это примитив чтения, не активированный source или ACK. Host отдельно проверяет
+принятую задачу/аудиторию, queued reference и committed processing, прежде чем
+разрешать независимую отметку «прочитано». Текст письма не становится authority.
+`test_message_reference.py` проходит настоящий IMAP encoder/parser с synthetic
+socket stream, включая giant literal до allocation и ошибки cleanup.
