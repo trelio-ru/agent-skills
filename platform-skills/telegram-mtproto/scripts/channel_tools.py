@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "2.10.0"
+VERSION = "2.11.0"
 MAX_ALBUM_ITEMS = 10
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_ALBUM_BYTES = 100 * 1024 * 1024
@@ -57,6 +57,8 @@ def add_parsers(commands, positive_id):
         mode.add_argument("--dry-run", action="store_true")
         mode.add_argument("--confirm", action="store_true")
         parser.add_argument("--approval-hash")
+        # Per-call authorship never changes Telegram's saved default.
+        parser.add_argument("--send-as")
 
 
 def api():
@@ -359,8 +361,13 @@ async def bulk_mutation(client, args, identity, r):
         operation["scheduledAt"] = r.format_utc_datetime(scheduled_at) if scheduled_at else None
         preview["scheduledAt"] = operation["scheduledAt"]
         options = r.import_authoring_tools().delivery_options(args)
-        operation["deliveryOptions"] = options
-        preview["deliveryOptions"] = options
+        operation["deliveryOptions"] = dict(options)
+        preview["deliveryOptions"] = dict(options)
+        selected_sender = None
+        if getattr(args, "send_as", None) is not None:
+            native_sender, selected_sender = await r.import_interaction_tools().select_sender(client, destination, account, args.send_as, r)
+            operation["sender"] = preview["sender"] = selected_sender
+            options["send_as"] = native_sender
         if args.command == "send-album":
             files, file_previews = frozen_files(args.file, r)
             # Existing caption reader already guards local UTF-8 input. The
@@ -426,7 +433,7 @@ async def bulk_mutation(client, args, identity, r):
                         raise ValueError
                     verified.append(queued)
                 sent = verified
-            if getattr(args, "silent", False) and not scheduled_at:
+            if (getattr(args, "silent", False) or selected_sender is not None) and not scheduled_at:
                 sent = [checked_message(r, utils, destination, await client.get_messages(destination, ids=row.id), row.id) for row in sent]
             seen_ids = set()
             for index, row in enumerate(sent):
@@ -436,6 +443,8 @@ async def bulk_mutation(client, args, identity, r):
                 seen_ids.add(row_id)
                 checked_message(r, utils, destination, row, row_id)
                 r.import_authoring_tools().verify_delivery(row, args, r)
+                if selected_sender is not None:
+                    r.import_interaction_tools().verify_sender(row, destination, selected_sender, r, utils)
                 if not getattr(row, "out", False):
                     raise ValueError
                 if args.command == "forward":
@@ -455,6 +464,8 @@ async def bulk_mutation(client, args, identity, r):
                     "messages": [public_row(r, row, destination) for row in sent],
                     "retryPolicy": "Do not repeat automatically; read back exact destination first.",
                     "securityBoundary": "chat-only"}
+            if selected_sender is not None:
+                result["sender"] = selected_sender
             if len(json.dumps(result, ensure_ascii=False).encode()) > 28_000:
                 raise ValueError
             return result

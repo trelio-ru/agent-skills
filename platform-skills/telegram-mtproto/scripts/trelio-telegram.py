@@ -83,6 +83,7 @@ MAX_FILE_NAME_CHARS = 512
 CHANNEL_TOOLS_MODULE = None
 COMMUNITY_TOOLS_MODULE = None
 AUTHORING_TOOLS_MODULE = None
+INTERACTION_TOOLS_MODULE = None
 # Reaction metadata travels with every normalized message, including period
 # exports. Bound it here rather than adding unbounded per-message RPC lookups.
 MAX_REACTION_TYPES = 64
@@ -1442,6 +1443,18 @@ def import_authoring_tools():
     return AUTHORING_TOOLS_MODULE
 
 
+def import_interaction_tools():
+    """Load the signed per-chat author/capability sibling without native IO."""
+    global INTERACTION_TOOLS_MODULE
+    if INTERACTION_TOOLS_MODULE is None:
+        source = Path(__file__).resolve().with_name("interaction_tools.py")
+        spec = importlib.util.spec_from_file_location("trelio_telegram_interaction_tools", source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        INTERACTION_TOOLS_MODULE = module
+    return INTERACTION_TOOLS_MODULE
+
+
 def import_telethon_global_search():
     """Load the fixed TL request and helpers used by resumable global search."""
 
@@ -1603,7 +1616,7 @@ def build_client(args: argparse.Namespace, identity: Identity):
     # outcome to the caller instead of silently submitting it a second time.
     # Ordinary reads retain the library's safe retry behavior.
     request_policy = {}
-    if getattr(args, "command", None) in (import_community_tools().COMMANDS | import_authoring_tools().COMMANDS):
+    if getattr(args, "command", None) in (import_community_tools().COMMANDS | import_authoring_tools().COMMANDS | import_interaction_tools().COMMANDS):
         request_policy = {"receive_updates": False}
     if getattr(args, "command", None) in {"monitor", "read-reference", "audience-count", "channel-stats", "album"}:
         # The fixed poll owns its explicit cursor. Disable the SDK's parallel
@@ -1619,11 +1632,13 @@ def build_client(args: argparse.Namespace, identity: Identity):
     }:
         request_policy = {"request_retries": 0, "flood_sleep_threshold": 0,
                           "raise_last_call_error": True}
-    if getattr(args, "command", None) in (import_community_tools().MUTATIONS | import_authoring_tools().MUTATIONS):
+    if getattr(args, "command", None) in (import_community_tools().MUTATIONS | import_authoring_tools().MUTATIONS | import_interaction_tools().MUTATIONS):
         # Even metadata writes (pins, reactions, admissions) are not safe to
         # re-submit after a lost reply. Read-only previews use the same client.
         request_policy = {"receive_updates": False, "request_retries": 0,
                           "flood_sleep_threshold": 0, "raise_last_call_error": True}
+    if getattr(args, "send_as", None) is not None:
+        request_policy["receive_updates"] = False
     return TelegramClient(
         str(session_path(identity)),
         api_id,
@@ -4443,7 +4458,10 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
     text = outgoing_text(args)
     _functions, _types, utils, _events, markdown = import_telethon_workflows()
     expected_text, _entities = markdown.parse(text)
-    mode = assert_send_allowed(identity, confirmed=args.confirm)
+    selected_author = getattr(args, "send_as", None) is not None
+    if not selected_author and (getattr(args, "dry_run", False) or getattr(args, "approval_hash", None)):
+        raise TelegramRuntimeError("--dry-run/--approval-hash on reply require --send-as.")
+    mode = assert_send_allowed(identity, confirmed=args.confirm) if not selected_author else None
     schedule_at = parse_schedule_at(args.schedule_at) if args.schedule_at else None
     client = build_client(args, identity)
     started = False
@@ -4454,6 +4472,9 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
         # Sending to the broadcast peer would publish an unrelated channel post.
         if getattr(entity, "broadcast", False):
             entity, target = await discussion_root(client, entity, target.id)
+        if selected_author:
+            return await import_interaction_tools().explicit_send(client, entity, target, args, identity,
+                       await client.get_me(), sys.modules[__name__], utils, markdown)
         options = {"reply_to": target.id, "file": args.file, "parse_mode": TELEGRAM_TEXT_PARSE_MODE,
                    **import_authoring_tools().delivery_options(args)}
         if schedule_at is not None:
@@ -4482,7 +4503,13 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
             raise
         raise TelegramRuntimeError("Cannot validate the Telegram reply target; nothing was sent.") from error
     finally:
-        await client.disconnect()
+        try:
+            await client.disconnect()
+        except Exception as error:
+            if selected_author:
+                raise TelegramRuntimeError("Telegram cleanup failed; verify exact chat/queue before retrying.",
+                    code="TELEGRAM_ACTION_OUTCOME_UNKNOWN" if not args.dry_run else None) from error
+            raise
 
 
 async def command_read_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
@@ -5437,10 +5464,10 @@ def outgoing_text(args: argparse.Namespace) -> str:
 
 
 async def command_send_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
-    mode = assert_send_allowed(
-        identity,
-        confirmed=args.confirm,
-    )
+    selected_author = getattr(args, "send_as", None) is not None
+    if not selected_author and (getattr(args, "dry_run", False) or getattr(args, "approval_hash", None)):
+        raise TelegramRuntimeError("--dry-run/--approval-hash on send require --send-as.")
+    mode = assert_send_allowed(identity, confirmed=args.confirm) if not selected_author else None
     text = outgoing_text(args)
     schedule_at = (
         parse_schedule_at(args.schedule_at)
@@ -5448,9 +5475,13 @@ async def command_send_async(args: argparse.Namespace, identity: Identity) -> di
         else None
     )
     client = build_client(args, identity)
-    await ensure_authorized(client)
     try:
+        await ensure_authorized(client)
         entity = await resolve_entity(client, args.chat)
+        if selected_author:
+            _f, _t, utils, _events, markdown = import_telethon_workflows()
+            return await import_interaction_tools().explicit_send(client, entity, None, args, identity,
+                       await client.get_me(), sys.modules[__name__], utils, markdown)
         send_options: dict[str, Any] = {
             "file": args.file,
             "parse_mode": TELEGRAM_TEXT_PARSE_MODE,
@@ -5489,11 +5520,19 @@ async def command_send_async(args: argparse.Namespace, identity: Identity) -> di
     except TelegramRuntimeError:
         raise
     except Exception as error:
+        if selected_author:
+            raise TelegramRuntimeError("Telegram selected-author send is unavailable; verify exact state before retrying.") from error
         raise TelegramRuntimeError(
             f"Telegram send failed or its result is ambiguous: {error}. Do not retry automatically."
         ) from error
     finally:
-        await client.disconnect()
+        try:
+            await client.disconnect()
+        except Exception as error:
+            if selected_author:
+                raise TelegramRuntimeError("Telegram cleanup failed; verify exact chat/queue before retrying.",
+                    code="TELEGRAM_ACTION_OUTCOME_UNKNOWN" if not args.dry_run else None) from error
+            raise
 
 
 def edit_text(args: argparse.Namespace) -> str:
@@ -6286,6 +6325,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
             return asyncio.run(command_audience_count_async(args, identity))
         if args.command in {"channel-stats", "album", "send-album", "forward"}:
             return asyncio.run(import_channel_tools().run(args, identity, sys.modules[__name__]))
+        if args.command in import_interaction_tools().COMMANDS:
+            return asyncio.run(import_interaction_tools().run(args, identity, sys.modules[__name__]))
         if args.command in import_authoring_tools().COMMANDS:
             return asyncio.run(import_authoring_tools().run(args, identity, sys.modules[__name__]))
         if args.command in import_community_tools().COMMANDS:
@@ -6419,6 +6460,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_channel_tools().add_parsers(commands, positive_message_id)
     import_community_tools().add_parsers(commands, positive_message_id)
     import_authoring_tools().add_parsers(commands, positive_message_id)
+    import_interaction_tools().add_parsers(commands, positive_message_id)
     commands.add_parser("bootstrap", help="Install the pinned local Telethon runtime")
     commands.add_parser("doctor", help="Check local runtime, policy and session without revealing secrets")
     policy = commands.add_parser("policy", help="Read or update local sending policy")
@@ -6513,6 +6555,7 @@ def build_parser() -> argparse.ArgumentParser:
     reply.add_argument("--schedule-at")
     reply.add_argument("--confirm", action="store_true")
     import_authoring_tools().delivery_parsers(reply)
+    import_interaction_tools().sender_parser(reply, simple=True)
     transcribe = commands.add_parser("transcribe", help="Transcribe one voice/round video through Telegram")
     add_message_target_arguments(transcribe)
     transcribe.add_argument("--wait-seconds", type=int, choices=range(0, 31), default=20, metavar="0..30")
@@ -6606,6 +6649,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     send.add_argument("--confirm", action="store_true")
     import_authoring_tools().delivery_parsers(send)
+    import_interaction_tools().sender_parser(send, simple=True)
     edit = commands.add_parser(
         "edit",
         help="Edit one own outgoing message after a live dry-run preview",
