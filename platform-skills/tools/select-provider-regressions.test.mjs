@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { selectProviderRegressions } from "./select-provider-regressions.mjs";
+import { readProviderRegistrations } from "./provider-ci.mjs";
 
 test("VK Ads native credential regressions run on macOS and Windows alongside Linux fail-closed tests", () => {
   const selection = selectProviderRegressions(["platform-skills/vk-ads/scripts/storage.mjs"]);
@@ -97,9 +98,14 @@ test("shared tooling and workflow changes retain the full regression gate", () =
   ]) {
     const selection = selectProviderRegressions([filePath]);
     assert.equal(selection.full, true, filePath);
-    assert.equal(selection.hostedMatrix.include.length, 33, filePath);
-    assert.deepEqual(selection.hostedMatrix.include.filter(row => row.skill === 'avito').map(row => row.os),
-      ['ubuntu-latest', 'macos-latest', 'windows-latest'], filePath);
+    // Ten historical matrix providers plus every provider-owned registration.
+    // A new ci.json must extend full gates and retain all three OS per skill.
+    const registrations = Object.keys(readProviderRegistrations());
+    assert.equal(selection.hostedMatrix.include.length, (10 + registrations.length) * 3, filePath);
+    for (const skill of registrations) {
+      assert.deepEqual(selection.hostedMatrix.include.filter(row => row.skill === skill).map(row => row.os),
+        ['ubuntu-latest', 'macos-latest', 'windows-latest'], `${filePath}: ${skill}`);
+    }
     assert.ok(selection.selfHostedSkills.includes("vk-ads"), filePath);
     assert.ok(selection.selfHostedSkills.includes("document-facsimile"), filePath);
     assert.ok(selection.selfHostedSkills.includes("gosuslugi"), filePath);

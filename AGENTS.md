@@ -194,6 +194,13 @@ text-first, pacing и лимит пяти вкладок;
 с зачётом размышлений; обычное чтение и открытие источника не задерживаются.
 Пять вкладок за browser lifetime, close при завершении; overflow onCreated
 не обещает предотвратить transient появление popup.
+ВКонтакте следует отдельным [workflow](platform-skills/vk/references/workflow.md)
+и [security](platform-skills/vk/references/security.md) на том же visual host API.
+Проверенный вход обязателен до рабочих действий; гостевой режим не поддерживается.
+Exact social/login origins не расширяются wildcard ради VK ID, CDN или отказа;
+vk-ads и его credentials остаются отдельно. Перед записью сверяются account,
+автор (профиль/сообщество), получатель и текст. Чтение диалога не обещает passive
+PEEK, а synthetic dispatch не доказывает live VK compatibility.
 Изменение поведения одновременно обновляет контракт и содержательные тесты.
 Google AI Search следует полному [контракту](platform-skills/google-ai-search/SKILL.md):
 instruction-only browser tool, скрытая вкладка без изменения host launch policy,
