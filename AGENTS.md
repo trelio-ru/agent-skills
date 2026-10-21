@@ -22,6 +22,8 @@ Native DialogFolder исключается по constructor до чтения pe
 сводная строка архива не является чатовой принадлежностью либо history target.
 
 Для нескольких личных аккаунтов читай [общий контракт](docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов): каталог и company bindings принадлежат host, protected storage и вход – provider-у.
+Для WhatsApp discovery, recency, date-only поиска, coverage и browser fallback
+читай [контракт WhatsApp](docs/whatsapp-web-agent-skill.md#поиск-последней-переписки).
 Для VK Рекламы читай полный [workflow](platform-skills/vk-ads/references/workflow.md)
 и [security](platform-skills/vk-ads/references/security.md): paused creation,
 scoped планы, persisted receipts, read-back и запрет replay неизвестной записи.

@@ -190,6 +190,102 @@ test('reads retain unread and partial coverage; equal display names never resolv
   await assert.rejects(client.execute({command:'read',chat:'Тест'}),/chat_ambiguous/);
   assert.equal((await client.execute({command:'read',chat})).messages.length,1);
 });
+test('recent dialogs find a differently named contractor beyond the former first page without changing unread',async()=>{
+  const {client,calls,saved}=fixture('read-only');
+  for(let i=0;i<40;i++){
+    const id=`${10000000000+i}@s.whatsapp.net`;
+    client.data.chats[id]={id,name:`Синтетический контакт ${i}`,unreadCount:i===0?5:0};
+    client.ingest([{key:{remoteJid:id,id:`OLD${i}`},message:{conversation:'Старая переписка'},messageTimestamp:100+i}]);
+  }
+  const contractor='99999999999@s.whatsapp.net';
+  client.data.chats[contractor]={id:contractor,name:'Подрядчик',unreadCount:1};
+  client.ingest([{key:{remoteJid:contractor,id:'LATEST'},message:{conversation:'Предложение по работам'},messageTimestamp:1000}]);
+  assert.deepEqual((await client.execute({command:'dialogs',query:'Предполагаемое имя'})).dialogs,[]);
+  const result=await client.execute({command:'dialogs',limit:2});
+  assert.equal(result.dialogs[0].id,contractor);assert.equal(result.dialogs[0].lastMessageTimestamp,1000);
+  assert.equal(result.dialogs[0].lastMessageId,'LATEST');assert.equal(result.coverage.order,'newest');
+  assert.equal(result.coverage.historyReceivedThisSession,false);assert.equal(result.coverage.hasMore,true);
+  assert.equal(client.data.chats[contractor].unreadCount,1);assert.deepEqual(calls,[]);assert.deepEqual(saved,[]);
+  client.close();
+});
+test('dialog activity separates provider metadata from locally stored bodies and puts unknown dates last',async()=>{
+  const {client}=fixture();
+  client.data.chats[chat].conversationTimestamp=500;
+  client.ingest([{key:{remoteJid:chat,id:'KNOWN'},message:{conversation:'Синтетический текст'},messageTimestamp:9}]);
+  const unknown='999@lid',metadata='888@lid';
+  client.data.chats[unknown]={id:unknown};
+  client.data.chats[metadata]={id:metadata,conversationTimestamp:{toNumber:()=>1000}};
+  const result=await client.execute({command:'dialogs'});
+  assert.deepEqual(result.dialogs.map(row=>row.id),[metadata,chat,unknown]);
+  assert.equal(result.dialogs[0].lastMessageTimestamp,null);assert.equal(result.dialogs[0].lastActivityTimestamp,1000);
+  assert.equal(result.dialogs[1].lastMessageTimestamp,9);assert.equal(result.dialogs[1].lastActivityTimestamp,500);
+  assert.deepEqual((await client.execute({command:'dialogs',order:'oldest'})).dialogs.map(row=>row.id),[chat,metadata,unknown]);
+  assert.deepEqual((await client.execute({command:'dialogs',until:'1970-01-01T00:08:20Z'})).dialogs.map(row=>row.id),[chat]);
+  client.close();
+});
+test('date-only search includes captionless media, filenames and live updates without a history batch',async()=>{
+  const {client,calls,saved}=fixture('read-only');
+  const timestamp=Date.parse('2026-01-15T10:00:00+03:00')/1000;
+  client.ingest([
+    {key:{remoteJid:chat,id:'OLD'},message:{conversation:'Вчерашний текст'},messageTimestamp:timestamp-86400},
+    {key:{remoteJid:chat,id:'TEXT'},message:{conversation:'Цена работ'},messageTimestamp:timestamp},
+    {key:{remoteJid:chat,id:'FILE'},message:{documentMessage:{fileName:'Предложение.pdf',url:'https://private.example',mediaKey:Buffer.from('PRIVATE')}},messageTimestamp:timestamp+1},
+    {key:{remoteJid:chat,id:'VIDEO'},message:{videoMessage:{mimetype:'video/mp4'}},messageTimestamp:timestamp+2}
+  ]);
+  const range={since:'2026-01-15T00:00:00+03:00',until:'2026-01-15T23:59:59+03:00'};
+  for(const query of [undefined,'','   ']){
+    const result=await client.execute({command:'search',...range,...(query===undefined?{}:{query})});
+    assert.deepEqual(result.messages.map(row=>row.id),['VIDEO','FILE','TEXT']);
+    assert.equal(result.coverage.historyReceivedThisSession,false);assert.equal(result.coverage.complete,false);
+    assert.ok(!JSON.stringify(result).includes('PRIVATE')&&!JSON.stringify(result).includes('private.example'));
+  }
+  assert.deepEqual((await client.execute({command:'search',query:'предложение.pdf',...range})).messages.map(row=>row.id),['FILE']);
+  assert.equal(client.data.chats[chat].unreadCount,3);assert.deepEqual(calls,[]);assert.deepEqual(saved,[]);
+  client.close();
+});
+test('recent search uses numeric timestamps and stable bounded pages with date and ordering guards',async()=>{
+  const {client}=fixture();
+  for(const [id,time] of [['NINE',9],['TEN',10],['TIE',10],['UNKNOWN',null]])
+    client.ingest([{key:{remoteJid:chat,id},message:{conversation:'Синтетический текст'},messageTimestamp:time}]);
+  const first=await client.execute({command:'search',limit:1});
+  assert.equal(first.messages[0].timestamp,10);assert.equal(first.coverage.hasMore,true);
+  const seen=[first.messages[0].id];let cursor=first.coverage.nextCursor;
+  while(cursor){
+    const next=await client.execute({command:'search',limit:1,cursor});
+    seen.push(...next.messages.map(row=>row.id));cursor=next.coverage.nextCursor;
+  }
+  assert.deepEqual(new Set(seen),new Set(['TEN','TIE','NINE','UNKNOWN']));assert.equal(seen.length,4);
+  assert.deepEqual((await client.execute({command:'search',order:'oldest'})).messages.map(row=>row.timestamp),[9,10,10,null]);
+  await assert.rejects(client.execute({command:'search',cursor:first.coverage.nextCursor,order:'oldest'}),/cursor_context_mismatch/);
+  await assert.rejects(client.execute({command:'search',cursor:first.coverage.nextCursor,query:'другой'}),/cursor_context_mismatch/);
+  assert.deepEqual((await client.execute({command:'search',until:'1970-01-01T00:00:09Z'})).messages.map(row=>row.id),['NINE']);
+  await assert.rejects(client.execute({command:'search',since:'2026-01-16T00:00:00Z',until:'2026-01-15T00:00:00Z'}),/search_date_range_invalid/);
+  await assert.rejects(client.execute({command:'dialogs',since:'2026-01-15'}),/search_date_invalid/);
+  assert.throws(()=>validateRequest({command:'search',order:'invalid'}),/invalid_order/);
+  assert.throws(()=>validateRequest({command:'read',chat,order:'oldest'}),/invalid_order/);
+  client.close();
+});
+test('recent dialog pagination binds dates and direction and keeps timestamp ties distinct',async()=>{
+  const {client}=fixture();client.data.chats={};
+  for(const [id,time] of [['1@lid',9],['2@lid',10],['3@lid',10],['4@lid',null]])client.data.chats[id]={id,conversationTimestamp:time};
+  const first=await client.execute({command:'dialogs',limit:2});
+  assert.deepEqual(first.dialogs.map(row=>row.id),['2@lid','3@lid']);
+  const next=await client.execute({command:'dialogs',limit:2,cursor:first.coverage.nextCursor});
+  assert.deepEqual(next.dialogs.map(row=>row.id),['1@lid','4@lid']);assert.equal(next.coverage.hasMore,false);
+  await assert.rejects(client.execute({command:'dialogs',cursor:first.coverage.nextCursor,order:'oldest'}),/cursor_context_mismatch/);
+  await assert.rejects(client.execute({command:'dialogs',cursor:first.coverage.nextCursor,since:'1970-01-01T00:00:09Z'}),/cursor_context_mismatch/);
+  client.close();
+});
+test('current messages supersede old on-demand snapshots during recent discovery',async()=>{
+  const {client}=fixture();
+  const message={key:{remoteJid:chat,id:'SAME'},message:{conversation:'Прежний текст'},messageTimestamp:9};
+  client.data.historyRequests.extra={messages:[message]};
+  client.ingest([{...message,message:{conversation:'Обновлённый текст'},messageTimestamp:10}]);
+  const result=await client.execute({command:'search'});
+  assert.equal(result.messages.length,1);assert.equal(result.messages[0].text,'Обновлённый текст');
+  assert.equal((await client.execute({command:'dialogs'})).dialogs[0].lastMessageTimestamp,10);
+  client.close();
+});
 test('message projection excludes media URL and keys and retains reply/author identity',()=>{
   const raw={key:{remoteJid:chat,id:'M',participant:'999@lid'},message:{imageMessage:{caption:'Фото',url:'https://private.example',mediaKey:Buffer.from('PRIVATE'),fileSha256:Buffer.from('PRIVATE'),contextInfo:{stanzaId:'REPLY'}}}};
   const result=messageView(raw,sdk),json=JSON.stringify(result);
@@ -205,6 +301,11 @@ test('long history pages preserve complete bodies and a usable cursor within con
   assert.ok(first.messages.every(m=>m.text.length===20000));
   const second=await client.execute({command:'read',chat,limit:100,before:first.coverage.nextBeforeId});
   assert.ok(!second.messages.some(m=>first.messages.some(previous=>previous.id===m.id)));
+  const recent=await client.execute({command:'search',limit:100});
+  assert.ok(Buffer.byteLength(JSON.stringify(recent))<1024*1024);assert.equal(recent.coverage.hasMore,true);
+  assert.equal(recent.messages[0].id,'M99');assert.ok(recent.messages.every(m=>m.text.length===20000));
+  const older=await client.execute({command:'search',limit:100,cursor:recent.coverage.nextCursor});
+  assert.ok(!older.messages.some(m=>recent.messages.some(previous=>previous.id===m.id)));
   client.data.chats['999@g.us']={id:'999@g.us'};
   const unread=await client.execute({command:'unread'});
   assert.equal(unread.coverage.unknownUnreadChats,1);

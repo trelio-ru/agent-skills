@@ -11,8 +11,31 @@ export const COMMANDS = ['me', 'resolve', 'dialogs', 'contacts', 'read', 'unread
 export const isChatId = value => typeof value === 'string' && /^\d+(?:-\d+)?@(s\.whatsapp\.net|lid|g\.us)$/.test(value);
 const normalized = value => String(value || '').normalize('NFKC').trim().toLocaleLowerCase('ru');
 const stamp = value => Number(value?.toNumber?.() ?? value ?? 0);
+const knownStamp = value => { const timestamp = stamp(value); return Number.isSafeInteger(timestamp) && timestamp > 0 ? timestamp : null; };
 const keyId = key => JSON.stringify([key.remoteJid, key.id, Boolean(key.fromMe), key.participant || '']);
 const CONFIRMATION_WAIT_MS = 3000;
+
+// A cursor uses the same sortable key as the page, including numeric time and a
+// deterministic identity tie-breaker. Unknown time always follows known time;
+// message IDs, unread counters and insertion order do not establish recency.
+function chronologicalKey(timestamp, identity, order = 'newest') {
+  const value = knownStamp(timestamp);
+  const timeKey = value === null ? 0 : order === 'oldest' ? value : Number.MAX_SAFE_INTEGER - value;
+  return `${value === null ? 1 : 0}:${String(timeKey).padStart(16, '0')}:${identity}`;
+}
+function dateRange(packet) {
+  const boundary = value => {
+    if (value === undefined) return null;
+    requireThat(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?(?:Z|[+-]\d\d:\d\d)$/.test(value) && Number.isFinite(Date.parse(value)), 'search_date_invalid');
+    return Date.parse(value) / 1000;
+  };
+  const since = boundary(packet.since), until = boundary(packet.until);
+  requireThat(since === null || until === null || since <= until, 'search_date_range_invalid');
+  // A missing timestamp is not evidence that an item falls within a requested
+  // date range, including an upper-bound-only query.
+  return timestamp => (since === null && until === null) || (knownStamp(timestamp) !== null &&
+    (since === null || timestamp >= since) && (until === null || timestamp <= until));
+}
 
 // Protobuf toJSON persists enum names (for example "PENDING"), while live
 // Baileys events use numbers. Unknown values must never become an ACK through
@@ -64,11 +87,12 @@ export function validateRequest(packet) {
   requireThat(packet && typeof packet === 'object' && !Array.isArray(packet) && COMMANDS.includes(packet.command), 'unknown_command');
   const allowed = new Set(['command', 'sessionId', 'chat', 'query', 'limit', 'before', 'messageId', 'text', 'mode',
     'dryRun', 'confirm', 'approvalHash', 'requestId', 'output', 'file', 'mimeType', 'fileName', 'target', 'participants', 'title', 'description',
-    'phone', 'mediaType', 'archive', 'pin', 'muteUntil', 'blocked', 'invite', 'cursor', 'since', 'until', 'contact']);
+    'phone', 'mediaType', 'archive', 'pin', 'muteUntil', 'blocked', 'invite', 'cursor', 'since', 'until', 'contact', 'order']);
   requireThat(Object.keys(packet).every(key => allowed.has(key)), 'unsupported_option');
   for (const name of ['chat', 'query', 'before', 'messageId', 'text', 'mode', 'approvalHash', 'requestId', 'output', 'file', 'mimeType', 'fileName', 'target', 'title', 'description'])
     if (packet[name] !== undefined) requireThat(typeof packet[name] === 'string' && packet[name].length <= (name === 'text' ? 20000 : 2048) && !packet[name].includes('\0'), 'invalid_input');
   for (const name of ['dryRun', 'confirm']) if (packet[name] !== undefined) requireThat(typeof packet[name] === 'boolean', 'invalid_input');
+  if (packet.order !== undefined) requireThat(['dialogs','search'].includes(packet.command) && ['newest','oldest'].includes(packet.order), 'invalid_order');
   for (const name of ['archive', 'pin', 'blocked']) if (packet[name] !== undefined) requireThat(typeof packet[name] === 'boolean', 'invalid_input');
   for (const name of ['phone', 'mediaType', 'invite', 'cursor', 'since', 'until'])
     if (packet[name] !== undefined) requireThat(typeof packet[name] === 'string' && packet[name].length <= 4096 && !packet[name].includes('\0'), 'invalid_input');
@@ -283,27 +307,43 @@ export class WhatsAppClient {
   }
   coverage(extra = {}) { return { complete: false, scope: 'locally_synced_history', historyReceivedThisSession: this.historyReceived, syncedAt: this.syncAt, ...extra }; }
   listPage(rows, packet, property, identity = row => row.id || row.chatId) {
-    const binding = digest(JSON.stringify([packet.command, normalized(packet.query), packet.chat || null, packet.messageId || null, packet.since || null, packet.until || null]));
+    const timeOrdered = ['dialogs','search'].includes(packet.command);
+    const binding = digest(JSON.stringify([packet.command, normalized(packet.query), packet.chat || null, packet.messageId || null, packet.since || null, packet.until || null,
+      timeOrdered ? packet.order || 'newest' : null]));
     let after = null;
     if (packet.cursor) {
       let cursor;
       try { cursor = JSON.parse(Buffer.from(packet.cursor, 'base64url').toString()); } catch { throw new RuntimeError('cursor_invalid'); }
       requireThat(cursor?.binding === binding && typeof cursor.after === 'string', 'cursor_context_mismatch'); after = cursor.after;
     }
-    // Stable identity ordering avoids offset skips on growing live lists. The
-    // cursor binds the query, but cannot freeze WhatsApp's changing snapshot.
+    // The supplied key owns both ordering and pagination. Recency keys include
+    // time; other lists retain identity order. A live update can still move a
+    // row across the cursor, so callers must not treat this as a frozen snapshot.
     const ordered = rows.sort((a,b) => identity(a).localeCompare(identity(b), 'en'));
     const remaining = after === null ? ordered : ordered.filter(row => identity(row).localeCompare(after, 'en') > 0);
     const page = pageRows(remaining, packet.limit || 20);
-    return { [property]: page.items, coverage: this.coverage({ hasMore: page.hasMore, snapshotStable: false,
+    return { [property]: page.items, coverage: this.coverage({ ...(timeOrdered ? { order: packet.order || 'newest' } : {}), hasMore: page.hasMore, snapshotStable: false,
       nextCursor: page.hasMore ? Buffer.from(JSON.stringify({ binding, after: identity(page.items.at(-1)) })).toString('base64url') : null }) };
   }
   dialogs(query = '') {
-    return Object.values(this.data.chats).map(chat => ({ id: chat.id,
+    const latest = new Map();
+    for (const message of this.cachedMessages()) {
+      const timestamp = knownStamp(message.messageTimestamp), id = message.key.remoteJid;
+      if (timestamp !== null && (!latest.has(id) || timestamp > latest.get(id).timestamp)) latest.set(id, { timestamp, id: message.key.id });
+    }
+    return Object.values(this.data.chats).map(chat => {
+      const message = latest.get(chat.id), activity = knownStamp(chat.conversationTimestamp);
+      // Provider chat activity may be newer than the messages retained locally.
+      // Keep the two observations distinct: activity is useful for discovery,
+      // but never proves that the corresponding message body has been synced.
+      return { id: chat.id,
       name: chat.name || this.data.contacts[chat.id]?.name || this.data.contacts[chat.id]?.notify || chat.id,
       isGroup: chat.id.endsWith('@g.us'), unreadCount: Number.isInteger(chat.unreadCount) && chat.unreadCount >= 0 ? chat.unreadCount : null,
       archived: chat.archived ?? null, pinned: chat.pinned === undefined ? null : Boolean(chat.pinned),
-      muteUntil: Number.isFinite(Number(chat.muteEndTime)) ? Number(chat.muteEndTime) : null })).filter(chat => !query || normalized(`${chat.name} ${chat.id}`).includes(normalized(query)));
+      muteUntil: Number.isFinite(Number(chat.muteEndTime)) ? Number(chat.muteEndTime) : null,
+      lastActivityTimestamp: Math.max(activity || 0, message?.timestamp || 0) || null,
+      lastMessageTimestamp: message?.timestamp ?? null, lastMessageId: message?.id ?? null };
+    }).filter(chat => !query || normalized(`${chat.name} ${chat.id}`).includes(normalized(query)));
   }
   selfChatId() {
     // The authenticated socket owns this account identity. Project only the
@@ -330,6 +370,13 @@ export class WhatsAppClient {
     requireThat(matches.length === 1, 'message_not_unique_or_not_synced'); return matches[0];
   }
   messages(chat) { return Object.values(this.data.messages).filter(raw => !chat || raw.key.remoteJid === chat).sort((a,b) => stamp(a.messageTimestamp) - stamp(b.messageTimestamp)); }
+  cachedMessages(chat) {
+    const history = Object.values(this.data.historyRequests).flatMap(row => row.messages || []);
+    // Recent live state wins over older on-demand snapshots of the same exact
+    // message. Reading/searching this union never fetches, ACKs or marks a chat.
+    return [...new Map([...history, ...Object.values(this.data.messages)].filter(row =>
+      isChatId(row.key?.remoteJid) && row.key.id && row.message && (!chat || row.key.remoteJid === chat)).map(row => [keyId(row.key), row])).values()];
+  }
   view(raw) {
     const result = messageView(raw, this.sdk);
     if (raw.key.fromMe) {
@@ -553,7 +600,10 @@ export class WhatsAppClient {
       const chatId = this.selfChatId(); requireThat(chatId, 'self_identity_unavailable');
       return { chatId, isSelf: true };
     }
-    if (command === 'dialogs') return this.listPage(this.dialogs(packet.query), packet, 'dialogs');
+    if (command === 'dialogs') {
+      const inRange = dateRange(packet), rows = this.dialogs(packet.query).filter(row => inRange(row.lastActivityTimestamp));
+      return this.listPage(rows, packet, 'dialogs', row => chronologicalKey(row.lastActivityTimestamp, row.id, packet.order));
+    }
     if (command === 'contacts') {
       requireThat(packet.query?.trim(), 'query_required');
       const rows = Object.values(this.data.contacts).filter(c => normalized(`${c.name || ''} ${c.notify || ''} ${c.id}`).includes(normalized(packet.query)))
@@ -573,19 +623,13 @@ export class WhatsAppClient {
         unknownUnreadChats:all.filter(c=>c.unreadCount===null).length})};
     }
     if (command === 'search') {
-      requireThat(packet.query?.trim(), 'query_required'); const chat = packet.chat ? this.exactChat(packet.chat) : null;
-      const boundary = value => {
-        if (value === undefined) return null;
-        requireThat(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?(?:Z|[+-]\d\d:\d\d)$/.test(value) && Number.isFinite(Date.parse(value)), 'search_date_invalid');
-        return Date.parse(value) / 1000;
-      };
-      const since = boundary(packet.since), until = boundary(packet.until);
-      requireThat(since === null || until === null || since <= until, 'search_date_range_invalid');
-      const cache = Object.values(this.data.historyRequests).flatMap(row => row.messages || []);
-      const all = new Map([...this.messages(chat), ...cache.filter(row => !chat || row.key.remoteJid === chat)].map(row => [keyId(row.key), row]));
-      const rows = [...all.values()].map(m => this.view(m)).filter(m => normalized(m.text).includes(normalized(packet.query)) &&
-        (since === null || m.timestamp >= since) && (until === null || m.timestamp <= until));
-      return this.listPage(rows, packet, 'messages', row => JSON.stringify([row.timestamp, row.chatId, row.id]));
+      const chat = packet.chat ? this.exactChat(packet.chat) : null, inRange = dateRange(packet), query = normalized(packet.query);
+      // An omitted/empty query is intentional browsing, so date-only discovery
+      // also returns captionless media. A guessed word must not be mandatory
+      // when the operator only knows "the latest chat/message today".
+      const rows = this.cachedMessages(chat).map(m => this.view(m)).filter(m =>
+        (!query || normalized(`${m.text}\n${m.attachment?.fileName || ''}`).includes(query)) && inRange(m.timestamp));
+      return this.listPage(rows, packet, 'messages', row => chronologicalKey(row.timestamp, JSON.stringify([row.chatId,row.id]), packet.order));
     }
     if (command === 'create-group') return this.mutate(packet, null);
     const chat = this.exactChat(packet.chat);
