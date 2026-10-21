@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.9.0",
-    "summary": "Темы групп, реакции, опросы, закрепы, отложенные альбомы и пересылки, статистика постов, пригласительные ссылки и обработка заявок."
+    "version": "2.10.0",
+    "summary": "Облачные черновики, отправка без звука и управление превью ссылок, замена вложений, управление темами и пригласительными ссылками, сценарии поиска пропущенных ответов и сводок."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.9.0",
+    "version": "2.10.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
@@ -54,6 +54,11 @@
       {
         "source": "scripts/community_tools.py",
         "path": "community_tools.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/authoring_tools.py",
+        "path": "authoring_tools.py",
         "mode": 420
       },
       {
@@ -99,6 +104,11 @@
       {
         "source": "scripts/instruction-guides/part-09.md",
         "path": "instruction-guides/part-09.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-10.md",
+        "path": "instruction-guides/part-10.md",
         "mode": 420
       }
     ]

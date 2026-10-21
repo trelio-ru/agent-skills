@@ -82,6 +82,7 @@ MAX_CHAT_REFERENCE_CHARS = 256
 MAX_FILE_NAME_CHARS = 512
 CHANNEL_TOOLS_MODULE = None
 COMMUNITY_TOOLS_MODULE = None
+AUTHORING_TOOLS_MODULE = None
 # Reaction metadata travels with every normalized message, including period
 # exports. Bound it here rather than adding unbounded per-message RPC lookups.
 MAX_REACTION_TYPES = 64
@@ -1429,6 +1430,18 @@ def import_community_tools():
     return COMMUNITY_TOOLS_MODULE
 
 
+def import_authoring_tools():
+    """Load the closed signed sibling without SDK/storage access at import."""
+    global AUTHORING_TOOLS_MODULE
+    if AUTHORING_TOOLS_MODULE is None:
+        source = Path(__file__).resolve().with_name("authoring_tools.py")
+        spec = importlib.util.spec_from_file_location("trelio_telegram_authoring_tools", source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        AUTHORING_TOOLS_MODULE = module
+    return AUTHORING_TOOLS_MODULE
+
+
 def import_telethon_global_search():
     """Load the fixed TL request and helpers used by resumable global search."""
 
@@ -1590,7 +1603,7 @@ def build_client(args: argparse.Namespace, identity: Identity):
     # outcome to the caller instead of silently submitting it a second time.
     # Ordinary reads retain the library's safe retry behavior.
     request_policy = {}
-    if getattr(args, "command", None) in import_community_tools().COMMANDS:
+    if getattr(args, "command", None) in (import_community_tools().COMMANDS | import_authoring_tools().COMMANDS):
         request_policy = {"receive_updates": False}
     if getattr(args, "command", None) in {"monitor", "read-reference", "audience-count", "channel-stats", "album"}:
         # The fixed poll owns its explicit cursor. Disable the SDK's parallel
@@ -1606,7 +1619,7 @@ def build_client(args: argparse.Namespace, identity: Identity):
     }:
         request_policy = {"request_retries": 0, "flood_sleep_threshold": 0,
                           "raise_last_call_error": True}
-    if getattr(args, "command", None) in import_community_tools().MUTATIONS:
+    if getattr(args, "command", None) in (import_community_tools().MUTATIONS | import_authoring_tools().MUTATIONS):
         # Even metadata writes (pins, reactions, admissions) are not safe to
         # re-submit after a lost reply. Read-only previews use the same client.
         request_policy = {"receive_updates": False, "request_retries": 0,
@@ -4441,13 +4454,15 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
         # Sending to the broadcast peer would publish an unrelated channel post.
         if getattr(entity, "broadcast", False):
             entity, target = await discussion_root(client, entity, target.id)
-        options = {"reply_to": target.id, "file": args.file, "parse_mode": TELEGRAM_TEXT_PARSE_MODE}
+        options = {"reply_to": target.id, "file": args.file, "parse_mode": TELEGRAM_TEXT_PARSE_MODE,
+                   **import_authoring_tools().delivery_options(args)}
         if schedule_at is not None:
             assert_schedule_lead_time(schedule_at)
             options["schedule"] = schedule_at
         started = True
         sent = await client.send_message(entity, text or None, **options)
         exact_provider_message(sent, entity, sent.id, utils)
+        sent = await import_authoring_tools().delivery_readback(client, entity, sent, args, sys.modules[__name__])
         if not sent.out or getattr(sent, "reply_to_msg_id", None) != target.id or sent.message != expected_text:
             raise TelegramRuntimeError("The provider did not prove the exact reply target.")
         top = message_thread_id(target)
@@ -5439,6 +5454,7 @@ async def command_send_async(args: argparse.Namespace, identity: Identity) -> di
         send_options: dict[str, Any] = {
             "file": args.file,
             "parse_mode": TELEGRAM_TEXT_PARSE_MODE,
+            **import_authoring_tools().delivery_options(args),
         }
         if schedule_at is not None:
             # Re-check immediately before the decisive RPC. A timestamp that
@@ -5447,6 +5463,7 @@ async def command_send_async(args: argparse.Namespace, identity: Identity) -> di
             assert_schedule_lead_time(schedule_at)
             send_options["schedule"] = schedule_at
         sent = await client.send_message(entity, text or None, **send_options)
+        sent = await import_authoring_tools().delivery_readback(client, entity, sent, args, sys.modules[__name__])
         result = {
             "sent": schedule_at is None,
             "scheduled": schedule_at is not None,
@@ -6269,6 +6286,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
             return asyncio.run(command_audience_count_async(args, identity))
         if args.command in {"channel-stats", "album", "send-album", "forward"}:
             return asyncio.run(import_channel_tools().run(args, identity, sys.modules[__name__]))
+        if args.command in import_authoring_tools().COMMANDS:
+            return asyncio.run(import_authoring_tools().run(args, identity, sys.modules[__name__]))
         if args.command in import_community_tools().COMMANDS:
             return asyncio.run(import_community_tools().run(args, identity, sys.modules[__name__]))
         if args.command == "members":
@@ -6399,6 +6418,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     import_channel_tools().add_parsers(commands, positive_message_id)
     import_community_tools().add_parsers(commands, positive_message_id)
+    import_authoring_tools().add_parsers(commands, positive_message_id)
     commands.add_parser("bootstrap", help="Install the pinned local Telethon runtime")
     commands.add_parser("doctor", help="Check local runtime, policy and session without revealing secrets")
     policy = commands.add_parser("policy", help="Read or update local sending policy")
@@ -6492,6 +6512,7 @@ def build_parser() -> argparse.ArgumentParser:
     reply.add_argument("--file")
     reply.add_argument("--schedule-at")
     reply.add_argument("--confirm", action="store_true")
+    import_authoring_tools().delivery_parsers(reply)
     transcribe = commands.add_parser("transcribe", help="Transcribe one voice/round video through Telegram")
     add_message_target_arguments(transcribe)
     transcribe.add_argument("--wait-seconds", type=int, choices=range(0, 31), default=20, metavar="0..30")
@@ -6584,6 +6605,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Future RFC 3339 timestamp with seconds and an explicit UTC offset or Z",
     )
     send.add_argument("--confirm", action="store_true")
+    import_authoring_tools().delivery_parsers(send)
     edit = commands.add_parser(
         "edit",
         help="Edit one own outgoing message after a live dry-run preview",
