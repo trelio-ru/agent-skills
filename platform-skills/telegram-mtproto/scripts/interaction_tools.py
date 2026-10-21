@@ -9,7 +9,7 @@ import copy
 import re
 from contextlib import contextmanager
 
-VERSION = "2.11.0"
+VERSION = "2.12.0"
 READS = {"chat-info", "send-as"}
 MUTATIONS = {"delete"}
 COMMANDS = READS | MUTATIONS

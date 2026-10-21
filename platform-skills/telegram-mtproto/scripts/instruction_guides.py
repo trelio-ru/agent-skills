@@ -2,7 +2,7 @@
 import hashlib
 import pathlib
 
-FILES = ["part-01.md", "part-02.md", "part-03.md", "part-04.md", "part-05.md", "part-06.md", "part-07.md", "part-08.md", "part-09.md", "part-10.md", "part-11.md"]
+FILES = ["part-01.md", "part-02.md", "part-03.md", "part-04.md", "part-05.md", "part-06.md", "part-07.md", "part-08.md", "part-09.md", "part-10.md", "part-11.md", "part-12.md"]
 
 
 def get_instruction_guides():
