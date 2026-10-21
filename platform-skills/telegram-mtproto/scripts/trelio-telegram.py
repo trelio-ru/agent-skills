@@ -1551,7 +1551,7 @@ def build_client(args: argparse.Namespace, identity: Identity):
     # outcome to the caller instead of silently submitting it a second time.
     # Ordinary reads retain the library's safe retry behavior.
     request_policy = {}
-    if getattr(args, "command", None) == "monitor":
+    if getattr(args, "command", None) in {"monitor", "read-reference"}:
         # The fixed poll owns its explicit cursor. Disable the SDK's parallel
         # passive update subscription; it must not create an invisible second
         # source reader or alter the meaning of a delivered difference page.
@@ -4155,12 +4155,51 @@ async def resolve_message_target(client: Any, reference: MessageReference) -> tu
     return entity, message
 
 
+def validate_reference_read(args: argparse.Namespace) -> None:
+    """Only an exact native monitor reference, before credential/bootstrap I/O.
+
+    A URL, username, context radius or human-readable sender is not a source
+    identity. The expected digest binds semantic content including peer, native
+    sender, topic, direction and media metadata; it does not authorize a write.
+    """
+    chat = getattr(args, "chat", None)
+    message_id = getattr(args, "message_id", None)
+    expected = getattr(args, "expected_revision", None)
+    if (not isinstance(chat, str) or re.fullmatch(r"-?[1-9]\d{0,18}", chat) is None
+            or not 0 < abs(int(chat)) < 2**63
+            or type(message_id) is not int or not 0 < message_id < 2**31
+            or not isinstance(expected, str) or re.fullmatch(r"[a-f0-9]{64}", expected) is None
+            or getattr(args, "link", None) is not None or getattr(args, "context", 0) != 0):
+        raise TelegramRuntimeError("An exact native message reference and revision are required.", code="TELEGRAM_REFERENCE_INPUT_INVALID")
+
+
 async def command_message_read_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
+    exact_reference = getattr(args, "command", None) == "read-reference"
+    if exact_reference:
+        validate_reference_read(args)
     reference = message_reference(args)
     client = build_client(args, identity)
+    failure = None
     try:
         await ensure_authorized(client)
         entity, message = await resolve_message_target(client, reference)
+        if exact_reference:
+            _functions, _types, utils, _events, _markdown = import_telethon_workflows()
+            observed = monitor_message(message, utils, kind="new", channel_peer=int(args.chat))
+            if observed["revision"] != args.expected_revision:
+                raise TelegramRuntimeError("The observed Telegram message changed; retain the original reference.", code="TELEGRAM_REFERENCE_CHANGED")
+            # The ordinary safe field projection is shared, but its optional
+            # reply/context resolver is deliberately NOT called: one queued
+            # reference may not fetch a quoted message or neighboring history.
+            normalized = public_message(message)
+            normalized["link"] = message_link(entity, message.id)
+            if normalized["textTruncated"]:
+                raise TelegramRuntimeError("The exact Telegram text exceeds its read bound; no complete read was delivered.", code="TELEGRAM_REFERENCE_INCOMPLETE")
+            return {"schemaVersion": 1, "protocol": "telegram-message-read/v1",
+                    "reference": {key: value for key, value in observed.items() if key != "kind"},
+                    "message": normalized,
+                    "coverage": {"textComplete": True, "attachmentsContentRead": False, "contextIncluded": False},
+                    "readState": {"mode": "history-only", "marksRead": False, "readReceiptsSent": False, "viewsRegistered": False}}
         normalized = (await public_messages([message], entity))[0]
         result = {"chat": public_entity(entity), "message": normalized,
                   "readState": {"mode": "history-only", "marksRead": False}}
@@ -4169,12 +4208,25 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
             # context even when Telethon has not populated the message cache.
             result["context"] = await public_search_context(client, message, args.context, chat=entity)
         return result
-    except TelegramRuntimeError:
+    except TelegramRuntimeError as error:
+        failure = error
+        if exact_reference and error.code not in {"TELEGRAM_REFERENCE_CHANGED", "TELEGRAM_REFERENCE_INCOMPLETE"}:
+            failure = TelegramRuntimeError("The exact Telegram message reference is unavailable.", code="TELEGRAM_REFERENCE_UNAVAILABLE")
+            raise failure from error
         raise
     except Exception as error:
-        raise TelegramRuntimeError("Cannot read the selected Telegram message; no action was taken.") from error
+        failure = TelegramRuntimeError("Cannot read the selected Telegram message; no action was taken.",
+                                       code="TELEGRAM_REFERENCE_UNAVAILABLE" if exact_reference else None)
+        raise failure from error
     finally:
-        await client.disconnect()
+        try:
+            await client.disconnect()
+        except Exception as error:
+            # Do not replace a proven changed/unavailable result with raw SDK
+            # diagnostics. A failed cleanup also cannot publish a new success.
+            if failure is None:
+                raise TelegramRuntimeError("Telegram read cleanup failed; no result was delivered.",
+                                           code="TELEGRAM_REFERENCE_UNAVAILABLE" if exact_reference else None) from error
 
 
 async def command_thread_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
@@ -6060,6 +6112,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
             return asyncio.run(command_login_async(args, identity))
         if args.command == "monitor":
             return asyncio.run(command_monitor_async(args, identity))
+        if args.command == "read-reference":
+            return asyncio.run(command_message_read_async(args, identity))
         if args.command == "dialogs":
             return asyncio.run(command_dialogs_async(args, identity))
         if args.command == "folders":
@@ -6260,6 +6314,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MEMBER_LIMIT,
         metavar=f"1..{MAX_MEMBER_LIMIT}",
     )
+    reference_read = commands.add_parser("read-reference", help="Read one exact monitor message revision without receipts or context")
+    reference_read.add_argument("--chat", required=True, help="Exact native marked peer ID from the monitor reference")
+    reference_read.add_argument("--message-id", type=positive_message_id, required=True)
+    reference_read.add_argument("--expected-revision", required=True, help="Exact semantic SHA-256 from the observed reference")
     read = commands.add_parser("read", help="Read recent messages in one exact chat")
     add_message_target_arguments(read)
     read.add_argument("--context", type=int, choices=range(0, 11), default=0, metavar="0..10")
@@ -6429,6 +6487,8 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
+        if args.command == "read-reference":
+            validate_reference_read(args)
         reexec_in_runtime_if_needed(args.command)
         if args.command == "bootstrap":
             result = command_bootstrap(args)

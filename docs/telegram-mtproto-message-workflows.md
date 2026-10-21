@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.7.0`
-публикует runtime `2.7.0`, требует Telethon `>=1.44,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.7.2`
+публикует runtime `2.7.2`, требует Telethon `>=1.44,<2` и сохраняет
 minimum host `3.7.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -541,3 +541,29 @@ release проверки остаются отдельными gates. Исход
 API: [updates](https://core.telegram.org/api/updates),
 [getDifference](https://core.telegram.org/method/updates.getDifference),
 [getChannelDifference](https://core.telegram.org/method/updates.getChannelDifference).
+
+
+## Точное чтение наблюдаемой версии
+
+`read-reference --chat NATIVE_ID --message-id ID --expected-revision SHA256`
+читает одно сообщение, которое наблюдал monitor. Это read primitive для task
+adapter цифрового ассистента, а не готовое подключение source/coordinator.
+До bootstrap/credential I/O отклоняются username/link, malformed ID/hash и
+дополнительный context. Native message resolver повторяет точный peer/message,
+затем общий `monitor_message` сверяет полный semantic digest. Edit, удаление,
+чужой peer или неполный текст не возвращают успешный read старого события.
+
+Результат `telegram-message-read/v1` содержит exact reference, обычную безопасную
+проекцию сообщения и явную coverage. Ветка использует общий `public_message`,
+но не optional reply resolver/recent history: цитата не разрешает читать другое
+сообщение. SDK passive subscription отключена как у monitor. Read receipts,
+регистрация просмотра, отправки и ACK не выполняются. Media возвращается как
+metadata, `attachmentsContentRead=false`; доступ к text не доказывает чтения файла.
+Текст больше обычного exact-read bound получает `TELEGRAM_REFERENCE_INCOMPLETE`.
+
+`TELEGRAM_REFERENCE_CHANGED` требует обработки нового события/решения host-а,
+а не замены записанного digest или silent reset. Ошибка источника/cleanup –
+`TELEGRAM_REFERENCE_UNAVAILABLE` без private diagnostics и partial success.
+После фактического чтения host всё ещё обязан связать сообщение с принятой
+задачей и committed processing до отдельного read acknowledgement. Source merge,
+успех этой команды и message body не создают задачи/разрешения на другие системы.
