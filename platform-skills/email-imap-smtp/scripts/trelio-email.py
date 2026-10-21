@@ -59,6 +59,7 @@ IMAP_COMMANDS = {"monitor", "read-reference", "folders", "search", "read", "save
 MAX_ACCOUNT_DESCRIPTION_CHARS = 2_000
 MAX_SIGNATURE_BYTES = 16 * 1024
 MAX_MESSAGE_BYTES = 25 * 1024 * 1024
+MAX_REFERENCE_METADATA_BYTES = 16 * 1024
 # Reply headers come from an untrusted mailbox. Bound the complete chain and
 # parse identifiers rather than copying arbitrary header text into SMTP DATA.
 MAX_REPLY_HEADER_CHARS = 16 * 1024
@@ -1946,16 +1947,43 @@ def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: 
         # ordinary post-read size check. Guard this owned connection's literal
         # reader only for this FETCH, before allocation; never patch the global
         # SDK, credential transport or another worker's connection.
-        original_read = client.read
+        original_read, original_readline = client.read, client.readline
+        literal_remaining, metadata_remaining = MAX_MESSAGE_BYTES, MAX_REFERENCE_METADATA_BYTES
         def bounded_read(size):
-            if type(size) is not int or not 0 <= size <= MAX_MESSAGE_BYTES:
+            nonlocal literal_remaining
+            if type(size) is not int or not 0 <= size <= literal_remaining:
                 raise EmailReferenceError("EMAIL_REFERENCE_INCOMPLETE")
+            # Charge the declared size before I/O. Several unsolicited literals
+            # cannot each allocate a fresh message-sized budget in one FETCH.
+            literal_remaining -= size
             return original_read(size)
-        client.read = bounded_read
+        def bounded_readline():
+            nonlocal metadata_remaining
+            # stdlib already bounds each line to _MAXLINE. Add an aggregate
+            # cap so an unbounded stream of small untagged metadata responses
+            # cannot accumulate in its response lists before the tagged result.
+            line = original_readline()
+            if not isinstance(line, bytes) or len(line) > metadata_remaining:
+                raise EmailReferenceError("EMAIL_REFERENCE_INCOMPLETE")
+            metadata_remaining -= len(line)
+            return line
+        client.read, client.readline = bounded_read, bounded_readline
         try:
             status, data = client.uid("fetch", uid, "(UID RFC822.SIZE BODY.PEEK[])")
+        except BaseException:
+            # A refused literal can still be pending on the socket. Ordinary
+            # IMAP context cleanup would send LOGOUT and parse that same unread
+            # server stream with the restored readers. Abandon this owned
+            # connection without protocol I/O; no automatic retry/reuse follows.
+            try:
+                client.shutdown()
+            except Exception:
+                pass  # Preserve the original refusal; native worker owns final fd cleanup.
+            finally:
+                client.state = "LOGOUT"
+            raise
         finally:
-            client.read = original_read
+            client.read, client.readline = original_read, original_readline
     else:
         status, data = client.uid("fetch", uid, "(BODY.PEEK[])")
     if status != "OK" or not data:

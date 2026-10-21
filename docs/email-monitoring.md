@@ -62,9 +62,15 @@ scope/UIDVALIDITY/UID. Это IMAP identity, не body hash и не право �
 запрашиваются UID/RFC822.SIZE/BODY.PEEK[]; native ответ должен содержать ровно одну
 полную literal, тот же UID и совпадающие размеры. Порядок attributes до/после
 literal допустим; неизвестные/повторные fields либо другая запись отклоняются.
-Длина literal проверяется до чтения/выделения памяти через временный reader
-только этой owned connection; он восстанавливается в finally. Global SDK,
+Суммарный literal budget всего FETCH списывается до чтения/выделения памяти,
+а весь metadata stream дополнительно ограничен 16 КиБ. Это не новый бюджет для
+каждого unsolicited ответа. Два временных reader относятся только к этой
+owned connection и восстанавливаются в finally. Global SDK,
 общая сеть, другие accounts и обычный wire contract не меняются.
+После отказа внутри FETCH этот owned socket прекращается без протокольного
+LOGOUT: cleanup не должен заново читать отвергнутый literal после восстановления
+reader. Отказ shutdown не заменяет исходную безопасную причину; worker закрывает
+ресурсы при завершении, соединение повторно не используется.
 
 Ответ `email-message-read/v1` содержит точную reference, общую content projection,
 SHA-256 оригинальных RFC822 bytes и coverage. Проекция свыше 256 КиБ либо literal
