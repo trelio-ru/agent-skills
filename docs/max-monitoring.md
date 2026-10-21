@@ -33,3 +33,37 @@ gap, binding changes, bounded projection и отсутствие receipt/body le
 Hosted Linux/macOS/Windows gate проверяет runtime/package contract. Активация
 model-free worker, source registration/lease, native owner intake, message ACK
 и live MAX smoke — отдельные зависимости; их готовность этими тестами не заявляется.
+
+## Точное чтение наблюдаемой ссылки
+
+Source `2.10.1` добавляет `read-reference --chat CANONICAL_URL --message-id ID
+--expected-revision SHA256 --expected-scope SHA256`. Scope берётся из сохранённого
+monitor checkpoint, принадлежит тому же private host state и не задаётся входящим
+текстом. Ни scope, ни semantic digest не являются authorization capability.
+Malformed input, cursor, history/discovery/mutation/file/context arguments
+отклоняются до browser I/O. Один вызов читает только текущее bounded окно, без
+неявного backfill, pagination или reset при отсутствующем ID.
+
+Monitor и exact read используют общий native snapshot validator, scope hash и
+semantic digest, а не две копии определения сообщения. Сверяются настоящий chat
+reference, account/company binding, ID, текущие text/reply/media metadata.
+Изменение source scope/сообщения даёт `MAX_REFERENCE_CHANGED`; отсутствие ID либо
+недоступный источник – `MAX_REFERENCE_UNAVAILABLE`. Один возвращаемый message
+не включает соседние строки, display author, transient signed file href или
+предполагаемый owner ID. Размер полной проекции ограничен 256 КиБ без усечения;
+превышение даёт `MAX_REFERENCE_INCOMPLETE`.
+
+Source-режим общего DOM reader не скрывает duplicate ID и обрезанные media rows:
+такие снимки не подтверждают exact reference. Для обычного human `read`
+сохраняются прежние numeric/optional limit ABI и dedup. Все режимы используют
+тот же browser, private session и установленный до навигации passive read guard.
+Нет read receipts, файлового download, quote fetch, отправки либо ACK. Ошибки
+проецируются в static code; общая HTTP диагностика сохраняет только status/origin.
+
+`max-message-read/v1` явно различает полную **отрисованную** text projection и
+содержимое, которого нет в DOM: `renderedTextComplete=true`,
+`hiddenContentIncluded=false`, `attachmentsContentRead=false`. Это не обещание
+полного native server body или анализа файла. `ownerIdentityAvailable=false`
+сохраняется; чтение не разрешает intake новых задач. Host отдельно проверяет
+task mapping/аудиторию и committed processing перед независимым ACK. Синтетические
+pure/DOM regressions и source merge не активируют source, службу или live MAX.
