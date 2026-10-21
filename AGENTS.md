@@ -210,6 +210,9 @@ production алгоритмом с внедрёнными часами, без H
 Пассивный MAX `monitor` следует [контракту](docs/max-monitoring.md): один exact чат,
 перекрытие native message ID, явный gap; display name не доказывает владельца.
 MAX `read-reference` сверяет native ID/revision и source scope в том же bounded DOM; source readers отклоняют дубли IDs/скрытое усечение media, обычное чтение сохраняет прежний ABI.
+MAX task policy v2 additionally denies model browser executable/window/budget
+overrides. Legacy host refusal is preserved until common enforcement is verified;
+the descriptor alone does not prove readiness or native owner identity.
 Для пассивного IMAP `monitor` читай [контракт](docs/email-monitoring.md): UIDVALIDITY, scoped checkpoint, finite readonly range; без ACK/новых задач.
 IMAP `read-reference` сверяет scoped identity до/после PEEK и exact UID/полный literal; общий literal budget списывается до allocation, metadata lines тоже суммарно ограничены. Отказ прекращает connection без LOGOUT; оба reader восстанавливаются, partial result не выдаётся.
 IMAP exact ACK uses the same native guardian/account engine: identity/full-byte hash,
