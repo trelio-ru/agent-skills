@@ -6181,9 +6181,13 @@ def import_telethon_monitor():
 def validate_monitor_input(args):
     # Reject an attempted reset before venv/session/bootstrap I/O. This option
     # is an INITIAL unread catch-up, never recovery from an existing checkpoint.
-    if getattr(args, "unread_backfill", False) and (
-            getattr(args, "cursor", None) or not re.fullmatch(r"-[1-9][0-9]{0,18}", str(getattr(args, "chat", "")))):
-        raise TelegramRuntimeError("Initial unread backfill requires one exact channel ID and no cursor.", code="TELEGRAM_MONITOR_INVALID_INPUT")
+    seed = getattr(args, "initial_account_cursor", None)
+    unread = getattr(args, "unread_backfill", False)
+    if (unread or seed is not None) and (getattr(args, "cursor", None) is not None
+            or not re.fullmatch(r"-[1-9][0-9]{0,18}", str(getattr(args, "chat", ""))) or unread and seed is not None):
+        raise TelegramRuntimeError("Initial history requires one exact channel ID, one mode and no channel cursor.", code="TELEGRAM_MONITOR_INVALID_INPUT")
+    if seed is not None and (not isinstance(seed, str) or not 1 <= len(seed) <= 2048 or any(c.isspace() for c in seed)):
+        raise TelegramRuntimeError("Initial account checkpoint is invalid.", code="TELEGRAM_MONITOR_INVALID_INPUT")
 
 
 def import_telethon_monitor_history():
@@ -6192,8 +6196,8 @@ def import_telethon_monitor_history():
     return GetPeerDialogsRequest, GetHistoryRequest, InputDialogPeer
 
 
-async def monitor_initial_unread(client, channel, peer_id, utils, position, backfill, limit):
-    """One bounded visible-unread history page, then the ORIGINAL pts catch-up.
+async def monitor_initial_history(client, channel, peer_id, utils, position, backfill, limit, since=None):
+    """One bounded initial history page, then the ORIGINAL pts catch-up.
 
     Capture pts before inspecting the dialog/history. New messages/edits during
     pagination therefore remain in the later native difference. Frozen bounds
@@ -6208,7 +6212,10 @@ async def monitor_initial_unread(client, channel, peer_id, utils, position, back
         if not isinstance(dialogs, list) or len(dialogs) != 1 or type(dialogs[0]).__name__ != "Dialog" \
                 or utils.get_peer_id(dialogs[0].peer) != peer_id:
             raise TelegramRuntimeError("Initial unread dialog metadata is unavailable.", code="TELEGRAM_MONITOR_GAP")
-        lower = monitor_int(getattr(dialogs[0], "read_inbox_max_id", None))
+        # A channel first seen in an account difference must include messages
+        # already read on another device. Its authenticated old account date,
+        # not the current unread flag, defines that initial interval.
+        lower = 0 if since is not None else monitor_int(getattr(dialogs[0], "read_inbox_max_id", None))
         upper = monitor_int(getattr(dialogs[0], "top_message", None))
         # Native message offsets are signed TL int. Never wrap top+1 or replace
         # a missing read marker with zero (which would silently widen history).
@@ -6217,6 +6224,8 @@ async def monitor_initial_unread(client, channel, peer_id, utils, position, back
         if lower >= upper:
             return [], {"position": position}, True
         backfill = {"lower": lower, "upper": upper, "before": upper + 1}
+        if since is not None:
+            backfill.update(since=since, beforeDate=2**31-1)
     lower, upper, before = (backfill[key] for key in ("lower", "upper", "before"))
     response = await client(GetHistory(peer=channel, offset_id=before, offset_date=None,
         add_offset=0, limit=limit, max_id=upper+1, min_id=lower, hash=0))
@@ -6226,6 +6235,8 @@ async def monitor_initial_unread(client, channel, peer_id, utils, position, back
         raise TelegramRuntimeError("Initial unread history is unavailable.", code="TELEGRAM_MONITOR_GAP")
     events = []
     previous = before
+    previous_date = backfill.get("beforeDate")
+    finished = False
     for message in rows:
         message_id = monitor_int(getattr(message, "id", None), positive=True)
         if not lower < message_id < previous or message_id > upper \
@@ -6233,15 +6244,25 @@ async def monitor_initial_unread(client, channel, peer_id, utils, position, back
                 or utils.get_peer_id(message.peer_id) != peer_id:
             raise TelegramRuntimeError("Initial unread history changed scope or did not advance.", code="TELEGRAM_MONITOR_GAP")
         previous = message_id
-        if type(message).__name__ == "Message":
+        include = True
+        if since is not None:
+            native_date = monitor_date(getattr(message, "date", None))
+            if native_date > previous_date:
+                raise TelegramRuntimeError("Initial channel history date order is unavailable.", code="TELEGRAM_MONITOR_GAP")
+            previous_date = native_date
+            include = native_date >= since
+            finished = finished or not include
+        if include and type(message).__name__ == "Message":
             events.append(monitor_message(message, utils, kind="new", channel_peer=peer_id))
     # A short page is not provider exhaustion. Continue until an exact empty
     # bounded history page; service-only pages still advance their native ID.
     # Even after exhaustion require the first original-pts difference before
     # the host may call this stream final or retire its triggering account hint.
     next_state = {"position": position}
-    if rows:
+    if rows and not finished:
         next_state["backfill"] = {"lower": lower, "upper": upper, "before": previous}
+        if since is not None:
+            next_state["backfill"].update(since=since, beforeDate=previous_date)
     return events, next_state, True
 
 
@@ -6291,21 +6312,41 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
                 monitor_int(value, positive=key == "date" or channel is not None)
             if "backfill" in state:
                 initial = state["backfill"]
-                if channel is None or not isinstance(initial, dict) or set(initial) != {"lower", "upper", "before"} \
+                if channel is None or not isinstance(initial, dict) or set(initial) not in (
+                        {"lower", "upper", "before"}, {"lower", "upper", "before", "since", "beforeDate"}) \
                         or any(type(value) is not int for value in initial.values()) \
-                        or not 0 <= initial["lower"] < initial["before"] <= initial["upper"] + 1 < 2**31:
+                        or not 0 <= initial["lower"] < initial["before"] <= initial["upper"] + 1 < 2**31 \
+                        or "since" in initial and (initial["lower"] != 0 or not 0 < initial["since"] < 2**31
+                            or not 0 < initial["beforeDate"] < 2**31):
                     raise TelegramRuntimeError("Telegram monitor backfill cursor state is invalid.", code="TELEGRAM_MONITOR_INVALID_CURSOR")
         events = []
         channels_to_sync = set()
         unresolved_deletions = []
         more = False
-        initial_unread = bool(getattr(args, "unread_backfill", False) or state is not None and "backfill" in state)
-        if initial_unread:
+        account_seed = getattr(args, "initial_account_cursor", None)
+        since = state.get("backfill", {}).get("since") if state else None
+        if account_seed is not None:
+            # Decode the ORIGINAL account-cloud checkpoint under its own exact
+            # native binding and monitor HMAC purpose. A model timestamp, a
+            # channel/overview cursor or another account never supplies scope.
+            account_binding = await overview_binding(client, identity, "monitor/v1", {
+                "channel": None, "localAccountId": identity.account["id"] if identity.account else None,
+                "companyBinding": identity.account["companyBinding"] if identity.account else None,
+            }, version="monitor-checkpoint/v1")
+            account_state = overview_cursor(identity, account_binding, token=account_seed, purpose="monitor")
+            if not isinstance(account_state, dict) or set(account_state) != {"position"} \
+                    or not isinstance(account_state["position"], dict) or set(account_state["position"]) != {"pts", "qts", "seq", "date"}:
+                raise TelegramRuntimeError("Initial account checkpoint is invalid.", code="TELEGRAM_MONITOR_INVALID_CURSOR")
+            for key, value in account_state["position"].items():
+                monitor_int(value, positive=key == "date")
+            since = account_state["position"]["date"]
+        initial_history = bool(getattr(args, "unread_backfill", False) or account_seed is not None or state is not None and "backfill" in state)
+        if initial_history:
             if channel is None:
                 raise TelegramRuntimeError("Initial unread backfill needs a channel stream.", code="TELEGRAM_MONITOR_INVALID_INPUT")
             position = state["position"] if state is not None else monitor_position((await client(GetFullChannel(channel=channel))).full_chat, channel=True)
-            events, next_state, more = await monitor_initial_unread(client, channel, peer_id, utils,
-                position, state.get("backfill") if state else None, limit)
+            events, next_state, more = await monitor_initial_history(client, channel, peer_id, utils,
+                position, state.get("backfill") if state else None, limit, since=since)
         elif state is None:
             native = (await client(GetFullChannel(channel=channel))).full_chat if channel is not None else await client(GetState())
             position = monitor_position(native, channel=channel is not None)
@@ -6371,14 +6412,15 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
                         unresolved_deletions.extend(str(monitor_int(item, positive=True)) for item in ids)
             if len(events) > MAX_MONITOR_EVENTS or len(channels_to_sync) > MAX_MONITOR_EVENTS or len(unresolved_deletions) > MAX_MONITOR_EVENTS:
                 raise TelegramRuntimeError("Telegram monitor page exceeds its bound; retain the cursor.", code="TELEGRAM_MONITOR_GAP")
-        if not initial_unread:
+        if not initial_history:
             next_state = {"position": position}
         return {"schemaVersion": 1, "stream": {"kind": "channel" if channel is not None else "account_cloud", "chatId": str(peer_id) if peer_id is not None else None},
-                "baselineOnly": state is None and not initial_unread, "events": events, "channelsToSync": sorted(channels_to_sync),
+                "baselineOnly": state is None and not initial_history, "events": events, "channelsToSync": sorted(channels_to_sync),
                 "unresolvedDeletionIds": sorted(set(unresolved_deletions)),
                 "nextCursor": overview_cursor(identity, binding, state=next_state, purpose="monitor"), "hasMore": more,
-                "coverage": {"historicalBackfill": initial_unread, "secretChatsIncluded": False, "otherChannelStreamsIncluded": False,
-                             **({"initialUnreadOnly": True, "snapshotAtomic": False} if initial_unread else {})},
+                "coverage": {"historicalBackfill": initial_history, "secretChatsIncluded": False, "otherChannelStreamsIncluded": False,
+                             **({("initialAccountInterval" if since is not None else "initialUnreadOnly"): True,
+                                 "snapshotAtomic": False, **({"earlierEditsIncluded": False} if since is not None else {})} if initial_history else {})},
                 "readState": {"readReceiptsSent": False, "viewsRegistered": False}}
     except TelegramRuntimeError as error:
         failure = error
@@ -6604,6 +6646,7 @@ def build_parser() -> argparse.ArgumentParser:
     monitor.add_argument("--chat", help="Exact channel/supergroup stream; omit for private/basic-group account updates")
     monitor.add_argument("--cursor", help="Exact previous monitor cursor, never an unread flag")
     monitor.add_argument("--unread-backfill", action="store_true", help="Initial exact channel unread interval; no cursor/reset")
+    monitor.add_argument("--initial-account-cursor", help="Initial channel history since an exact original account checkpoint; no reset")
     monitor.add_argument("--limit", type=int, choices=range(10, 101), default=100, metavar="10..100")
     dialogs = commands.add_parser("dialogs", help="List or narrowly search dialogs")
     dialogs.add_argument("--query")

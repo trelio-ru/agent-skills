@@ -21,6 +21,8 @@ Archive scope повторно проверяется до history, включа
 Пассивный `monitor` хранит durable checkpoint отдельно от unread/session TTL;
 initial channel `--unread-backfill` freezes the native unread interval, pages
 metadata under the pre-history pts, then requires its difference catch-up.
+New account hints use `--initial-account-cursor` instead: authenticate the old
+account checkpoint date and include messages already read on another device.
 Never use it to reset an existing cursor or claim historical edit recovery.
 `read-reference` сверяет exact native ID/revision без context/ACK и требует полный текст;
 baseline/gap/ACK и отдельный HMAC purpose – в том же контракте сообщений.
