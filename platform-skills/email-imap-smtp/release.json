@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.6.3",
-    "summary": "Отдельная exact-UID отметка Seen сверяет полный исходник и native FLAGS; неизвестный результат проверяется readonly без автоматического повтора."
+    "version": "2.6.4",
+    "summary": "Подписанная классификация команд отделяет работу task-агента от настройки ящика, изменения локальной политики и отдельного ACK источника."
   },
   "connection": null,
   "runtime": {
-    "version": "2.6.3",
+    "version": "2.6.4",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-email.py",
@@ -19,6 +19,11 @@
       "local-accounts-v1"
     ],
     "files": [
+      {
+        "source": "scripts/trelio-assistant-execution.json",
+        "path": "trelio-assistant-execution.json",
+        "mode": 420
+      },
       {
         "source": "scripts/trelio-email.py",
         "path": "trelio-email.py",

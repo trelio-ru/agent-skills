@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "taskCommands": [
+    ["guides"], ["doctor"], ["folders"], ["search"], ["read"],
+    ["read-reference"], ["attachments"], ["save-message"], ["save-attachment"],
+    ["policy", "show"], ["description", "show"], ["signature", "show"],
+    ["send"], ["reply"]
+  ]
+}
