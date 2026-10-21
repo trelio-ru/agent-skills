@@ -656,6 +656,29 @@ pts catch-up. Источник с существующим gap не сбрасы
 review/history recovery остаётся отдельной процедурой. Начальное перечисление
 всех чатов аккаунта и durable host stream/hint journal не устанавливаются этой
 командой. Старый host, не понимающий coverage, сохраняет отказ, не reset.
+
+Для **нового channel hint из уже идущего account stream** unread-флаг недостаточен:
+сообщение могли прочитать на другом устройстве после сохранённой позиции host-а.
+`monitor --chat MARKED_ID --initial-account-cursor OLD_ACCOUNT_CURSOR` получает
+именно исходный account checkpoint **до** страницы с этим hint. Provider
+проверяет его прежний monitor HMAC и native account/member/company/local binding,
+constructor account-cloud и полный state. Числовая дата, overview/channel token,
+чужой account/binding или одновременный channel cursor/unread mode отклоняются.
+Новых authority/session tokens это не создаёт.
+
+Общий history helper включает видимые сообщения с native `date >= old.date`
+до замороженного `top_message`, независимо от `read_inbox_max_id`. Дата включительна:
+равные timestamps не теряются. Сохраняются lower date, upper/exclusive message
+offset и последняя native дата; неубывающий ID или возрастающая дата дают gap.
+Все строки bounded страницы, включая находящиеся за границей даты, проверяются
+по exact peer/type/order до результата. Пустая страница либо доказанная нижняя
+дата завершает history, после чего обязателен тот же исходный-pts difference.
+Coverage: `initialAccountInterval=true`, `historicalBackfill=true`,
+`snapshotAtomic=false`, `earlierEditsIncluded=false`. Правки старых сообщений и
+удалённые bytes **до** первой channel pts не восстановлены; это не полный
+исторический snapshot. Существующие channel checkpoints не заменяются новым
+seed. Host обязан хранить исходный account seed с durable hint, не передавать
+вместо него более позднюю позицию и не переводить общий cursor в channel cursor.
 Channels из native `UpdateChannelTooLong`/`UpdateChannel` перечислены отдельно;
 после final channel не опрашивается вновь без нового account hint. Ни одна
 команда не устанавливает фоновый монитор, не открывает окно и не отправляет ACK.

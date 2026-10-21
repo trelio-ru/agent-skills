@@ -224,6 +224,70 @@ class Monitor(unittest.TestCase):
                 self.run_page(chat='-1000000000055', unread_backfill=True)
         self.assertNotIn('GetHistory', [type(call).__name__ for call in self.provider.calls])
 
+    def test_account_checkpoint_interval_includes_already_read_messages_and_equal_timestamp(self):
+        seed = self.baseline()
+        newer = message(9, peer=tl('PeerChannel', channel_id=55)); newer.date = NOW + timedelta(seconds=3)
+        equal = message(8, peer=tl('PeerChannel', channel_id=55))
+        older = message(7, peer=tl('PeerChannel', channel_id=55)); older.date = NOW - timedelta(seconds=1)
+        self.unread_backfill([tl('ChannelMessages', messages=[newer, equal, older])],
+            dialog=tl('Dialog', peer=tl('PeerChannel', channel_id=55), read_inbox_max_id=9, top_message=9))
+        first = self.run_page(chat='-1000000000055', initial_account_cursor=seed)
+        self.assertEqual([row['messageId'] for row in first['events']], ['9', '8'])
+        self.assertTrue(first['coverage']['initialAccountInterval'])
+        self.assertNotIn('initialUnreadOnly', first['coverage'])
+        self.assertFalse(first['coverage']['earlierEditsIncluded'])
+        self.assertTrue(first['hasMore'])
+        self.assertEqual(self.provider.calls[-1].min_id, 0, 'another device read marker never supplies the initial floor')
+        self.provider.response = tl('ChannelDifference', pts=20, final=True,
+            new_messages=[message(10, peer=tl('PeerChannel', channel_id=55))], other_updates=[])
+        final = self.run_page(first['nextCursor'], chat='-1000000000055')
+        self.assertEqual(self.provider.calls[-1].pts, 10)
+        self.assertFalse(final['hasMore'])
+        self.assertEqual(final['events'][0]['messageId'], '10')
+        self.assertNotIn('PRIVATE', json.dumps(first))
+
+    def test_account_interval_checkpoint_survives_pages_but_refuses_reverse_native_date_order(self):
+        seed = self.baseline()
+        first_row = message(9, peer=tl('PeerChannel', channel_id=55)); first_row.date = NOW + timedelta(seconds=2)
+        later_row = message(8, peer=tl('PeerChannel', channel_id=55)); later_row.date = NOW + timedelta(seconds=3)
+        equal = message(8, peer=tl('PeerChannel', channel_id=55))
+        self.unread_backfill([tl('MessagesSlice', messages=[first_row]), tl('Messages', messages=[later_row]),
+                             tl('MessagesSlice', messages=[equal]), tl('Messages', messages=[])])
+        first = self.run_page(chat='-1000000000055', initial_account_cursor=seed)
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            self.run_page(first['nextCursor'], chat='-1000000000055')
+        self.assertEqual(caught.exception.code, 'TELEGRAM_MONITOR_GAP')
+        continued = self.run_page(first['nextCursor'], chat='-1000000000055')
+        self.assertTrue(continued['coverage']['initialAccountInterval'])
+        self.assertEqual([row['messageId'] for row in continued['events']], ['8'])
+        done = self.run_page(continued['nextCursor'], chat='-1000000000055')
+        self.assertTrue(done['hasMore'])
+        self.assertEqual([call.offset_id for call in self.provider.calls if type(call).__name__=='GetHistory'], [10, 9, 9, 8])
+
+    def test_account_interval_seed_is_exact_native_account_scope_not_timestamp_channel_or_overview(self):
+        account = self.baseline()
+        channel = self.baseline(chat='-1000000000055')
+        self.unread_backfill()
+        for seed in (channel, account+'x', '1710000000'):
+            with self.assertRaises(M.TelegramRuntimeError):
+                self.run_page(chat='-1000000000055', initial_account_cursor=seed)
+        original = self.identity
+        self.identity = M.Identity(company_id='88888888-8888-4888-8888-888888888888',
+            member_id=original.member_id, connection_id=original.connection_id)
+        with self.assertRaises(M.TelegramRuntimeError):
+            self.run_page(chat='-1000000000055', initial_account_cursor=account)
+        self.identity = original
+        self.assertNotIn('GetHistory', [type(call).__name__ for call in self.provider.calls])
+
+    def test_account_interval_mode_and_channel_reset_are_rejected_before_client_io(self):
+        with mock.patch.object(M, 'build_client') as build:
+            for options in ({'unread_backfill':True,'initial_account_cursor':'seed'},
+                            {'initial_account_cursor':''}, {'initial_account_cursor':'bad cursor'},
+                            {'initial_account_cursor':'seed','cursor':'old'}):
+                with self.assertRaises(M.TelegramRuntimeError):
+                    self.run_page(chat='-1000000000055', **options)
+            build.assert_not_called()
+
     def test_baseline_is_explicit_and_only_reads_current_position(self):
         self.baseline()
         self.assertEqual([type(call).__name__ for call in self.provider.calls], ['GetState'])

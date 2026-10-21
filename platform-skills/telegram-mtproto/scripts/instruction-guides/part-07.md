@@ -29,6 +29,18 @@ Provider фиксирует pts **до** чтения exact dialog metadata, з�
 правок, body/attachment-read или ACK. Начальная инвентаризация каналов и durable
 stream/hint journal остаются обязанностью host. Ошибка не выдаёт новый checkpoint.
 
+Для нового channel hint **после старта account stream** используй вместо unread
+mode `monitor --chat MARKED_ID --initial-account-cursor OLD_ACCOUNT_CURSOR`:
+только исходный сохранённый checkpoint account **до** получения hint. Provider
+проверяет HMAC/native scope и читает visible history с `date >= old.date`, даже
+если её уже отметили прочитанной на другом устройстве. Seed сохраняет host вместе
+с hint; поздний account checkpoint, timestamp или другой token его не заменяют.
+Продолжение идёт обычным channel `--cursor`, без seed/reset. Native date и ID order
+проверяются между страницами; затем catch-up исходного pts обязателен.
+`initialAccountInterval=true`, `historicalBackfill=true`, `snapshotAtomic=false`,
+`earlierEditsIncluded=false` явно ограничивают scope: прошлые правки/удалённые
+bytes до первой channel pts не восстановлены, body/ACK authority не возникает.
+
 Ответ содержит только ссылки/ID, native sender user ID, направление,
 forwarded/viaBot flags и digest ревизии. Текст, usernames, телефоны, access hashes,
 file_reference и session в ответ/cursor не включаются. Большие user IDs остаются
