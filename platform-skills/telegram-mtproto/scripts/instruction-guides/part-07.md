@@ -81,6 +81,17 @@ Monitor protocol epoch отделён от human message preview: обычное
 
 ## Отметка прочитанного после обработки
 
+Monitor events с доказанным peer содержат `conversationKey` – непрозрачный
+`telegram-conversation/v1.<HMAC>`, scoped к actual account/company/member/local
+binding и native peer. Текст/правка/прочитанность ключ не меняют. Не вычисляй его
+сам, не хешируй ID и не используй как sender/owner proof, permission или read proof.
+Unresolved cloud deletion не получает выдуманного ключа. Для нового host routing
+используй original key события в `read-reference`/`ack-reference` через
+`--expected-conversation-key KEY`. Provider проверяет current native account и
+scope до body/history/ACK; `TELEGRAM_REFERENCE_SCOPE_CHANGED` требует review,
+не reset или подстановку нового ключа. Успех возвращает тот же ключ в `reference`.
+Legacy вызов без флага не подтверждает обработку нового mapped события.
+
 Отдельный `ack-reference --chat NATIVE_ID --message-id ID --expected-revision SHA256
 --covered-reference ID:SHA256 [--covered-reference ID:SHA256 ...] --confirm` разрешён
 только после принятой задачи, полного нужного чтения, committed processing и ACK

@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.13.0`
-объявляет runtime `2.13.0`, требует Telethon `>=1.45,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.13.1`
+объявляет runtime `2.13.1`, требует Telethon `>=1.45,<2` и сохраняет
 minimum host `3.7.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -728,6 +728,25 @@ API: [updates](https://core.telegram.org/api/updates),
 
 
 ## Точное чтение наблюдаемой версии
+
+Каждый monitor event с доказанным native peer, включая channel deletion, получает
+`conversationKey=telegram-conversation/v1.<HMAC>`. Общий private cursor key и
+отдельный domain связывают его с actual Telegram account, company/member/connection,
+host local-account UUID/companyBinding и native peer. Текст, edits, unread marker
+и human workflow version ключ не меняют. Это непрозрачный correlation ID для
+known-task mapping, не hash угадываемого peer ID, sender/owner proof или permission.
+Secret chats и unresolved cloud deletions не получают выдуманный ключ/peer.
+
+`read-reference` и `ack-reference` принимают `--expected-conversation-key KEY`;
+новый host routing profile обязан передать original key из наблюдаемого события.
+Provider заново получает native account identity и сверяет HMAC **до** чтения body,
+history/read-boundary и возможного ACK. Смена аккаунта/локального key/scope даёт
+`TELEGRAM_REFERENCE_SCOPE_CHANGED`, без read/write либо автоматического reset.
+Поле `reference.conversationKey` возвращается при успешном exact read/ACK. Legacy
+CLI без флага сохраняет прежний scope, но его результат не доказывает processing
+нового mapped события. Cursor/revision ABI не меняется; неизвестное новое поле
+старому host-у не разрешает сбросить позицию. Production route/delivery/read-proof
+composition и Windows E2E этим provider primitive не включаются.
 
 `read-reference --chat NATIVE_ID --message-id ID --expected-revision SHA256`
 читает одно сообщение, которое наблюдал monitor. Это read primitive для task

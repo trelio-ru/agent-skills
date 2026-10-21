@@ -105,6 +105,38 @@ class Monitor(unittest.TestCase):
         self.assertFalse(result['readState']['readReceiptsSent'])
         return result['nextCursor']
 
+    def test_opaque_conversation_key_is_stable_across_edits_and_bound_to_account_scope(self):
+        token = self.baseline()
+        self.provider.response = self.difference(messages=[message(1), message(2, text='OTHER PRIVATE TEXT')])
+        page = self.run_page(token)
+        first = page['events'][0]['conversationKey']
+        self.assertRegex(first, r'^telegram-conversation/v1\.[a-f0-9]{64}$')
+        self.assertEqual(first, page['events'][1]['conversationKey'])
+        self.provider.response = self.difference(updates=[tl('UpdateEditMessage', message=message(1, text='EDITED'))])
+        self.assertEqual(first, self.run_page(token)['events'][0]['conversationKey'])
+        scope = M.monitor_account_scope(self.identity)
+        binding = asyncio.run(M.overview_binding(self.provider, self.identity, 'monitor/v1', scope, version='monitor-checkpoint/v1'))
+        self.assertNotEqual(first, M.monitor_conversation_key(self.identity, binding, -77), 'native peer namespaces do not collide')
+        changed = M.Identity(company_id='44444444-4444-4444-8444-444444444444', member_id=self.identity.member_id,
+                             connection_id=self.identity.connection_id)
+        other = asyncio.run(M.overview_binding(self.provider, changed, 'monitor/v1', M.monitor_account_scope(changed), version='monitor-checkpoint/v1'))
+        self.assertNotEqual(first, M.monitor_conversation_key(changed, other, 77))
+        with mock.patch.object(self.provider, 'get_me', new=mock.AsyncMock(return_value=NS(id=12346))):
+            switched = asyncio.run(M.overview_binding(self.provider, self.identity, 'monitor/v1', scope, version='monitor-checkpoint/v1'))
+        self.assertNotEqual(first, M.monitor_conversation_key(self.identity, switched, 77))
+        self.assertNotIn('PRIVATE', first)
+
+    def test_conversation_key_has_a_separate_hmac_domain_and_no_message_content(self):
+        binding = asyncio.run(M.overview_binding(self.provider, self.identity, 'monitor/v1',
+            M.monitor_account_scope(self.identity), version='monitor-checkpoint/v1'))
+        first = M.monitor_conversation_key(self.identity, binding, 77)
+        with self.assertRaises(M.TelegramRuntimeError):
+            M.overview_cursor(self.identity, binding, token=first, purpose='monitor')
+        with mock.patch.object(M, 'overview_cursor_key', side_effect=AssertionError('Invalid scope must fail before file IO')):
+            for invalid in (True, 0, '77', 2**63):
+                with self.assertRaises(M.TelegramRuntimeError):
+                    M.monitor_conversation_key(self.identity, binding, invalid)
+
     def difference(self, messages=None, updates=None, **extra):
         return tl('Difference', new_messages=messages or [], other_updates=updates or [],
                   state=position(pts=12), **extra)
@@ -570,6 +602,8 @@ class Monitor(unittest.TestCase):
 class ReferenceRead(unittest.TestCase):
     """The real exact-message resolver/projector, with only native I/O faked."""
     def setUp(self):
+        private = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(mock.patch.object(M, 'connection_root', return_value=pathlib.Path(private)))
         self.provider = Provider()
         self.native = message(text='Полный текст 👋🏽')
         self.entity = tl('User', id=77, first_name='Synthetic reader')
@@ -592,6 +626,26 @@ class ReferenceRead(unittest.TestCase):
 
     def read(self, args=None):
         return asyncio.run(M.command_message_read_async(args or self.args(), self.identity))
+
+    def test_expected_conversation_key_checks_scope_before_private_body_read(self):
+        binding = asyncio.run(M.overview_binding(self.provider, self.identity, 'monitor/v1',
+            M.monitor_account_scope(self.identity), version='monitor-checkpoint/v1'))
+        key = M.monitor_conversation_key(self.identity, binding, 77)
+        self.assertEqual(self.read(self.args(expected_conversation_key=key))['reference']['conversationKey'], key)
+        self.provider.get_messages.reset_mock()
+        with mock.patch.object(self.provider, 'get_me', new=mock.AsyncMock(return_value=NS(id=12346))):
+            with self.assertRaises(M.TelegramRuntimeError) as error:
+                self.read(self.args(expected_conversation_key=key))
+        self.assertEqual(error.exception.code, 'TELEGRAM_REFERENCE_SCOPE_CHANGED')
+        self.provider.get_messages.assert_not_awaited()
+        self.provider.send_message.assert_not_awaited()
+
+    def test_malformed_conversation_key_is_rejected_before_client_or_storage(self):
+        with mock.patch.object(M, 'build_client', side_effect=AssertionError('No native IO')):
+            for key in ('77', 'telegram-conversation/v1.' + 'A'*64, 'telegram-conversation/v1.' + '0'*63, 77):
+                with self.assertRaises(M.TelegramRuntimeError) as error:
+                    self.read(self.args(expected_conversation_key=key))
+                self.assertEqual(error.exception.code, 'TELEGRAM_REFERENCE_INPUT_INVALID')
 
     def test_exact_revision_delivers_complete_safe_projection_without_history_quote_or_receipt(self):
         self.native.reply_to = NS(reply_to_msg_id=90)
@@ -688,6 +742,8 @@ class ReferenceRead(unittest.TestCase):
 class ReferenceAck(unittest.TestCase):
     """Native range/read-back composition; no real session or external writes."""
     def setUp(self):
+        private = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(mock.patch.object(M, 'connection_root', return_value=pathlib.Path(private)))
         self.provider = Provider()
         self.entity = tl('User', id=77)
         self.utils = NS(get_peer_id=lambda value: value.id if type(value).__name__ in {'User', 'Chat'} else peer_id(value))
@@ -733,6 +789,28 @@ class ReferenceAck(unittest.TestCase):
 
     def ack(self, args=None):
         return asyncio.run(M.command_reference_ack_async(args or self.args(), self.identity))
+
+    def test_switched_account_cannot_ack_or_reconcile_an_old_conversation_mapping(self):
+        binding = asyncio.run(M.overview_binding(self.provider, self.identity, 'monitor/v1',
+            M.monitor_account_scope(self.identity), version='monitor-checkpoint/v1'))
+        key = M.monitor_conversation_key(self.identity, binding, 77)
+        for verify in (False, True):
+            with mock.patch.object(self.provider, 'get_me', new=mock.AsyncMock(return_value=NS(id=12346))):
+                with self.assertRaises(M.TelegramRuntimeError) as error:
+                    self.ack(self.args(expected_conversation_key=key, confirm=not verify, verify_only=verify))
+            self.assertEqual(error.exception.code, 'TELEGRAM_REFERENCE_SCOPE_CHANGED')
+            self.assertEqual(error.exception.details, {'writeAttempted': False, 'writeOutcome': 'not_attempted', 'automaticRetryAllowed': False})
+        self.provider.get_messages.assert_not_awaited()
+        self.assertEqual(self.provider.calls, [])
+
+    def test_ack_readback_preserves_exact_conversation_key_without_new_authority(self):
+        binding = asyncio.run(M.overview_binding(self.provider, self.identity, 'monitor/v1',
+            M.monitor_account_scope(self.identity), version='monitor-checkpoint/v1'))
+        key = M.monitor_conversation_key(self.identity, binding, 77)
+        value = self.ack(self.args(expected_conversation_key=key))
+        self.assertEqual(value['reference']['conversationKey'], key)
+        self.assertTrue(value['readState']['acknowledged'])
+        self.assertEqual(sum(type(call).__name__ == 'Read' for call in self.provider.calls), 1)
 
     def writes(self):
         return [call for call in self.provider.calls if type(call).__name__ in {'Read', 'ReadChannel'}]
