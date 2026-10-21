@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Stdlib IMAP/SMTP client with native security helpers for Trelio agent skills.
 
-The script deliberately keeps read operations separate from sending. It never
-executes instructions found in messages and requires an explicit ``--confirm``
-flag for the final SMTP mutation. Credentials live outside workspaces and Git.
+The script deliberately keeps read operations separate from writes. It never
+executes instructions found in messages and requires explicit ``--confirm`` for
+SMTP or the independent exact-UID Seen mutation. Credentials stay outside Git.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ POLICIES_DIR = CONFIG_DIR / "policies"
 KEYCHAIN_SERVICE_PREFIX = "trelio-email"
 POLICY_MODES = ("confirm", "read-only")
 CONNECTION_MODES = ("imap_smtp", "smtp_only")
-IMAP_COMMANDS = {"monitor", "read-reference", "folders", "search", "read", "save-message", "attachments", "save-attachment", "reply"}
+IMAP_COMMANDS = {"monitor", "read-reference", "ack-reference", "folders", "search", "read", "save-message", "attachments", "save-attachment", "reply"}
 MAX_ACCOUNT_DESCRIPTION_CHARS = 2_000
 MAX_SIGNATURE_BYTES = 16 * 1024
 MAX_MESSAGE_BYTES = 25 * 1024 * 1024
@@ -178,6 +178,17 @@ class EmailReferenceError(MailboxError):
         super().__init__(code)
 
 
+class EmailAckError(MailboxError):
+    """A closed state-write result; uncertainty never authorizes a replay."""
+
+    def __init__(self, code: str, attempted: bool = False):
+        if code not in {"EMAIL_ACK_INPUT_INVALID", "EMAIL_ACK_CHANGED", "EMAIL_ACK_UNAVAILABLE",
+                        "EMAIL_ACK_POLICY_DENIED", "EMAIL_ACK_UNVERIFIED"}:
+            raise MailboxError("invalid_email_ack_error")
+        self.code, self.attempted = code, attempted
+        super().__init__(code)
+
+
 class SmtpFailure(MailboxError):
     """Bounded protocol facts safe for the native worker/result boundary.
 
@@ -202,8 +213,12 @@ def error_payload(error: Exception) -> dict[str, Any]:
     result = {"ok": False, "error": str(error)}
     if isinstance(error, SmtpFailure):
         result["smtp"] = error.details
-    if isinstance(error, (EmailMonitorError, EmailReferenceError)):
+    if isinstance(error, (EmailMonitorError, EmailReferenceError, EmailAckError)):
         result["code"] = error.code
+    if isinstance(error, EmailAckError):
+        result["readState"] = {"verified": False, "writeAttempted": error.attempted,
+                               "writeOutcome": "unknown" if error.attempted else "not_attempted",
+                               "automaticRetryAllowed": False}
     return result
 
 
@@ -2482,6 +2497,138 @@ def command_read_reference(args: argparse.Namespace) -> dict[str, Any]:
         raise EmailReferenceError("EMAIL_REFERENCE_UNAVAILABLE") from error
 
 
+def validate_email_ack_arguments(args: argparse.Namespace) -> None:
+    # Both public and owned-worker paths validate before credential I/O. Neither
+    # a body hash nor --confirm proves the dispatcher has committed processing;
+    # source admission remains the trusted host's separate responsibility.
+    try:
+        for value in (args.uid, args.uid_validity):
+            if not isinstance(value, str):
+                raise ValueError()
+            validate_message_uid(value)
+        for value in (args.expected_revision, args.expected_original_sha256):
+            email_reference_digest_argument(value)
+        if type(args.confirm) is not bool or type(args.verify_only) is not bool or args.confirm == args.verify_only:
+            raise ValueError()
+    except (ValueError, TypeError, MailboxError, argparse.ArgumentTypeError, AttributeError) as error:
+        raise EmailAckError("EMAIL_ACK_INPUT_INVALID") from error
+
+
+def email_ack_metadata(client: imaplib.IMAP4_SSL, command: str, *arguments):
+    """One bounded owned metadata exchange, including unsolicited STORE data."""
+    original_read, original_readline = client.read, client.readline
+    remaining = MAX_REFERENCE_METADATA_BYTES
+
+    def refuse_literal(size):
+        # FLAGS has no literal. Refuse unsolicited literals before allocation,
+        # including zero-length ones; they cannot prove this message's state.
+        raise EmailAckError("EMAIL_ACK_UNAVAILABLE")
+
+    def bounded_line():
+        nonlocal remaining
+        line = original_readline()
+        if not isinstance(line, bytes) or len(line) > remaining:
+            raise EmailAckError("EMAIL_ACK_UNAVAILABLE")
+        remaining -= len(line)
+        return line
+
+    client.read, client.readline = refuse_literal, bounded_line
+    try:
+        return client.uid(command, *arguments)
+    except BaseException:
+        # A refused stream is never re-parsed by LOGOUT after restoring readers.
+        try:
+            client.shutdown()
+        except Exception:
+            pass
+        client.state = "LOGOUT"
+        raise
+    finally:
+        client.read, client.readline = original_read, original_readline
+
+
+def email_reference_seen(client: imaplib.IMAP4_SSL, uid: str) -> bool:
+    """Read one exact native FLAGS envelope, never a sequence/range or body."""
+    status, data = email_ack_metadata(client, "fetch", uid, "(UID FLAGS)")
+    if status != "OK" or not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], bytes) or len(data[0]) > 4096:
+        raise EmailAckError("EMAIL_ACK_UNAVAILABLE")
+    # Attribute order is not significant. Everything else must be exactly the
+    # requested UID and FLAGS: no duplicate message/UID, body or unknown field.
+    match = re.fullmatch(rb"[1-9][0-9]{0,9} \((?:UID ([1-9][0-9]{0,9}) FLAGS \(([^()]*)\)|FLAGS \(([^()]*)\) UID ([1-9][0-9]{0,9}))\)", data[0], re.I)
+    if match is None or int(match[1] or match[4]) != int(uid):
+        raise EmailAckError("EMAIL_ACK_CHANGED")
+    encoded_flags = match[2] if match[2] is not None else match[3]
+    flags = encoded_flags.split()
+    # RFC atom keywords/system extensions are not an English-label allowlist.
+    # Accept their ASCII grammar without returning names or changing other flags.
+    if not re.fullmatch(rb"[\x20-\x7e]*", encoded_flags) or len(flags) > 64 or any(
+            not re.fullmatch(rb"\\?[^\x00-\x20\x7f-\xff(){%*\"\\\]]{1,128}", flag) for flag in flags):
+        raise EmailAckError("EMAIL_ACK_UNAVAILABLE")
+    return any(flag.lower() == b"\\seen" for flag in flags)
+
+
+def command_ack_reference(args: argparse.Namespace) -> dict[str, Any]:
+    """Verify state or add only Seen to one previously read immutable UID.
+
+    No private progress/receipt store is added here. The dispatcher owns the
+    processing receipt and ACK lease; this provider owns native identity, full
+    original bytes and current read-state verification. A lost response is
+    reconciled with --verify-only, not by blindly resending the mutation.
+    """
+    validate_email_ack_arguments(args)
+    account = load_account(args.account)
+    require_imap(account)
+    if args.confirm and load_email_policy(args.account)["sendMode"] == "read-only":
+        raise EmailAckError("EMAIL_ACK_POLICY_DENIED")
+    attempted = False
+    try:
+        with imap_connection(account) as client:
+            folder = select_folder(client, args.folder, special_use=args.special_use)
+            scope = email_monitor_scope(account, folder)
+            validity, next_uid = email_monitor_position(client)
+            uid = int(args.uid)
+            revision = email_reference_revision(scope, validity, uid)
+            if validity != int(args.uid_validity) or revision != args.expected_revision or uid >= next_uid:
+                raise EmailAckError("EMAIL_ACK_CHANGED")
+            raw = fetch_raw_message(client, args.uid, verify_reference=True)
+            if hashlib.sha256(raw).hexdigest() != args.expected_original_sha256:
+                raise EmailAckError("EMAIL_ACK_CHANGED")
+            seen = email_reference_seen(client, args.uid)
+            if args.confirm and not seen:
+                # SELECT is needed for STORE; it is never CLOSE/EXPUNGE. Repeat
+                # UIDVALIDITY at the writable view, then only additive Seen.
+                select_folder(client, folder, readonly=False)
+                if email_monitor_position(client)[0] != validity:
+                    raise EmailAckError("EMAIL_ACK_CHANGED")
+                if load_email_policy(args.account)["sendMode"] == "read-only":
+                    raise EmailAckError("EMAIL_ACK_POLICY_DENIED")
+                attempted = True
+                email_ack_metadata(client, "store", args.uid, "+FLAGS.SILENT", "(\\Seen)")
+                # A STORE status alone is not the observed state. A confirmed
+                # Seen flag is sufficient even if another client set it; do not
+                # claim exclusive causation or send an SMTP read receipt.
+                seen = email_reference_seen(client, args.uid)
+                if not seen:
+                    raise EmailAckError("EMAIL_ACK_UNVERIFIED", True)
+            select_folder(client, folder)
+            if email_monitor_position(client)[0] != validity:
+                raise EmailAckError("EMAIL_ACK_CHANGED", attempted)
+            result = {"schemaVersion": 1, "protocol": "email-read-state/v1",
+                      "reference": {"id": f"uid:{validity}:{uid}", "revision": revision},
+                      "originalSha256": args.expected_original_sha256,
+                      "readState": {"verified": True, "seen": seen, "writeAttempted": attempted,
+                                    "automaticRetryAllowed": False, "readReceiptsSent": False}}
+        return result
+    except EmailAckError as error:
+        # Once STORE has crossed its boundary, even a stale/malformed read-back
+        # must retain uncertainty. Never downgrade it to a preflight refusal.
+        if attempted and not error.attempted:
+            raise EmailAckError(error.code, True) from error
+        raise
+    except Exception as error:
+        raise EmailAckError("EMAIL_ACK_UNVERIFIED" if attempted else "EMAIL_ACK_UNAVAILABLE", attempted) from error
+
+
 def command_attachments(args: argparse.Namespace) -> dict[str, Any]:
     account = load_account(args.account)
     with imap_connection(account) as client:
@@ -3171,6 +3318,16 @@ def build_parser() -> argparse.ArgumentParser:
     reference_parser.add_argument("--uid-validity", required=True, type=parse_message_uid)
     reference_parser.add_argument("--expected-revision", required=True, type=email_reference_digest_argument)
     reference_parser.set_defaults(handler=command_read_reference)
+    ack_parser = subparsers.add_parser("ack-reference", help="Verify or explicitly mark one exact previously read reference as Seen")
+    add_mailbox_arguments(ack_parser)
+    ack_parser.add_argument("--uid", required=True, type=parse_message_uid)
+    ack_parser.add_argument("--uid-validity", required=True, type=parse_message_uid)
+    ack_parser.add_argument("--expected-revision", required=True, type=email_reference_digest_argument)
+    ack_parser.add_argument("--expected-original-sha256", required=True, type=email_reference_digest_argument)
+    ack_mode = ack_parser.add_mutually_exclusive_group(required=True)
+    ack_mode.add_argument("--confirm", action="store_true")
+    ack_mode.add_argument("--verify-only", action="store_true")
+    ack_parser.set_defaults(handler=command_ack_reference)
     search_parser = subparsers.add_parser("search", help="Search messages using narrow server-side filters")
     add_mailbox_arguments(search_parser)
     search_parser.add_argument("--from", dest="sender")
@@ -3287,6 +3444,10 @@ def main(*, _owned: bool = False) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "ack-reference":
+            validate_email_ack_arguments(args)
+            if args.confirm and load_email_policy(args.account)["sendMode"] == "read-only":
+                raise EmailAckError("EMAIL_ACK_POLICY_DENIED")
         # Reject unsupported read/reply routes before starting a native worker
         # or unlocking its credential store. The low-level guard also protects
         # internal callers that do not enter through this CLI.
