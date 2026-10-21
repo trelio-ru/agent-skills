@@ -307,7 +307,10 @@ async def folder_change(client, args, identity, me, r, f, t, u):
     if args.command in {"folder-create", "folder-rename"}:
         if not args.title.strip() or "\x00" in args.title or r.import_conversation_tools().units(args.title) > 12:
             raise r.TelegramRuntimeError("Choose a folder title of 1..12 UTF-16 units.")
-        after_native.title = t.TextWithEntities(text=args.title, entities=[])
+        # Repeating the existing name is a no-op. In particular it must not
+        # strip title entities just because the requested plain text matches.
+        if create or args.title != before["title"]:
+            after_native.title = t.TextWithEntities(text=args.title, entities=[])
     selected_chats = []
     if args.command in {"folder-create", "folder-add-chat", "folder-remove-chat"}:
         if not 1 <= len(args.chat) <= 20:

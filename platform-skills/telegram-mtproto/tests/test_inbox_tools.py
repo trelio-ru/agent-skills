@@ -180,6 +180,13 @@ class InboxTests(unittest.TestCase):
         self.assertEqual(result["folder"]["id"], 3)
         self.assertEqual(result["folder"]["include_peers"], [8])
 
+    def test_same_folder_title_is_noop_and_preserves_existing_formatting(self):
+        self.folders[0].title.entities = [TL("MessageEntityBold")(offset=0, length=6)]
+        _preview, result = self.apply("folder-rename", "--folder-id", "2", "--title", "Работа")
+        self.assertFalse(result["changed"])
+        self.assertEqual(len(self.folders[0].title.entities), 1)
+        self.assertEqual(self.writes(), [])
+
     def test_folder_add_removes_explicit_exclusion_preserving_other_lists(self):
         self.folders[0].exclude_peers = [self.t.InputPeerUser(user_id=8, access_hash=123)]
         _preview, result = self.apply("folder-add-chat", "--folder-id", "2", "--chat", "@alice")
