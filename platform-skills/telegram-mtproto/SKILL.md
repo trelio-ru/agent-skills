@@ -1,6 +1,6 @@
 ---
 name: telegram-mtproto
-description: Work with Telegram forum topics, reactions, polls, pins, invite links and join requests; read and search chats, posts, threads and albums; count subscribers and inspect channel analytics, post views, forwards, comments and reactions; send albums, forward originals, reply, transcribe voice messages and manage scheduled delivery through Trelio's signed personal MTProto runtime. Use for Telegram correspondence, files, audiences, resumable archive-scoped period exports and dialog inventories, login, and local send-policy setup when this catalog transport is selected.
+description: Manage Telegram cloud drafts, silent delivery, link previews, media replacement, forum topics and invite lifecycles; work with reactions, polls, pins and join requests; read and search chats, posts, threads and albums; count subscribers and inspect channel analytics, post views, forwards, comments and reactions; send albums, forward originals, reply, transcribe voice messages and manage scheduled delivery through Trelio's signed personal MTProto runtime. Use for Telegram correspondence, files, audiences, resumable archive-scoped period exports and dialog inventories, login, and local send-policy setup when this catalog transport is selected.
 ---
 
 # Telegram
@@ -90,3 +90,7 @@ account comment, `--confirm`, preview/hash или успешное выполн�
 ## Темы, реакции, опросы, закрепы и администрирование
 
 Полный обязательный раздел: [инструкция](scripts/instruction-guides/part-09.md)
+
+## Черновики, публикации и готовые сценарии
+
+Полный обязательный раздел: [инструкция](scripts/instruction-guides/part-10.md)

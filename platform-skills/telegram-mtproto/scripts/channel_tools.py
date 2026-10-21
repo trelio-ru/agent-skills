@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "2.9.0"
+VERSION = "2.10.0"
 MAX_ALBUM_ITEMS = 10
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_ALBUM_BYTES = 100 * 1024 * 1024
@@ -52,6 +52,7 @@ def add_parsers(commands, positive_id):
     forward.add_argument("--message-id", type=bounded_id, action="append", required=True)
     for parser in (send, forward):
         parser.add_argument("--schedule-at", help="RFC 3339 delivery time, at least 60 seconds in the future")
+        parser.add_argument("--silent", action="store_true", help="Send without notification sound")
         mode = parser.add_mutually_exclusive_group(required=True)
         mode.add_argument("--dry-run", action="store_true")
         mode.add_argument("--confirm", action="store_true")
@@ -357,6 +358,9 @@ async def bulk_mutation(client, args, identity, r):
             raise r.TelegramRuntimeError("Schedule must fit Telegram's positive int32 timestamp.")
         operation["scheduledAt"] = r.format_utc_datetime(scheduled_at) if scheduled_at else None
         preview["scheduledAt"] = operation["scheduledAt"]
+        options = r.import_authoring_tools().delivery_options(args)
+        operation["deliveryOptions"] = options
+        preview["deliveryOptions"] = options
         if args.command == "send-album":
             files, file_previews = frozen_files(args.file, r)
             # Existing caption reader already guards local UTF-8 input. The
@@ -403,11 +407,11 @@ async def bulk_mutation(client, args, identity, r):
                 if args.command == "send-album":
                     sent = await client.send_file(destination, files, caption=[caption] + [""] * (len(files) - 1),
                                                   parse_mode=r.TELEGRAM_TEXT_PARSE_MODE, clear_draft=False, force_document=False,
-                                                  schedule=scheduled_at)
+                                                  schedule=scheduled_at, **options)
                     expected_count = len(files)
                 else:
                     sent = await client.forward_messages(destination, ids, from_peer=source,
-                                                         drop_author=False, drop_media_captions=False, schedule=scheduled_at)
+                                                         drop_author=False, drop_media_captions=False, schedule=scheduled_at, **options)
                     expected_count = len(ids)
             if not isinstance(sent, (list, tuple)) or len(sent) != expected_count:
                 raise ValueError
@@ -422,6 +426,8 @@ async def bulk_mutation(client, args, identity, r):
                         raise ValueError
                     verified.append(queued)
                 sent = verified
+            if getattr(args, "silent", False) and not scheduled_at:
+                sent = [checked_message(r, utils, destination, await client.get_messages(destination, ids=row.id), row.id) for row in sent]
             seen_ids = set()
             for index, row in enumerate(sent):
                 row_id = getattr(row, "id", None)
@@ -429,6 +435,7 @@ async def bulk_mutation(client, args, identity, r):
                     raise ValueError
                 seen_ids.add(row_id)
                 checked_message(r, utils, destination, row, row_id)
+                r.import_authoring_tools().verify_delivery(row, args, r)
                 if not getattr(row, "out", False):
                     raise ValueError
                 if args.command == "forward":

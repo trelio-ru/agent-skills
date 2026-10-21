@@ -10,7 +10,7 @@ import json
 import re
 from datetime import datetime
 
-VERSION = "2.9.0"
+VERSION = "2.10.0"
 READS = {"topics", "topic-read", "poll", "pins", "message-stats", "public-forwards", "invites", "join-requests"}
 MUTATIONS = {"topic-send", "react", "poll-create", "poll-vote", "poll-close", "pin", "unpin", "invite-create", "join-request"}
 COMMANDS = READS | MUTATIONS
@@ -56,6 +56,8 @@ def add_parsers(commands, positive_id):
             body = p.add_mutually_exclusive_group(required=True)
             body.add_argument("--message")
             body.add_argument("--message-file")
+            p.add_argument("--silent", action="store_true")
+            p.add_argument("--no-link-preview", action="store_true")
         if name == "react":
             selected = p.add_mutually_exclusive_group(required=True)
             selected.add_argument("--emoji", action="append")
@@ -512,7 +514,9 @@ async def mutation(client, entity, args, identity, r, f, t, u, markdown):
         text(body, 4096, r)
         operation.update(topic={key: value for key, value in topic_row(selected, r).items()
                                 if key in {"id", "title", "closed", "hidden"}}, body=raw)
-        preview.update(topic=topic_row(selected, r), text=body, parseMode=r.TELEGRAM_TEXT_PARSE_MODE_NAME)
+        options = r.import_authoring_tools().delivery_options(args)
+        operation["deliveryOptions"] = options
+        preview.update(topic=topic_row(selected, r), text=body, parseMode=r.TELEGRAM_TEXT_PARSE_MODE_NAME, deliveryOptions=options)
     elif command == "poll-create":
         question = text(args.question, 300, r)
         labels = [text(value, 100, r) for value in args.option]
@@ -562,9 +566,10 @@ async def mutation(client, entity, args, identity, r, f, t, u, markdown):
     try:
         if command == "topic-send":
             sent = await client.send_message(entity, raw, reply_to=selected.id if selected.id != 1 else None,
-                                            parse_mode=r.TELEGRAM_TEXT_PARSE_MODE, clear_draft=False, send_as=me)
+                                            parse_mode=r.TELEGRAM_TEXT_PARSE_MODE, clear_draft=False, send_as=me, **options)
             sent = r.exact_provider_message(sent, entity, sent.id, u)
             delivered = await exact(client, entity, sent.id, r, u)
+            r.import_authoring_tools().verify_delivery(delivered, args, r)
             if (not getattr(delivered, "out", False) or not in_topic(delivered, selected.id)
                     or delivered.message != body or r.provider_content_digest(getattr(delivered, "entities", None) or []) != r.provider_content_digest(entities)):
                 raise ValueError
