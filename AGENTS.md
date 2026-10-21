@@ -172,6 +172,7 @@ production алгоритмом с внедрёнными часами, без H
 внутреннего контейнера не должен скрывать загрузку внешней оболочки.
 Пассивный MAX `monitor` следует [контракту](docs/max-monitoring.md): один exact чат,
 перекрытие native message ID, явный gap; display name не доказывает владельца.
+MAX `read-reference` сверяет native ID/revision и source scope в том же bounded DOM; source readers отклоняют дубли IDs/скрытое усечение media, обычное чтение сохраняет прежний ABI.
 Для пассивного IMAP `monitor` читай [контракт](docs/email-monitoring.md): UIDVALIDITY, scoped checkpoint, finite readonly range; без ACK/новых задач.
 IMAP `read-reference` сверяет ту же scoped identity до/после PEEK, exact UID/полный literal и не выдаёт partial result; giant literal блокируется до allocation, прежний reader восстанавливается.
 Для почтовой отправки сохраняй исходные байты вложений, различай отказ SMTP
