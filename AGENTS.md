@@ -34,7 +34,7 @@ Channel counter не заменяет `channelFull.participants_count`.
 Bulk preview привязан к account/source/destination/bytes; одноразовый approval
 погашается до отправки. Неизвестный/частичный результат не разрешает replay.
 `channel_tools.py`, `community_tools.py`, `authoring_tools.py`,
-`interaction_tools.py` и все обязательные guides входят в signed package.
+`interaction_tools.py`, `conversation_tools.py` и все обязательные guides входят в signed package.
 Темы/реакции/опросы/закрепы/admin commands и scheduled bulk следуют тому же
 [контракту сообщений](docs/telegram-mtproto-message-workflows.md): exact peer/thread,
 own choice, send-as и queue namespace проверяются отдельно. Новые metadata
@@ -51,6 +51,10 @@ projection. Per-call send-as выбирается из каталога exact de
 в one-use preview; saved default не меняется. Delete требует personally
 attributed outgoing, exact single ID и explicit scope; admin permission не
 доказывает авторство. Native affected-state и exact absence проверяются вместе.
+Цитата сверяется с полным оригиналом по UTF-16 offset; series парсится один раз,
+сохраняет entities и останавливается после uncertain части без replay. Личные
+archive/mute writes выбирают один own dialog, сохраняют прочие настройки и
+проверяют fresh state; inherited mute не означает включённые уведомления.
 Native DialogFolder исключается по constructor до чтения peer/folder metadata:
 сводная строка архива не является чатовой принадлежностью либо history target.
 

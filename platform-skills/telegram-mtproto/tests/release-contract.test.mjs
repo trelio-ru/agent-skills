@@ -105,9 +105,15 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /`views`/u);
     assert.match(source, /views=null|`null`/u);
   }
-  assert.equal(releaseManifest.release.version, "2.11.1");
+  assert.equal(releaseManifest.release.version, "2.12.0");
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.11.1");
+  assert.equal(releaseManifest.runtime.version, "2.12.0");
+  assert.ok(releaseManifest.runtime.files.some(file => file.path === "conversation_tools.py"));
+  for (const source of [skillInstructions, connectionDocs]) {
+    for (const feature of ["--quote-text", "--quote-offset", "send-series", "chat-settings", "archive --chat", "unmute", "muteInherited", "TELEGRAM_SERIES_DELIVERY_UNKNOWN", "confirmedParts", "uncertainPart", "notAttemptedParts"]) {
+      assert.ok(source.includes(feature), `Missing conversation contract: ${feature}`);
+    }
+  }
   assert.equal(releaseManifest.runtime.minimumHostVersion, "3.7.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),

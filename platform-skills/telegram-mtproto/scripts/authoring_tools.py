@@ -11,7 +11,7 @@ import io
 import re
 from pathlib import Path
 
-VERSION = "2.11.0"
+VERSION = "2.12.0"
 READS = {"draft"}
 MUTATIONS = {"draft-save", "draft-clear", "invite-edit", "invite-revoke",
              "topic-create", "topic-rename", "topic-close", "topic-reopen", "edit-media"}

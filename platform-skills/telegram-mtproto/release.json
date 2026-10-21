@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.11.1",
-    "summary": "Подписанная классификация task-команд ассистента сохраняет обычное чтение и переписку, отдельно закрывая login, bootstrap, локальную policy и административные записи."
+    "version": "2.12.0",
+    "summary": "Ответы с точной цитатой, длинные тексты серией с проверкой каждой части, управление архивом и личными уведомлениями выбранного чата."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.11.1",
+    "version": "2.12.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
@@ -69,6 +69,11 @@
       {
         "source": "scripts/interaction_tools.py",
         "path": "interaction_tools.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/conversation_tools.py",
+        "path": "conversation_tools.py",
         "mode": 420
       },
       {
@@ -124,6 +129,11 @@
       {
         "source": "scripts/instruction-guides/part-11.md",
         "path": "instruction-guides/part-11.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-12.md",
+        "path": "instruction-guides/part-12.md",
         "mode": 420
       }
     ]

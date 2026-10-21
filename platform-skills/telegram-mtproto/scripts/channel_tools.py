@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "2.11.0"
+VERSION = "2.12.0"
 MAX_ALBUM_ITEMS = 10
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_ALBUM_BYTES = 100 * 1024 * 1024
