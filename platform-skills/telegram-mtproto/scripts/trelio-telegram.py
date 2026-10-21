@@ -1390,6 +1390,18 @@ def import_telethon_phone_resolver():
     return ResolvePhoneRequest, PhoneNotOccupiedError
 
 
+def import_telethon_audience_count():
+    """Load the one metadata RPC; counting never enumerates subscribers."""
+
+    try:
+        from telethon.tl.functions.channels import GetFullChannelRequest
+    except ImportError as error:
+        raise TelegramRuntimeError(
+            "Telegram audience metadata is unavailable. Run bootstrap first."
+        ) from error
+    return GetFullChannelRequest
+
+
 def import_telethon_global_search():
     """Load the fixed TL request and helpers used by resumable global search."""
 
@@ -1551,10 +1563,12 @@ def build_client(args: argparse.Namespace, identity: Identity):
     # outcome to the caller instead of silently submitting it a second time.
     # Ordinary reads retain the library's safe retry behavior.
     request_policy = {}
-    if getattr(args, "command", None) in {"monitor", "read-reference"}:
+    if getattr(args, "command", None) in {"monitor", "read-reference", "audience-count"}:
         # The fixed poll owns its explicit cursor. Disable the SDK's parallel
         # passive update subscription; it must not create an invisible second
         # source reader or alter the meaning of a delivered difference page.
+        # A standalone audience count likewise needs only the selected peer's
+        # metadata, without an unrelated incoming-message subscription.
         request_policy = {"receive_updates": False}
     if getattr(args, "command", None) in {
         "send", "edit", "reply", "transcribe", "scheduled-edit",
@@ -3856,6 +3870,87 @@ async def command_resolve_phone_async(
         await client.disconnect()
 
 
+async def command_audience_count_async(
+    args: argparse.Namespace,
+    identity: Identity,
+) -> dict[str, Any]:
+    """Read one current audience counter, independently of list visibility.
+
+    Broadcasts and supergroups share Telegram's Channel constructor. Their
+    optional entity counter may be absent or older than full metadata; never
+    fall back to it after a denied/missing full count. Basic groups already
+    carry the count in the freshly resolved Chat, so they need no participant
+    request at all. Neither path joins the chat or reads its message history.
+    """
+
+    client = build_client(args, identity)
+    try:
+        await ensure_authorized(client)
+        entity = await resolve_entity(client, args.chat)
+        chat_type = telegram_entity_type(entity)
+        if type(entity).__name__ not in {"Chat", "Channel"} or chat_type not in {"group", "channel"}:
+            raise TelegramRuntimeError(
+                "audience-count requires an exact Telegram group, supergroup or channel."
+            )
+        basic_group = type(entity).__name__ == "Chat"
+        result = {
+            "available": False,
+            "reason": None,
+            "chat": public_entity(entity),
+            "chatType": chat_type,
+            "audience": "subscribers" if chat_type == "channel" else "members",
+            "count": None,
+            "countSource": "chat.participants_count" if basic_group else "channelFull.participants_count",
+            "observedAt": None,
+            "readState": {"mode": "metadata-only", "marksRead": False},
+            "securityBoundary": "chat-only",
+        }
+        metadata = entity
+        if not basic_group:
+            GetFullChannelRequest = import_telethon_audience_count()
+            try:
+                response = await client(GetFullChannelRequest(channel=entity))
+            except Exception as error:
+                reason = participant_access_reason(error)
+                if reason is None:
+                    raise TelegramRuntimeError(
+                        "Telegram audience lookup failed without a conclusive result."
+                    ) from error
+                result["reason"] = reason
+                return result
+            metadata = getattr(response, "full_chat", None)
+            # Never attribute a count from another peer or an incomplete/wrong
+            # response constructor to the requested channel. Auxiliary users,
+            # invites, linked chats, access hashes and raw TL stay unprojected.
+            metadata_id = getattr(metadata, "id", None)
+            if (type(metadata).__name__ != "ChannelFull" or type(metadata_id) is not int
+                    or metadata_id != entity.id):
+                raise TelegramRuntimeError("Telegram returned mismatched audience metadata.")
+
+        count = nonnegative_integer(getattr(metadata, "participants_count", None))
+        # participants_count is a signed TL int. Preserve a real zero, but do
+        # not coerce bool/string/float, an omitted flag or an invalid sentinel.
+        if count is not None and count <= 2**31 - 1:
+            result.update(available=True, count=count)
+        else:
+            result["reason"] = "count_unavailable"
+        result["observedAt"] = datetime.now(timezone.utc).isoformat()
+        return result
+    except TelegramRuntimeError:
+        raise
+    except Exception as error:
+        # Resolution/connection failures may contain private RPC diagnostics.
+        # They are not evidence for an empty channel or permission denial.
+        raise TelegramRuntimeError(
+            "Telegram audience lookup failed without a conclusive result."
+        ) from error
+    finally:
+        try:
+            await client.disconnect()
+        except Exception as error:
+            raise TelegramRuntimeError("Telegram audience metadata cleanup failed.") from error
+
+
 async def command_members_async(
     args: argparse.Namespace,
     identity: Identity,
@@ -6120,6 +6215,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
             return asyncio.run(command_folders_async(args, identity))
         if args.command == "resolve-phone":
             return asyncio.run(command_resolve_phone_async(args, identity))
+        if args.command == "audience-count":
+            return asyncio.run(command_audience_count_async(args, identity))
         if args.command == "members":
             return asyncio.run(command_members_async(args, identity))
         if args.command == "read":
@@ -6298,6 +6395,11 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="One international number beginning with +; never returned in JSON",
     )
+    audience_count = commands.add_parser(
+        "audience-count",
+        help="Read the current subscriber/member count without listing people or messages",
+    )
+    audience_count.add_argument("--chat", required=True, help="Exact dialogs[].id or @username")
     members = commands.add_parser(
         "members",
         help="List a bounded page of visible group members or channel subscribers",

@@ -1,6 +1,6 @@
 ---
 name: telegram-mtproto
-description: Find Telegram messages across selected chats or folders with date and chat-type filters, bounded automatic pagination and merged context; read message links and threads, reply, transcribe voice messages, manage scheduled delivery, and safely communicate through a personal MTProto session and Trelio's signed runtime. Use for Telegram correspondence, files, audiences, resumable archive-scoped period exports and dialog inventories, login, and local send-policy setup when this catalog transport is selected.
+description: Find Telegram messages across selected chats or folders with date and chat-type filters, bounded automatic pagination and merged context; read message links and threads, count channel subscribers or group members without listing people, reply, transcribe voice messages, manage scheduled delivery, and safely communicate through a personal MTProto session and Trelio's signed runtime. Use for Telegram correspondence, files, audiences, resumable archive-scoped period exports and dialog inventories, login, and local send-policy setup when this catalog transport is selected.
 ---
 
 # Telegram

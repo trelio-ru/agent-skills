@@ -18,6 +18,9 @@ Archive scope повторно проверяется до history, включа
 baseline/gap/ACK и отдельный HMAC purpose – в том же контракте сообщений.
 Просмотры постов возвращаются как nullable `views` из полученного Message:
 неизвестное значение не становится нулём, чтение не регистрирует просмотр.
+`audience-count` читает число подписчиков/участников из exact live metadata,
+без списка людей/истории. Missing/denied count остаётся неизвестным; cached
+Channel counter не заменяет `channelFull.participants_count`.
 Native DialogFolder исключается по constructor до чтения peer/folder metadata:
 сводная строка архива не является чатовой принадлежностью либо history target.
 
