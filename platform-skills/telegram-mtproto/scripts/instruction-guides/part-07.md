@@ -15,6 +15,20 @@
 чем переходить дальше. `hasMore=true` требует следующей страницы того же stream.
 Флаг «непрочитано», чужой cursor и новый baseline не заменяют сохранённую позицию.
 
+Новая channel sequence может начать с `monitor --chat MARKED_ID --unread-backfill`.
+Только exact native ID и отсутствие cursor: существующий gap не сбрасывается.
+Provider фиксирует pts **до** чтения exact dialog metadata, замораживает интервал
+между `read_inbox_max_id` и `top_message`, возвращает до 100 refs за страницу.
+Продолжай `nextCursor` обычным monitor без флага. Чужой read marker/новый top между
+страницами не меняют исходную область; короткая/service-only страница не доказывает
+конец. После пустой history страницы `hasMore=true` требует catch-up исходного pts.
+Только этот subsequent native final закрывает начальный проход; host коммитит refs
+и cursor вместе. `historicalBackfill=true`, `initialUnreadOnly=true`,
+`snapshotAtomic=false` явно ограничивают coverage видимой начальной непрочитанной
+областью: это не всё прошлое канала, восстановление удалённых сообщений/ранних
+правок, body/attachment-read или ACK. Начальная инвентаризация каналов и durable
+stream/hint journal остаются обязанностью host. Ошибка не выдаёт новый checkpoint.
+
 Ответ содержит только ссылки/ID, native sender user ID, направление,
 forwarded/viaBot flags и digest ревизии. Текст, usernames, телефоны, access hashes,
 file_reference и session в ответ/cursor не включаются. Большие user IDs остаются

@@ -637,6 +637,25 @@ API-источники: [message links](https://core.telegram.org/api/links),
 pts/qts/date. `monitor --chat EXACT` использует независимый channel pts через
 `updates.getChannelDifference`. Первая страница без cursor явно `baselineOnly`:
 она не загружает исторические/unread сообщения и не доказывает завершённый intake.
+Для новой exact channel sequence `monitor --chat MARKED_ID --unread-backfill`
+вместо пустого baseline читает начальный **видимый непрочитанный** интервал.
+Флаг несовместим с cursor и username; отказ происходит до session/bootstrap IO.
+Сначала фиксируется native pts, затем exact `Dialog.read_inbox_max_id` и
+`top_message`. `messages.getHistory` возвращает до 100 refs страницы в этом
+замороженном интервале; старый read marker не заменяется текущим между страницами.
+Короткая/только service страница не означает конец: нужен пустой bounded read.
+После него `hasMore=true` требует difference от **исходного** pts, чтобы новые
+сообщения/правки во время backfill не потерялись. Cursor и refs host сохраняет
+атомарно. Ошибка/несовпадение peer/duplicate ID не возвращает новый checkpoint.
+
+В backfill `baselineOnly=false`, `coverage.historicalBackfill=true`,
+`initialUnreadOnly=true`, `snapshotAtomic=false`; `readState` остаётся passive.
+Это не всё прошлое канала, не восстановление уже удалённого текста/правок до
+initial pts, не proof чтения body/вложений и не ACK. Пустой интервал тоже требует
+pts catch-up. Источник с существующим gap не сбрасывается на этот режим; его
+review/history recovery остаётся отдельной процедурой. Начальное перечисление
+всех чатов аккаунта и durable host stream/hint journal не устанавливаются этой
+командой. Старый host, не понимающий coverage, сохраняет отказ, не reset.
 Channels из native `UpdateChannelTooLong`/`UpdateChannel` перечислены отдельно;
 после final channel не опрашивается вновь без нового account hint. Ни одна
 команда не устанавливает фоновый монитор, не открывает окно и не отправляет ACK.
@@ -678,6 +697,9 @@ privacy canaries и digest без transport churn. Fixtures
 release проверки остаются отдельными gates. Исходники не активируют live skill.
 
 API: [updates](https://core.telegram.org/api/updates),
+[dialog](https://core.telegram.org/constructor/dialog),
+[getPeerDialogs](https://core.telegram.org/method/messages.getPeerDialogs),
+[getHistory](https://core.telegram.org/method/messages.getHistory),
 [getDifference](https://core.telegram.org/method/updates.getDifference),
 [getChannelDifference](https://core.telegram.org/method/updates.getChannelDifference).
 
