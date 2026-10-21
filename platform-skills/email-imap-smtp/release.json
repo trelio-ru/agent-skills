@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.6.1",
-    "summary": "Точное чтение IMAP monitor reference по scope/UIDVALIDITY/UID с проверкой полного literal до allocation, без Seen и частичного результата."
+    "version": "2.6.2",
+    "summary": "Exact IMAP reference ограничивает суммарные literal/metadata bytes всего FETCH, восстанавливает оба native reader и не выдаёт частичный результат."
   },
   "connection": null,
   "runtime": {
-    "version": "2.6.1",
+    "version": "2.6.2",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-email.py",

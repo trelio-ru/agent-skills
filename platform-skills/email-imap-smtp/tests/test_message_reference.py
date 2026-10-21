@@ -123,6 +123,60 @@ class ReferenceRead(unittest.TestCase):
             self.assertEqual(caught.exception.code, 'EMAIL_REFERENCE_INCOMPLETE')
             observed.assert_not_called()
             self.assertIs(client.read, observed, 'owned reader is restored even on refusal')
+            self.assertEqual(client.state, 'LOGOUT')
+
+    def test_refused_literal_cannot_be_consumed_again_by_context_logout(self):
+        declared = M.MAX_MESSAGE_BYTES + 1
+        wire = examine(1, next_uid=12) + f'* 1 FETCH (UID 11 RFC822.SIZE {declared} BODY[] {{{declared}}}\r\n'.encode()
+        client = ScriptedImap(wire)
+        # Use the actual stdlib context-manager exit, not nullcontext. It must
+        # not issue LOGOUT and consume a rejected stream after guards restore.
+        with mock.patch.object(M, 'imap_connection', return_value=client), self.assertRaises(M.EmailReferenceError) as caught:
+            M.command_read_reference(self.args())
+        self.assertEqual(caught.exception.code, 'EMAIL_REFERENCE_INCOMPLETE')
+        self.assertEqual(len(client.sent), 2)
+        self.assertFalse(any(b'LOGOUT' in value for value in client.sent))
+        self.assertTrue(client.responses.closed)
+
+    def test_abort_cleanup_error_preserves_bound_failure_without_private_output(self):
+        declared = M.MAX_MESSAGE_BYTES + 1
+        client = ScriptedImap(examine(1, next_uid=12) + f'* 1 FETCH (UID 11 RFC822.SIZE {declared} BODY[] {{{declared}}}\r\n'.encode())
+        with mock.patch.object(client, 'shutdown', side_effect=OSError('PRIVATE_ABORT_CANARY')), \
+             self.assertRaises(M.EmailReferenceError) as caught:
+            self.read(client)
+        self.assertEqual(caught.exception.code, 'EMAIL_REFERENCE_INCOMPLETE')
+        self.assertNotIn('PRIVATE_ABORT', json.dumps(M.error_payload(caught.exception)))
+        self.assertEqual(client.state, 'LOGOUT')
+        client.responses.close()
+
+    def test_multiple_literals_share_one_allocation_budget_and_restore_both_readers(self):
+        wire = examine(1, next_uid=13)
+        wire += b'* 1 FETCH (UID 11 RFC822.SIZE 3 BODY[] {3}\r\nabc)\r\n'
+        wire += b'* 2 FETCH (UID 12 RFC822.SIZE 3 BODY[] {3}\r\ndef)\r\nTEST2 OK fetched\r\n'
+        client = ScriptedImap(wire)
+        M.select_folder(client, 'INBOX')
+        original_read, original_line = client.read, client.readline
+        with mock.patch.object(client, 'read', wraps=original_read) as reads, \
+             mock.patch.object(client, 'readline', wraps=original_line) as lines, \
+             mock.patch.object(M, 'MAX_MESSAGE_BYTES', 4):
+            with self.assertRaises(M.EmailReferenceError) as caught:
+                M.fetch_raw_message(client, '11', verify_reference=True)
+            self.assertEqual(caught.exception.code, 'EMAIL_REFERENCE_INCOMPLETE')
+            reads.assert_called_once_with(3)
+            self.assertIs(client.read, reads)
+            self.assertIs(client.readline, lines)
+
+    def test_small_untagged_lines_cannot_accumulate_without_bound(self):
+        wire = examine(1, next_uid=12) + (b'* OK ' + b'x' * 40 + b'\r\n') * 20
+        client = ScriptedImap(wire)
+        M.select_folder(client, 'INBOX')
+        with mock.patch.object(client, 'readline', wraps=client.readline) as lines, \
+             mock.patch.object(M, 'MAX_REFERENCE_METADATA_BYTES', 128):
+            with self.assertRaises(M.EmailReferenceError) as caught:
+                M.fetch_raw_message(client, '11', verify_reference=True)
+            self.assertEqual(caught.exception.code, 'EMAIL_REFERENCE_INCOMPLETE')
+            self.assertLessEqual(lines.call_count, 3)
+            self.assertIs(client.readline, lines)
 
     def test_cleanup_and_server_failures_do_not_deliver_success_or_private_diagnostics(self):
         @contextlib.contextmanager
