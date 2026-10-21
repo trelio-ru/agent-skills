@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.6.2",
-    "summary": "Exact IMAP reference ограничивает суммарные literal/metadata bytes всего FETCH, восстанавливает оба native reader и не выдаёт частичный результат."
+    "version": "2.6.3",
+    "summary": "Отдельная exact-UID отметка Seen сверяет полный исходник и native FLAGS; неизвестный результат проверяется readonly без автоматического повтора."
   },
   "connection": null,
   "runtime": {
-    "version": "2.6.2",
+    "version": "2.6.3",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-email.py",

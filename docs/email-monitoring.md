@@ -85,3 +85,38 @@ STORE, EXPUNGE, SMTP, read receipt, сброса cursor или чтения др
 разрешать независимую отметку «прочитано». Текст письма не становится authority.
 `test_message_reference.py` проходит настоящий IMAP encoder/parser с synthetic
 socket stream, включая giant literal до allocation и ошибки cleanup.
+
+## Подтверждение прочитанности одной ссылки
+
+`ack-reference --uid UID --uid-validity UIDVALIDITY --expected-revision SHA256
+--expected-original-sha256 SHA256 --confirm` отдельно добавляет только `\Seen`
+к одному exact UID. Нужны прежние native account/company/folder binding, полные
+исходные байты из `read-reference` и отдельное разрешение изменения read-state.
+Один hash либо CLI-флаг не доказывает, что диспетчер зафиксировал обработку:
+trusted host дополнительно требует accepted task, exact read proof, committed
+processing и собственную ACK lease. Пассивный monitor и task delivery сами эту
+команду не вызывают; production wiring остаётся отдельным gate.
+
+Перед записью проверяются UIDVALIDITY, scoped revision, полный RFC822 SHA-256 и
+native FLAGS. Уже прочитанное письмо не получает повторный STORE. Writable
+SELECT повторяет UIDVALIDITY и текущий local read-only запрет, затем допускает
+ровно `UID STORE UID +FLAGS.SILENT (\Seen)` – без диапазона, снятия чужих flags,
+CLOSE/EXPUNGE, SMTP или read receipt. Результат STORE не равен подтверждённой
+прочитанности: обязательны exact UID/FLAGS read-back и повторная UIDVALIDITY.
+Результат содержит только reference, digest и закрытые факты read-state.
+
+Для неизвестного результата используется тот же `ack-reference` с
+`--verify-only` **вместо** `--confirm`: readonly EXAMINE/PEEK/FLAGS проверяют
+native состояние без SELECT/STORE. `seen=false` не разрешает автоматический
+повтор; trusted host заново сверяет исходную обработку и актуальный доступ.
+При исключении после отправленного STORE `writeAttempted=true`,
+`writeOutcome=unknown`, `automaticRetryAllowed=false` сохраняются даже при
+неверном последующем UID либо ошибке cleanup. Существующая lease не продлевается.
+Provider не добавляет собственный progress journal, credentials или executor.
+
+FLAGS/STORE metadata имеют общий 16 КиБ budget на обмен; unsolicited literal
+отклоняется до allocation. После такого отказа owned connection закрывается без
+LOGOUT/reparse. Синтетические wire-тесты проверяют exact additive mutation,
+незатронутые соседние UID/flags, verify-only, scope/hash/UIDVALIDITY/policy,
+утраченный ответ, literal/metadata bounds и отсутствие raw provider diagnostics.
+Нормативный [STORE](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.4.6).
