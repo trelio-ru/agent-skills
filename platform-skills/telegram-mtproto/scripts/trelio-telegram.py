@@ -80,6 +80,7 @@ MAX_ENTITY_TITLE_CHARS = 256
 MAX_ENTITY_USERNAME_CHARS = 64
 MAX_CHAT_REFERENCE_CHARS = 256
 MAX_FILE_NAME_CHARS = 512
+CHANNEL_TOOLS_MODULE = None
 # Reaction metadata travels with every normalized message, including period
 # exports. Bound it here rather than adding unbounded per-message RPC lookups.
 MAX_REACTION_TYPES = 64
@@ -1402,6 +1403,19 @@ def import_telethon_audience_count():
     return GetFullChannelRequest
 
 
+def import_channel_tools():
+    """Load only the signature-verified sibling, including isolated Python."""
+
+    global CHANNEL_TOOLS_MODULE
+    if CHANNEL_TOOLS_MODULE is None:
+        source = Path(__file__).resolve().with_name("channel_tools.py")
+        spec = importlib.util.spec_from_file_location("trelio_telegram_channel_tools", source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        CHANNEL_TOOLS_MODULE = module
+    return CHANNEL_TOOLS_MODULE
+
+
 def import_telethon_global_search():
     """Load the fixed TL request and helpers used by resumable global search."""
 
@@ -1563,7 +1577,7 @@ def build_client(args: argparse.Namespace, identity: Identity):
     # outcome to the caller instead of silently submitting it a second time.
     # Ordinary reads retain the library's safe retry behavior.
     request_policy = {}
-    if getattr(args, "command", None) in {"monitor", "read-reference", "audience-count"}:
+    if getattr(args, "command", None) in {"monitor", "read-reference", "audience-count", "channel-stats", "album"}:
         # The fixed poll owns its explicit cursor. Disable the SDK's parallel
         # passive update subscription; it must not create an invisible second
         # source reader or alter the meaning of a delivered difference page.
@@ -1573,6 +1587,7 @@ def build_client(args: argparse.Namespace, identity: Identity):
     if getattr(args, "command", None) in {
         "send", "edit", "reply", "transcribe", "scheduled-edit",
         "scheduled-cancel", "scheduled-send-now",
+        "send-album", "forward",
     }:
         request_policy = {"request_retries": 0, "flood_sleep_threshold": 0,
                           "raise_last_call_error": True}
@@ -2469,6 +2484,17 @@ def public_message(
     views = nonnegative_integer(getattr(message, "views", None))
     if views is not None and views >= 2**31:
         views = None
+    # All of these fields belong to the already fetched message. Do not issue
+    # stats/history/reaction-list calls or register a view to fill absent data.
+    def counter(value):
+        count = nonnegative_integer(value)
+        return count if count is not None and count < 2**31 else None
+
+    replies = getattr(message, "replies", None)
+    reply_count = counter(getattr(replies, "replies", None))
+    grouped_id = getattr(message, "grouped_id", None)
+    grouped_id = (str(grouped_id) if type(grouped_id) is int and grouped_id != 0
+                  and -(2**63) <= grouped_id < 2**63 else None)
     return {
         "id": message.id,
         "date": message.date.isoformat() if message.date else None,
@@ -2488,6 +2514,10 @@ def public_message(
         "linkEntitiesTruncated": link_entities_truncated,
         "replyContext": reply_context,
         "views": views,
+        "forwards": counter(getattr(message, "forwards", None)),
+        "replyCount": reply_count,
+        "commentsCount": reply_count if getattr(replies, "comments", None) is True else None,
+        "groupedId": grouped_id,
         "reactions": public_message_reactions(message),
     }
 
@@ -6217,6 +6247,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
             return asyncio.run(command_resolve_phone_async(args, identity))
         if args.command == "audience-count":
             return asyncio.run(command_audience_count_async(args, identity))
+        if args.command in {"channel-stats", "album", "send-album", "forward"}:
+            return asyncio.run(import_channel_tools().run(args, identity, sys.modules[__name__]))
         if args.command == "members":
             return asyncio.run(command_members_async(args, identity))
         if args.command == "read":
@@ -6343,6 +6375,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Trelio Telegram MTProto runtime")
     add_connection_arguments(parser)
     commands = parser.add_subparsers(dest="command", required=True)
+    import_channel_tools().add_parsers(commands, positive_message_id)
     commands.add_parser("bootstrap", help="Install the pinned local Telethon runtime")
     commands.add_parser("doctor", help="Check local runtime, policy and session without revealing secrets")
     policy = commands.add_parser("policy", help="Read or update local sending policy")

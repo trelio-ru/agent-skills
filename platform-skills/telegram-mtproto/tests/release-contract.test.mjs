@@ -33,6 +33,11 @@ const releaseManifest = JSON.parse(releaseSource);
 test("Telegram MTProto release preserves privacy, search, scheduled-message, edit and Markdown contracts", () => {
   assert.match(skillInstructions, /members --chat ID_OR_USERNAME/u);
   for (const source of [skillInstructions, connectionDocs]) {
+    for (const command of ["channel-stats", "send-album", "forward", "commentsCount", "groupedId", "TELEGRAM_BULK_DELIVERY_UNKNOWN"]) {
+      assert.ok(source.includes(command), `Missing delivered channel contract: ${command}`);
+    }
+  }
+  for (const source of [skillInstructions, connectionDocs]) {
     assert.match(source, /audience-count --chat ID_OR_USERNAME/u);
     assert.match(source, /countSource/u);
     assert.match(source, /observedAt/u);

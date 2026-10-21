@@ -21,6 +21,11 @@ baseline/gap/ACK и отдельный HMAC purpose – в том же конт�
 `audience-count` читает число подписчиков/участников из exact live metadata,
 без списка людей/истории. Missing/denied count остаётся неизвестным; cached
 Channel counter не заменяет `channelFull.participants_count`.
+Аналитика каналов и album/forward commands следуют тому же контракту сообщений:
+фактический provider period/DC, bounded graphs без tokens и nullable counters.
+Bulk preview привязан к account/source/destination/bytes; одноразовый approval
+погашается до отправки. Неизвестный/частичный результат не разрешает replay.
+Новый `channel_tools.py` и все обязательные guides входят в signed package.
 Native DialogFolder исключается по constructor до чтения peer/folder metadata:
 сводная строка архива не является чатовой принадлежностью либо history target.
 

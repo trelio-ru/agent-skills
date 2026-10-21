@@ -306,6 +306,100 @@ API: [messageReactions](https://core.telegram.org/constructor/messageReactions),
 [reactionCount](https://core.telegram.org/constructor/reactionCount),
 [messagePeerReaction](https://core.telegram.org/constructor/messagePeerReaction).
 
+## Метрики постов и группировка media
+
+Общий `public_message` дополнительно проецирует nullable `forwards`, `replyCount`,
+`commentsCount` и `groupedId` во всех путях read/search/thread/context/export.
+Counters – signed TL int от 0 до 2³¹−1, без coercion; неизвестное не становится
+нулём. `commentsCount` возвращается только при явном `MessageReplies.comments`.
+`groupedId` сохраняет signed int64 как строку без потери точности JavaScript.
+Это metadata уже полученного сообщения, без новых RPC, view increment или ACK.
+
+## Аналитика broadcast-канала
+
+`channel-stats --chat EXACT` сначала читает exact ChannelFull и проверяет peer,
+`can_view_stats` и `stats_dc`. Неподходящий type отклоняется; отсутствие доступа
+или metadata возвращает явное unavailable. `stats.getBroadcastStats` выполняется
+в указанном Telegram datacenter, через штатный lifecycle exported sender SDK,
+без переключения основной сессии. Sender возвращается также при ошибке.
+
+Сводка содержит actual UTC period, время наблюдения и пары current/previous для
+followers, viewsPerPost, sharesPerPost и reactionsPerPost. Период задаёт Telegram;
+нет произвольного since/until и обещания истории за всё время. Nullable метрики
+не приравниваются к нулю; график роста не заменяется разностью несовместимых
+периодов или предполагаемыми отписками.
+
+`--graph growth|followers|views-by-source|new-followers-by-source|top-hours|interactions`
+выбирает один график. Async token берётся только из этого fresh ответа и один
+раз передаётся `stats.loadAsyncGraph` в тот же DC. Ошибка графика сохраняет сводку.
+Token, zoom token, raw JSON и provider errors не сериализуются. Parser принимает
+не более 64 KiB JSON, 33 columns и 1000 points, проверяет уникальные keys,
+единственную X-серию, согласованные длины и конечные числовые значения. Наружу
+идут максимум 8 series и последние 100 points с исходными coverage counts.
+Усечение явно `complete=false`; единицы оси остаются `provider`, не угадываются.
+
+## Чтение и отправка альбомов
+
+`album --chat EXACT --message-id ID` читает выбранное сообщение и фиксированное
+окно до десяти native ID с каждой стороны. Возвращаются только сообщения exact
+peer с тем же groupedId, по возрастанию message ID, максимум десять media.
+Повторное чтение selected message проверяет изменение/удаление. Coverage всегда
+`complete=false`, `windowOnly=true`, `bounded_message_window_not_atomic`: окно
+не доказывает всю группу или атомарный snapshot. Reply/history вне окна и сами
+файлы не читаются; read receipts не отправляются. Отсутствие groupedId явно.
+
+`send-album --chat EXACT --file PATH --file PATH [--message TEXT|--message-file PATH]`
+принимает 2–10 JPEG/PNG/MP4, максимум 20 MiB на файл и 100 MiB суммарно.
+Каждый файл local regular, без URL/symlink/duplicates; signature согласована с
+extension. Bytes замораживаются в ограниченной памяти того же вызова, поэтому
+SDK не переоткрывает изменяемый path после проверки. Буферы закрываются при
+успехе и ошибке; plaintext временных файлов и сохранённых payload нет.
+Порядок сохраняется, одна Markdown-подпись до 1024 символов после parsing –
+на первом элементе; clear_draft=false. Отправка сейчас, без schedule.
+
+## Пересылка оригиналов и bulk approval
+
+`forward --from-chat SOURCE --message-id ID [--message-id ID] --chat DEST`
+выбирает 1–10 distinct exact originals одного чата. Source/target разрешаются
+отдельно, каждое сообщение проверяется по native peer/ID. Service, missing,
+неполный текст и `noforwards` блокируют операцию; protected content не
+пересоздаётся через скачивание. Native forward сохраняет attribution и caption
+(`drop_author=false`, `drop_media_captions=false`). Выбор IDs не расширяется
+автоматически до соседних сообщений/полного альбома. Paid destinations закрыты.
+
+Обе записи требуют `--dry-run`, затем неизменную команду с
+`--confirm --approval-hash HASH`. Preview содержит exact source/destination,
+полный состав, caption или source messages, имена/размеры/SHA-256 файлов.
+Preview ограничен 20 000 UTF-8 bytes до approval и до send; receipt – 28 000.
+Обычная send authority не разрешает автоматически forward или disclosure файлов;
+нужно прямое поручение на exact operation. Сохранённый вход/hash – не authority.
+Read-only допускает preview, запрещает execute, upload и отправку.
+
+One-use token использует прежний owner-only approval journal (только hashes/token,
+без content), TTL 300 секунд, actual account/company/connection, runtime version,
+source/destination и full content snapshot. Новое preview заменяет прежнее.
+Изменённые bytes/text/source/recipient/account и expiry отвергают execute.
+Approval погашается до SDK upload/send. `request_retries=0`,
+`flood_sleep_threshold=0` и `raise_last_call_error=true` сохраняют unknown outcome.
+Проверяются количество и уникальность outgoing IDs, exact destination peer,
+для album – общий grouped ID, media types, caption/entities, для forward –
+stable content и native forwarding metadata. Failure/partial delivery или
+неполный receipt после dispatch возвращают `TELEGRAM_BULK_DELIVERY_UNKNOWN`.
+Перезапуск, новый preview и другой transport не разрешают повтор; сначала нужен
+read-back и отдельное решение по оставшимся элементам. Реальные тестовые отправки
+не входят в разрешение выпустить provider и требуют прямого поручения.
+
+`tests/test_channel_tools.py` проверяет production parser/handlers, metadata
+projection, период/доступ/DC/exported cleanup, async graphs и bounds, album
+window/change, exact source/recipient/content, file freezing, preview/expiry/
+account binding, read-only, noforwards, partial delivery и consumed token.
+Fixtures синтетические, без аккаунта/сети; тот же suite идёт на трёх OS.
+
+API: [статистика](https://core.telegram.org/api/stats),
+[Message](https://core.telegram.org/constructor/message),
+[альбомы](https://core.telegram.org/method/messages.sendMultiMedia),
+[forward](https://core.telegram.org/method/messages.forwardMessages).
+
 ## Ответ на сообщение
 
 `reply --link URL --message TEXT` либо exact chat/message сохраняет исходный
