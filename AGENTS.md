@@ -173,6 +173,7 @@ production алгоритмом с внедрёнными часами, без H
 Пассивный MAX `monitor` следует [контракту](docs/max-monitoring.md): один exact чат,
 перекрытие native message ID, явный gap; display name не доказывает владельца.
 Для пассивного IMAP `monitor` читай [контракт](docs/email-monitoring.md): UIDVALIDITY, scoped checkpoint, finite readonly range; без ACK/новых задач.
+IMAP `read-reference` сверяет ту же scoped identity до/после PEEK, exact UID/полный literal и не выдаёт partial result; giant literal блокируется до allocation, прежний reader восстанавливается.
 Для почтовой отправки сохраняй исходные байты вложений, различай отказ SMTP
 и неизвестный результат, не выводи raw reply; читай
 [контракт диагностики](docs/email-send-diagnostics.md).
