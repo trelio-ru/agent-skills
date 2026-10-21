@@ -147,6 +147,17 @@ ACK требует committed processing/read proof/lease. Host account list/CRUD
 Обычные human calls сохраняют прежний CLI и не требуют этого opt-in; файл
 ограничивает dedicated task execution, не создаёт новый executor или vault.
 
+Policy v2 сохраняет `taskCommands` и требует `deniedOptions`: 1–32 уникальных
+literal long options `--[a-z][a-z0-9-]{0,63}`. Тот же guard отклоняет отдельный
+токен и форму `--flag=value` до account/bootstrap. Например, MAX разрешает
+human `read --chrome PATH`, но task descriptor запрещает browser executable,
+режим окна и budget overrides. Provider обязан проверить собственные aliases/
+abbreviations: host не угадывает их по имени флага. Forbidden-looking значение
+данных также даёт fail-closed отказ. V1 не игнорирует v2 поля; неизвестная версия
+закрыта, без legacy fallback. Обычный human CLI не меняется. Общий enforcing
+runtime и exact provider/native tests должны быть проверены до task rollout;
+сам файл не включает автономную работу или source intake.
+
 <a id="human-input-completion"></a>
 
 ## Продолжение после ввода
