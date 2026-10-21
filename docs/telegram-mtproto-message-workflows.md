@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.7.2`
-публикует runtime `2.7.2`, требует Telethon `>=1.44,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.8.0`
+объявляет runtime `2.8.0`, требует Telethon `>=1.44,<2` и сохраняет
 minimum host `3.7.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -54,6 +54,38 @@ Private paths, argv, session и содержимое сообщений в diagn
 Windows NTSTATUS моделируется завершением test process, без invalid memory access.
 
 ## Состав группы или канала
+
+`audience-count --chat ID_OR_USERNAME` возвращает текущий общий размер аудитории
+одного exact канала, супергруппы или обычной группы. `audience=subscribers`
+обозначает канал, `audience=members` – группу. Для Channel выполняется один
+`channels.getFullChannel`, проверяются constructor `ChannelFull` и exact peer ID,
+затем читается только `channelFull.participants_count`. Счётчик из первоначального
+Channel не используется как fallback при отсутствии/отказе полной metadata.
+Для basic Chat счётчик берётся из `participants_count` свежего `get_entity`;
+`messages.getFullChat`, перечисление участников и история не запрашиваются.
+
+Результат содержит безопасные `chat`, `chatType`, `audience`, nullable `count`,
+`countSource`, `observedAt` в UTC, `available`, nullable `reason` и
+`readState.mode=metadata-only`, `marksRead=false`. Число – signed TL int от 0
+до 2³¹−1 без coercion: null, bool, string, float, отрицательные и oversized
+значения остаются `count=null`, `available=false`, `reason=count_unavailable`.
+Настоящий ноль доступен; число не вычисляется по длине списка людей или просмотрам.
+Каждый явный вызов читает новый снимок, не историю роста либо уникальную аудиторию
+постов. Скрытый состав не блокирует доступный агрегат.
+
+Known access failures возвращают неизвестный count с безопасным `reason`, без
+raw RPC, users, invites, phones, access hashes или auxiliary chats. Timeout и
+неожиданный response не выдаются за ноль/отсутствие/доказанный отказ доступа.
+Session отключается также при auth/resolution/metadata failure. Команда доступна
+в read-only режиме, отключает passive update subscription и не делает read ACK,
+view increment, join, send либо смену транспорта. Unknown count не разрешает
+fallback через `members`/UI. `tests/test_audience_count.py` проверяет real parser,
+dispatcher, count/identity validation, fresh reads, privacy и отсутствие лишних
+provider calls на синтетических fixtures без аккаунта и сети.
+
+API: [channels.getFullChannel](https://core.telegram.org/method/channels.getFullChannel),
+[channelFull](https://core.telegram.org/constructor/channelFull),
+[chat](https://core.telegram.org/constructor/chat).
 
 `members` без `--query` сопоставляет нефильтрованную выдачу с provider total.
 Когда `returned == reportedTotal`, `hasMore=false` и

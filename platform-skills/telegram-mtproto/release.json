@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.7.2",
-    "summary": "Точное чтение наблюдаемой версии сообщения для цифрового ассистента без read receipt, соседней истории и неявного чтения quoted content."
+    "version": "2.8.0",
+    "summary": "Количество подписчиков канала и участников группы из свежих метаданных Telegram без выгрузки списка людей или чтения сообщений."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.7.2",
+    "version": "2.8.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

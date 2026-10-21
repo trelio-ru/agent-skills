@@ -32,6 +32,12 @@ const releaseManifest = JSON.parse(releaseSource);
 
 test("Telegram MTProto release preserves privacy, search, scheduled-message, edit and Markdown contracts", () => {
   assert.match(skillInstructions, /members --chat ID_OR_USERNAME/u);
+  for (const source of [skillInstructions, connectionDocs]) {
+    assert.match(source, /audience-count --chat ID_OR_USERNAME/u);
+    assert.match(source, /countSource/u);
+    assert.match(source, /observedAt/u);
+    assert.match(source, /count=null/u);
+  }
   // Generic product policy belongs to Trelio. Public provider tests bind the
   // delivered instruction and provider workflow, without importing a private
   // product document or weakening the runtime/manifest assertions below.
@@ -94,9 +100,9 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /`views`/u);
     assert.match(source, /views=null|`null`/u);
   }
-  assert.equal(releaseManifest.release.version, "2.7.2");
+  assert.equal(releaseManifest.release.version, "2.8.0");
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.7.2");
+  assert.equal(releaseManifest.runtime.version, "2.8.0");
   assert.equal(releaseManifest.runtime.minimumHostVersion, "3.7.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),
