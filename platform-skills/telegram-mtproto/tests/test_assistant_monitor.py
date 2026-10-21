@@ -324,6 +324,8 @@ class Monitor(unittest.TestCase):
              mock.patch.object(M,'session_path',return_value=pathlib.Path(self.temp)/'fixture.session'):
             BUILD_CLIENT(NS(command='monitor'),self.identity)
             self.assertIs(constructor.call_args.kwargs['receive_updates'],False)
+            BUILD_CLIENT(NS(command='read-reference'),self.identity)
+            self.assertIs(constructor.call_args.kwargs['receive_updates'],False)
             BUILD_CLIENT(NS(command='read'),self.identity)
             self.assertNotIn('receive_updates',constructor.call_args.kwargs)
             BUILD_CLIENT(NS(command='send'),self.identity)
@@ -379,6 +381,125 @@ class Monitor(unittest.TestCase):
         native.peer_id=tl('PeerChannel',channel_id=55)
         self.assertIsNone(M.monitor_message(native,utils,kind='new',channel_peer=None)['senderUserId'])
 
+
+
+class ReferenceRead(unittest.TestCase):
+    """The real exact-message resolver/projector, with only native I/O faked."""
+    def setUp(self):
+        self.provider = Provider()
+        self.native = message(text='Полный текст 👋🏽')
+        self.entity = tl('User', id=77, first_name='Synthetic reader')
+        self.utils = NS(get_peer_id=lambda value: value.id if type(value).__name__ == 'User' else peer_id(value))
+        self.identity = M.Identity(company_id='11111111-1111-4111-8111-111111111111',
+                                   member_id='22222222-2222-4222-8222-222222222222',
+                                   connection_id='33333333-3333-4333-8333-333333333333')
+        self.client = self.enterContext(mock.patch.object(M, 'build_client', return_value=self.provider))
+        self.resolve = self.enterContext(mock.patch.object(M, 'resolve_entity', new=mock.AsyncMock(return_value=self.entity)))
+        self.enterContext(mock.patch.object(M, 'import_telethon_workflows', return_value=(NS(), NS(), self.utils, None, None)))
+        self.provider.get_messages = mock.AsyncMock(side_effect=lambda *_a, **_kw: self.native)
+        self.provider.send_message = mock.AsyncMock(side_effect=AssertionError('Read cannot send'))
+        self.enterContext(mock.patch.object(M, 'public_messages', side_effect=AssertionError('Reference read must not resolve replies/context')))
+
+    def revision(self):
+        return M.monitor_message(self.native, self.utils, kind='new', channel_peer=77)['revision']
+
+    def args(self, **changes):
+        return NS(command='read-reference', chat='77', message_id=1, expected_revision=self.revision(), **changes)
+
+    def read(self, args=None):
+        return asyncio.run(M.command_message_read_async(args or self.args(), self.identity))
+
+    def test_exact_revision_delivers_complete_safe_projection_without_history_quote_or_receipt(self):
+        self.native.reply_to = NS(reply_to_msg_id=90)
+        self.native.get_reply_message = mock.AsyncMock(side_effect=AssertionError('No quoted-message fetch'))
+        value = self.read()
+        self.assertEqual(value['protocol'], 'telegram-message-read/v1')
+        self.assertEqual(value['reference']['id'], 'message:77:1')
+        self.assertEqual(value['reference']['revision'], self.revision())
+        self.assertNotIn('kind', value['reference'])
+        self.assertEqual(value['message']['text'], self.native.message)
+        self.assertIsNone(value['message']['replyContext'])
+        self.assertEqual(value['coverage'], {'textComplete': True, 'attachmentsContentRead': False, 'contextIncluded': False})
+        self.assertFalse(value['readState']['marksRead'])
+        self.assertFalse(value['readState']['viewsRegistered'])
+        self.assertFalse(value['readState']['readReceiptsSent'])
+        self.native.get_reply_message.assert_not_awaited()
+        self.provider.get_messages.assert_awaited_once_with(self.entity, ids=1)
+        self.provider.send_message.assert_not_awaited()
+        self.assertEqual(self.provider.calls, [])
+        self.assertEqual(self.provider.disconnect.await_count, 1)
+
+    def test_changed_version_cannot_deliver_the_new_body_as_the_old_event(self):
+        args = self.args()
+        self.native.message = 'PRIVATE_NEW_BODY_MUST_NOT_BE_DELIVERED'
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            self.read(args)
+        self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_CHANGED')
+        self.assertNotIn('PRIVATE_NEW_BODY', json.dumps(caught.exception.public_payload()))
+        self.assertEqual(self.provider.disconnect.await_count, 1)
+
+    def test_foreign_peer_missing_or_different_id_is_not_a_successful_read(self):
+        args = self.args()
+        for native in [None, tl('MessageEmpty', id=1), message(2), message(peer=tl('PeerUser', user_id=88))]:
+            self.native = native
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.read(args)
+            self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_UNAVAILABLE')
+        # Prove the literal numeric peer too, even if a faulty resolver and
+        # message agree with each other on a different otherwise valid peer.
+        self.resolve.return_value = tl('User', id=88)
+        self.native = message(peer=tl('PeerUser', user_id=88))
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            self.read(args)
+        self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_UNAVAILABLE')
+
+    def test_truncated_text_does_not_become_a_complete_read_or_an_ack(self):
+        self.native.message = 'x' * (M.MAX_READ_TEXT_CHARS + 1)
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            self.read()
+        self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_INCOMPLETE')
+        self.assertEqual(self.provider.calls, [])
+
+    def test_sdk_and_cleanup_failures_are_redacted_and_preserve_a_proven_conflict(self):
+        self.provider.get_messages.side_effect = RuntimeError('PRIVATE_RPC_DIAGNOSTIC_CANARY')
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            self.read()
+        self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_UNAVAILABLE')
+        self.assertNotIn('PRIVATE_RPC', json.dumps(caught.exception.public_payload()))
+        self.provider.get_messages.side_effect = lambda *_a, **_kw: self.native
+        self.provider.disconnect.side_effect = RuntimeError('PRIVATE_CLEANUP_DIAGNOSTIC_CANARY')
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            self.read()
+        self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_UNAVAILABLE')
+        self.assertNotIn('PRIVATE_CLEANUP', json.dumps(caught.exception.public_payload()))
+        args = self.args()
+        self.native.message = 'changed'
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            self.read(args)
+        self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_CHANGED')
+
+    def test_invalid_reference_fails_before_client_and_before_main_bootstrap(self):
+        for changes in [{'chat': '@owner'}, {'chat': '-0'}, {'chat': str(2**63)}, {'message_id': True},
+                        {'message_id': 2**31}, {'expected_revision': 'A'*64}, {'link': 'https://t.me/fake/1'}, {'context': 1}]:
+            args = self.args()
+            for key, value in changes.items(): setattr(args, key, value)
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.read(args)
+            self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_INPUT_INVALID')
+        self.client.assert_not_called()
+        import contextlib, io
+        with mock.patch.object(M.sys, 'argv', ['trelio-telegram.py', 'read-reference', '--chat', '@owner', '--message-id', '1', '--expected-revision', 'a'*64]), \
+             mock.patch.object(M, 'reexec_in_runtime_if_needed', side_effect=AssertionError('No bootstrap')) as reexec, \
+             contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(M.main(), 2)
+        reexec.assert_not_called()
+        self.assertEqual(json.loads(error.getvalue())['code'], 'TELEGRAM_REFERENCE_INPUT_INVALID')
+
+    def test_parser_and_dispatch_keep_the_exact_reference_contract(self):
+        args = M.build_parser().parse_args(['read-reference', '--chat', '77', '--message-id', '1', '--expected-revision', self.revision()])
+        with mock.patch.object(M, 'identity_from_args', return_value=self.identity), \
+             mock.patch.object(M, 'session_lock', return_value=mock.MagicMock()):
+            self.assertEqual(M.run_async_command(args)['reference']['revision'], self.revision())
 
 if __name__=='__main__':
     unittest.main()

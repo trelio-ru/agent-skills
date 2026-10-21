@@ -14,6 +14,7 @@ gate обходит все provider-ы; native gate выполняется на 
 метаданных; export cursor продвигается только после возвращённого сообщения.
 Archive scope повторно проверяется до history, включая exact сохранённый ID.
 Пассивный `monitor` хранит durable checkpoint отдельно от unread/session TTL;
+`read-reference` сверяет exact native ID/revision без context/ACK и требует полный текст;
 baseline/gap/ACK и отдельный HMAC purpose – в том же контракте сообщений.
 Просмотры постов возвращаются как nullable `views` из полученного Message:
 неизвестное значение не становится нулём, чтение не регистрирует просмотр.

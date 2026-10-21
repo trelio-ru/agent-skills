@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.7.1",
-    "summary": "Durable monitor checkpoint переживает простой без session TTL; overview expiry, свежая авторизация и HMAC scope остаются прежними."
+    "version": "2.7.2",
+    "summary": "Точное чтение наблюдаемой версии сообщения для цифрового ассистента без read receipt, соседней истории и неявного чтения quoted content."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.7.1",
+    "version": "2.7.2",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
