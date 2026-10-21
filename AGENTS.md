@@ -28,6 +28,9 @@ Never use it to reset an existing cursor or claim historical edit recovery.
 `ack-reference` uses native range coverage, one non-retried write and read-back;
 only committed exact refs may cover unread history. Verify-only reconciles an
 unknown result without writing; generic task/source read admission never grants ACK.
+Opaque conversation keys reuse the private cursor HMAC in a separate domain;
+mapped reference reads/ACK verify the original key before body/native effects.
+Keys correlate account-bound peers, never sender identity or processing authority.
 baseline/gap/ACK и отдельный HMAC purpose – в том же контракте сообщений.
 Task-команды Telegram отдельно перечислены в signed `trelio-assistant-execution.json`;
 новые parser leaves не открываются ассистенту автоматически, login/admin/ACK

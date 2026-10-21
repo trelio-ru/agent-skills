@@ -4367,10 +4367,13 @@ def validate_reference_read(args: argparse.Namespace) -> None:
     chat = getattr(args, "chat", None)
     message_id = getattr(args, "message_id", None)
     expected = getattr(args, "expected_revision", None)
+    conversation = getattr(args, "expected_conversation_key", None)
     if (not isinstance(chat, str) or re.fullmatch(r"-?[1-9]\d{0,18}", chat) is None
             or not 0 < abs(int(chat)) < 2**63
             or type(message_id) is not int or not 0 < message_id < 2**31
             or not isinstance(expected, str) or re.fullmatch(r"[a-f0-9]{64}", expected) is None
+            or conversation is not None and (not isinstance(conversation, str)
+                or re.fullmatch(r"telegram-conversation/v1\.[a-f0-9]{64}", conversation) is None)
             or getattr(args, "link", None) is not None or getattr(args, "context", 0) != 0):
         raise TelegramRuntimeError("An exact native message reference and revision are required.", code="TELEGRAM_REFERENCE_INPUT_INVALID")
 
@@ -4384,10 +4387,16 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
     failure = None
     try:
         await ensure_authorized(client)
+        if exact_reference:
+            # Validate account/company/device correlation BEFORE fetching the
+            # private body. Native IDs can coincide in two different accounts;
+            # an old task mapping must not silently read the replacement one.
+            conversation_key = await reference_conversation_key(client, identity, args)
         entity, message = await resolve_message_target(client, reference)
         if exact_reference:
             _functions, _types, utils, _events, _markdown = import_telethon_workflows()
             observed = monitor_message(message, utils, kind="new", channel_peer=int(args.chat))
+            observed["conversationKey"] = conversation_key
             if observed["revision"] != args.expected_revision:
                 raise TelegramRuntimeError("The observed Telegram message changed; retain the original reference.", code="TELEGRAM_REFERENCE_CHANGED")
             # The ordinary safe field projection is shared, but its optional
@@ -4412,7 +4421,7 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
         return result
     except TelegramRuntimeError as error:
         failure = error
-        if exact_reference and error.code not in {"TELEGRAM_REFERENCE_CHANGED", "TELEGRAM_REFERENCE_INCOMPLETE"}:
+        if exact_reference and error.code not in {"TELEGRAM_REFERENCE_CHANGED", "TELEGRAM_REFERENCE_INCOMPLETE", "TELEGRAM_REFERENCE_SCOPE_CHANGED"}:
             failure = TelegramRuntimeError("The exact Telegram message reference is unavailable.", code="TELEGRAM_REFERENCE_UNAVAILABLE")
             raise failure from error
         raise
@@ -4477,6 +4486,7 @@ async def command_reference_ack_async(args: argparse.Namespace, identity: Identi
             assert_send_allowed(identity, confirmed=True)
         client = build_client(args, identity)
         await ensure_authorized(client)
+        conversation_key = await reference_conversation_key(client, identity, args)
         Dialogs, History, Read, ReadChannel, InputDialog, utils = import_telethon_reference_ack()
         entity, native = await resolve_message_target(client, message_reference(args))
         # Forum topics have independent read counters; a dialog-wide range is
@@ -4484,6 +4494,7 @@ async def command_reference_ack_async(args: argparse.Namespace, identity: Identi
         if getattr(entity, "forum", False):
             raise ack_error("TELEGRAM_ACK_RANGE_UNSUPPORTED", "Topic read ranges require a separate native contract.")
         observed = monitor_message(native, utils, kind="new", channel_peer=int(args.chat))
+        observed["conversationKey"] = conversation_key
         if observed["revision"] != args.expected_revision:
             raise ack_error("TELEGRAM_REFERENCE_CHANGED", "The processed Telegram message changed.")
         peer = await client.get_input_entity(entity)
@@ -4547,7 +4558,7 @@ async def command_reference_ack_async(args: argparse.Namespace, identity: Identi
                 "viewsRegistered": False, "verifyOnly": args.verify_only, "snapshotAtomic": False}}
     except Exception as error:
         if isinstance(error, TelegramRuntimeError) and not attempted and error.code in {
-                "TELEGRAM_REFERENCE_CHANGED", "TELEGRAM_ACK_RANGE_INCOMPLETE", "TELEGRAM_ACK_RANGE_UNSUPPORTED"}:
+                "TELEGRAM_REFERENCE_CHANGED", "TELEGRAM_REFERENCE_SCOPE_CHANGED", "TELEGRAM_ACK_RANGE_INCOMPLETE", "TELEGRAM_ACK_RANGE_UNSUPPORTED"}:
             failure = error
         else:
             failure = ack_error("TELEGRAM_ACK_OUTCOME_UNKNOWN" if attempted else "TELEGRAM_ACK_UNAVAILABLE",
@@ -6265,6 +6276,39 @@ def monitor_position(value: Any, *, channel: bool) -> dict:
             "date": monitor_date(getattr(value, "date", None))}
 
 
+def monitor_account_scope(identity: Identity) -> dict:
+    """The unchanged account-cloud monitor scope, shared with exact references."""
+    return {"channel": None, "localAccountId": identity.account["id"] if identity.account else None,
+            "companyBinding": identity.account["companyBinding"] if identity.account else None}
+
+
+def monitor_conversation_key(identity: Identity, account_binding: str, peer_id: int) -> str:
+    """Opaque correlation only, NOT sender identity, read proof or permission.
+
+    Reuse the EXISTING private cursor key with a separate HMAC domain. Unlike a
+    plain hash of a native peer ID, it cannot be enumerated by the backend, and
+    another account/company/local binding cannot reuse it. Message text, edits,
+    unread state and the human workflow version do not change conversation ID.
+    """
+    if (not isinstance(account_binding, str) or re.fullmatch(r"[a-f0-9]{64}", account_binding) is None
+            or type(peer_id) is not int or not 0 < abs(peer_id) < 2**63):
+        raise TelegramRuntimeError("Conversation correlation is unavailable.", code="TELEGRAM_REFERENCE_SCOPE_CHANGED")
+    body = json.dumps([account_binding, str(peer_id)], separators=(",", ":")).encode("ascii")
+    digest = hmac.new(overview_cursor_key(identity), b"trelio-telegram-conversation/v1\x00" + body, hashlib.sha256).hexdigest()
+    return "telegram-conversation/v1." + digest
+
+
+async def reference_conversation_key(client: Any, identity: Identity, args: argparse.Namespace) -> str:
+    binding = await overview_binding(client, identity, "monitor/v1", monitor_account_scope(identity), version="monitor-checkpoint/v1")
+    key = monitor_conversation_key(identity, binding, int(args.chat))
+    expected = getattr(args, "expected_conversation_key", None)
+    if expected is not None and not hmac.compare_digest(key, expected):
+        raise TelegramRuntimeError("The observed Telegram conversation scope changed; preserve the original reference.",
+                                   code="TELEGRAM_REFERENCE_SCOPE_CHANGED", details={"writeAttempted": False,
+                                   "writeOutcome": "not_attempted", "automaticRetryAllowed": False})
+    return key
+
+
 def monitor_message(message: Any, utils: Any, *, kind: str, channel_peer: int | None) -> dict:
     """Project native author/peer identity; never serialize a TL object or body.
 
@@ -6494,10 +6538,7 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
             # Decode the ORIGINAL account-cloud checkpoint under its own exact
             # native binding and monitor HMAC purpose. A model timestamp, a
             # channel/overview cursor or another account never supplies scope.
-            account_binding = await overview_binding(client, identity, "monitor/v1", {
-                "channel": None, "localAccountId": identity.account["id"] if identity.account else None,
-                "companyBinding": identity.account["companyBinding"] if identity.account else None,
-            }, version="monitor-checkpoint/v1")
+            account_binding = await overview_binding(client, identity, "monitor/v1", monitor_account_scope(identity), version="monitor-checkpoint/v1")
             account_state = overview_cursor(identity, account_binding, token=account_seed, purpose="monitor")
             if not isinstance(account_state, dict) or set(account_state) != {"position"} \
                     or not isinstance(account_state["position"], dict) or set(account_state["position"]) != {"pts", "qts", "seq", "date"}:
@@ -6579,6 +6620,14 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
                 raise TelegramRuntimeError("Telegram monitor page exceeds its bound; retain the cursor.", code="TELEGRAM_MONITOR_GAP")
         if not initial_history:
             next_state = {"position": position}
+        if events:
+            # One native account binding per page, never a profile read for
+            # every message. The monitor cursor/digest ABI itself is unchanged.
+            routing_binding = binding if channel is None else await overview_binding(client, identity, "monitor/v1",
+                monitor_account_scope(identity), version="monitor-checkpoint/v1")
+            keys = {chat: monitor_conversation_key(identity, routing_binding, int(chat)) for chat in {event["chatId"] for event in events}}
+            for event in events:
+                event["conversationKey"] = keys[event["chatId"]]
         return {"schemaVersion": 1, "stream": {"kind": "channel" if channel is not None else "account_cloud", "chatId": str(peer_id) if peer_id is not None else None},
                 "baselineOnly": state is None and not initial_history, "events": events, "channelsToSync": sorted(channels_to_sync),
                 "unresolvedDeletionIds": sorted(set(unresolved_deletions)),
@@ -6858,10 +6907,12 @@ def build_parser() -> argparse.ArgumentParser:
     reference_read.add_argument("--chat", required=True, help="Exact native marked peer ID from the monitor reference")
     reference_read.add_argument("--message-id", type=positive_message_id, required=True)
     reference_read.add_argument("--expected-revision", required=True, help="Exact semantic SHA-256 from the observed reference")
+    reference_read.add_argument("--expected-conversation-key", help="Exact opaque native conversation key from monitor; new task/source routing requires it")
     reference_ack = commands.add_parser("ack-reference", help="Acknowledge only a fully committed native unread range, or reconcile without writing")
     reference_ack.add_argument("--chat", required=True)
     reference_ack.add_argument("--message-id", type=positive_message_id, required=True)
     reference_ack.add_argument("--expected-revision", required=True)
+    reference_ack.add_argument("--expected-conversation-key", help="Original native conversation key; checked before any message read or ACK")
     reference_ack.add_argument("--covered-reference", action="append", default=[], help="Committed native MESSAGE_ID:REVISION, repeat for every unread row")
     ack_mode = reference_ack.add_mutually_exclusive_group(required=True)
     ack_mode.add_argument("--confirm", action="store_true")
