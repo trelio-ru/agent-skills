@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "vk",
+    "version": "0.1.0",
+    "summary": "ВКонтакте через отрисованный текст и изображения: поиск, страницы, сообщества и диалоги с защищённым ручным входом"
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Перед работой обязательно войдите во ВКонтакте в отдельном Chromium. Используйте свой аккаунт. Вход через VK ID выполняется вручную; пароль, код и QR не передаются модели.",
+      "После «готово» или закрытия окна авторизация сохраняется локально в защищённом снимке. Готовность проверяется по странице ВКонтакте. Отправка сообщений и публикация требуют отдельного поручения пользователя."
+    ],
+    "configFields": [],
+    "secretFields": []
+  },
+  "runtime": {
+    "version": "0.1.0",
+    "minimumHostVersion": "3.11.0",
+    "entrypoint": { "path": "trelio-vk.mjs", "interpreter": "node" },
+    "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
+    "browserSession": { "apiVersion": 1, "sessionClass": "protected-snapshot", "manualAssist": true },
+    "files": [
+      { "source": "scripts/trelio-vk.mjs", "path": "trelio-vk.mjs", "mode": 493 },
+      { "source": "references/workflow.md", "path": "references/workflow.md", "mode": 420 },
+      { "source": "references/security.md", "path": "references/security.md", "mode": 420 }
+    ]
+  }
+}
