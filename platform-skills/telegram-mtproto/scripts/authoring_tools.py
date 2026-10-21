@@ -375,6 +375,9 @@ async def execute(client, entity, args, me, state, r, c, f, t, u):
 
 
 async def run(args, identity, r):
+    # Match the existing workflow gate before importing SDK helpers. A missing
+    # or outdated venv must return the safe bootstrap error, not a traceback.
+    r.import_telethon_workflows()
     c = r.import_community_tools()
     f, t, u, markdown = c.api()
     client, state, failure, dispatched = r.build_client(args, identity), None, None, False

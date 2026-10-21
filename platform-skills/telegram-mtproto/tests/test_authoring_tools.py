@@ -96,6 +96,13 @@ class AuthoringTests(unittest.TestCase):
         self.assertEqual(self.client.reads, [])
         self.assertEqual([type(row).__name__ for row in self.client.calls], ["GetPeerDialogsRequest"])
 
+    def test_sdk_gate_fails_before_api_import_or_client_creation(self):
+        with mock.patch.object(M, "import_telethon_workflows", side_effect=M.TelegramRuntimeError("Run bootstrap first")), \
+             mock.patch.object(C, "api", side_effect=AssertionError("SDK import must not happen")):
+            with self.assertRaisesRegex(M.TelegramRuntimeError, "bootstrap"):
+                self.cli("draft", "--chat", "@group")
+        M.build_client.assert_not_called()
+
     def test_save_existing_draft_shows_both_versions_and_does_not_send(self):
         self.native = TL("DraftMessage")(message="Уже набрано", entities=[], date=None)
         preview, result = self.apply("draft-save", "--chat", "@group", "--message", "**Новый ответ**", "--no-link-preview")
