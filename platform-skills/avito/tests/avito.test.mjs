@@ -11,7 +11,7 @@ import { buildRuntimePackage } from '../../tools/build-runtime-package.mjs';
 
 test('coordinate interface rejects script/selector/path overrides before host I/O', async () => {
   assert.deepEqual(parseAvitoCommand(['scroll', '--frameId', 'frame', '--x', '0', '--y', '40', '--deltaY', '900']), { operation: 'scroll', args: { frameId: 'frame', x: 0, y: 40, deltaY: 900 } });
-  for (const args of [['evaluate', '--script', 'document.body'], ['click', '--selector', '#login'], ['setup', '--executable', '/browser'], ['status', '--path', '/private'], ['key', '--frameId', 'frame', '--key', 'Enter', '--key', 'Tab']]) assert.throws(() => parseAvitoCommand(args), /AVITO_COMMAND_INVALID/);
+  for (const args of [['evaluate', '--script', 'document.body'], ['download-attachment', '--url', 'https://example.test/file'], ['download-attachment','--output','/private/file'], ['click', '--selector', '#login'], ['setup', '--executable', '/browser'], ['status', '--path', '/private'], ['key', '--frameId', 'frame', '--key', 'Enter', '--key', 'Tab']]) assert.throws(() => parseAvitoCommand(args), /AVITO_COMMAND_INVALID/);
   assert.equal((await runAvito(['commands'], {})).schemaVersion, 1);
   const doctor = await runAvito(['doctor'], {});
   assert.equal(doctor.hostVisualAvailable, false);
@@ -84,6 +84,9 @@ test('signed provider pins text mode and routes search through the worker pacing
     const env = { TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(host).href, TRELIO_SKILL_ID: 'avito' };
     const enter = await runAvito(['submit-search', '--frameId', 'fresh'], env);
     assert.equal(enter.observationMode, 'text');
+    assert.equal(enter.attachmentDownloads, true);
+    const file = await runAvito(['download-attachment','--frameId','fresh','--x','10','--y','20'],env);
+    assert.equal(file.operation,'download-attachment'); assert.deepEqual(file.args,{frameId:'fresh',x:10,y:20});
     assert.equal(enter.operation, 'submit');
     assert.deepEqual(enter.args, { action: 'key', key: 'Enter', frameId: 'fresh' });
     assert.deepEqual((await runAvito(['submit-search', '--frameId', 'fresh', '--x', '21', '--y', '32'], env)).args, { action: 'click', frameId: 'fresh', x: 21, y: 32 });

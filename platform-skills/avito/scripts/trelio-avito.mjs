@@ -7,6 +7,7 @@ const commands = {
   'read-text': { query: 'string?', offset: 'number?', includeControls: 'boolean?' },
   'submit-search': { frameId: 'string', x: 'number?', y: 'number?' }, 'search-ready': { frameId: 'string' },
   navigate: { url: 'string' }, click: { frameId: 'string', x: 'number', y: 'number' },
+  'download-attachment': { frameId: 'string', x: 'number', y: 'number' },
   scroll: { frameId: 'string', x: 'number', y: 'number', deltaY: 'number', deltaX: 'number?' },
   'type-text': { frameId: 'string', text: 'string' }, key: { frameId: 'string', key: 'string' },
 };
@@ -63,7 +64,7 @@ export async function runAvito(argv, env = process.env) {
     // Headerless redirects and final HTML/download guards require the fixed
     // signed host before any browser I/O. An older live worker is finished
     // through close; auth storage is reused without reset or re-login.
-    accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: '3.10.1',
+    accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: '3.11.0',
   };
   const url = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank');
   if (url.protocol !== 'file:' || env.TRELIO_SKILL_ID !== 'avito') throw new Error('AVITO_HOST_REQUIRED');
@@ -78,7 +79,7 @@ export async function runAvito(argv, env = process.env) {
     hostOperation = 'submit';
     hostArgs = Object.hasOwn(args, 'x') ? { action: 'click', ...args } : { action: 'key', key: 'Enter', ...args };
   } else if (operation === 'search-ready') hostOperation = 'request-ready';
-  return runVisualSession({ observationMode: 'text', origins: ['https://www.avito.ru', 'https://avito.ru'], domains: ['avito.ru'],
+  return runVisualSession({ observationMode: 'text', attachmentDownloads: true, origins: ['https://www.avito.ru', 'https://avito.ru'], domains: ['avito.ru'],
     operation: hostOperation, args: operation === 'setup' ? { url: 'https://www.avito.ru/' } : hostArgs, env });
 }
 
