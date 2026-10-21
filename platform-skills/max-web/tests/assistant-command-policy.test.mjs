@@ -31,6 +31,12 @@ test('MAX signed task policy classifies the real parser and keeps setup/admin pr
   // stop a different executable before the shared browser layer sees it.
   assert.ok(parseArguments(['read','--chrome','/synthetic-browser'],environment).chromeExecutable);
   assert.deepEqual(policy.deniedOptions,['--chrome','--headed','--headless','--hold-ms','--timeout-ms']);
+  for(const option of policy.deniedOptions) {
+    // The shared deny is literal, so introducing CLI abbreviations here would
+    // reopen an override unless the signed policy/contract is reviewed too.
+    assert.throws(()=>parseArguments(['read',option.slice(0,-1),'/synthetic-value'],environment),/Unknown argument/);
+  }
+  assert.throws(()=>parseArguments(['read','--Chrome','/synthetic-browser'],environment),/Unknown argument/);
 });
 
 test('MAX command restrictions are present in the existing signed file inventory',()=>{
