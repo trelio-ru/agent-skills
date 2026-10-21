@@ -131,7 +131,9 @@ host проверяется отдельно на macOS, Windows и Linux до �
 Первый host account flow Avito обязан проходить реальный packaged
 `__trelio_accounts_import`: отсутствие legacy store даёт пустой bounded envelope
 без native/browser/credential IO, не ошибку и не сброс существующих snapshots.
-Avito minimum host >=3.10.1 фиксирует безопасные headerless HTTP redirects,
+Avito minimum host >=3.11.0 фиксирует bounded входящие вложения через browser
+stream/local receipt, без URL/body в MCP и без popup focus; обычный navigate
+файлов остаётся запрещённым. Также сохраняются безопасные headerless HTTP redirects,
 text-first, pacing и лимит пяти вкладок;
 старый долгоживущий bridge обновляется через signed admission до browser IO.
 Диагностический minimum provider должен совпадать с release.json. Новые поиски
