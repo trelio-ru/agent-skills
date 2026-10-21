@@ -42,7 +42,7 @@ Channel counter не заменяет `channelFull.participants_count`.
 Bulk preview привязан к account/source/destination/bytes; одноразовый approval
 погашается до отправки. Неизвестный/частичный результат не разрешает replay.
 `channel_tools.py`, `community_tools.py`, `authoring_tools.py`,
-`interaction_tools.py`, `conversation_tools.py` и все обязательные guides входят в signed package.
+`interaction_tools.py`, `conversation_tools.py`, `inbox_tools.py` и все обязательные guides входят в signed package.
 Темы/реакции/опросы/закрепы/admin commands и scheduled bulk следуют тому же
 [контракту сообщений](docs/telegram-mtproto-message-workflows.md): exact peer/thread,
 own choice, send-as и queue namespace проверяются отдельно. Новые metadata
@@ -65,6 +65,12 @@ archive/mute writes выбирают один own dialog, сохраняют п�
 проверяют fresh state; inherited mute не означает включённые уведомления.
 Native DialogFolder исключается по constructor до чтения peer/folder metadata:
 сводная строка архива не является чатовой принадлежностью либо history target.
+
+Inbox reads сохраняют общий лимит и partial coverage; cloud drafts по умолчанию
+возвращают metadata. Folder writes сохраняют полную native definition, shared/unknown
+типы закрыты; mark-read имеет exact message boundary и отдельное согласование.
+Личная unread mark не отменяет receipts. Safe diagnostics не выводят provider text
+и не ослабляют unknown outcome/no-replay; новые parser leaves не открывают task ACL.
 
 Для нескольких личных аккаунтов читай [общий контракт](docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов): каталог и company bindings принадлежат host, protected storage и вход – provider-у.
 Для WhatsApp discovery, recency, date-only поиска, coverage и browser fallback

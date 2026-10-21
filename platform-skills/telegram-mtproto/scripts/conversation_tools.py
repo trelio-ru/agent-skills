@@ -11,7 +11,7 @@ import secrets
 import unicodedata
 from datetime import datetime, timezone
 
-VERSION = "2.12.0"
+VERSION = "2.13.0"
 READS = {"chat-settings"}
 MUTATIONS = {"send-series", "archive", "unarchive", "mute", "unmute"}
 COMMANDS = READS | MUTATIONS
