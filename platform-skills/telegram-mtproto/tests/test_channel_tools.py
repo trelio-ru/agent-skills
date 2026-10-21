@@ -197,6 +197,32 @@ class ChannelToolsTests(unittest.TestCase):
             self.run_cli(*argv, "--confirm", "--approval-hash", preview["approvalHash"])
         self.assertEqual(self.client.forward_messages.await_count, 1)
 
+    def test_forward_selected_author_is_in_preview_native_call_and_exact_readback(self):
+        argv = self.source_forward() + ["--send-as", "self"]
+        self.client.messages[(-1000000000077, 100)].from_id = base.PeerUser(user_id=1)
+        selected = {"peerId": 1, "title": "Владелец"}
+        with mock.patch.object(M.import_interaction_tools(), "select_sender", new=mock.AsyncMock(return_value=(self.client.account, selected))):
+            preview = self.run_cli(*argv, "--dry-run")
+            self.assertEqual(preview["preview"]["sender"], selected)
+            result = self.run_cli(*argv, "--confirm", "--approval-hash", preview["approvalHash"])
+        self.assertEqual(self.client.forward_messages.call_args.kwargs["send_as"].id, 1)
+        self.assertEqual(result["sender"], selected)
+
+    def test_album_wrong_selected_author_stays_unknown_after_one_dispatch(self):
+        argv = self.album_argv() + ["--send-as", "self"]
+        self.client.send_file = mock.AsyncMock(return_value=[
+            self.message(100, message="Альбом", entities=base.markdown("**Альбом**")[1], grouped_id=999, media=base.TL(), photo=base.TL(), from_id=base.PeerUser(user_id=8)),
+            self.message(101, message="", grouped_id=999, media=base.TL(), photo=base.TL(), from_id=base.PeerUser(user_id=1))])
+        with mock.patch.object(M.import_interaction_tools(), "select_sender", new=mock.AsyncMock(return_value=(self.client.account, {"peerId": 1}))):
+            preview = self.run_cli(*argv, "--dry-run")
+            with self.assertRaises(M.TelegramRuntimeError) as context:
+                self.run_cli(*argv, "--confirm", "--approval-hash", preview["approvalHash"])
+            self.assertEqual(context.exception.code, "TELEGRAM_BULK_DELIVERY_UNKNOWN")
+            self.assertEqual(self.client.send_file.call_args.kwargs["send_as"].id, 1)
+            with self.assertRaises(M.TelegramRuntimeError):
+                self.run_cli(*argv, "--confirm", "--approval-hash", preview["approvalHash"])
+        self.assertEqual(self.client.send_file.await_count, 1)
+
     def test_forward_rechecks_changed_source_and_read_only_without_dispatch(self):
         argv = self.source_forward()
         preview = self.run_cli(*argv, "--dry-run")

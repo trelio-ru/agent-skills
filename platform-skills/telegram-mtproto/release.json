@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.10.0",
-    "summary": "Облачные черновики, отправка без звука и управление превью ссылок, замена вложений, управление темами и пригласительными ссылками, сценарии поиска пропущенных ответов и сводок."
+    "version": "2.11.0",
+    "summary": "Выбор отображаемого отправителя, карточка прав и ограничений чата, удаление одного собственного сообщения с явной областью и проверкой результата."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.10.0",
+    "version": "2.11.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
@@ -59,6 +59,11 @@
       {
         "source": "scripts/authoring_tools.py",
         "path": "authoring_tools.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/interaction_tools.py",
+        "path": "interaction_tools.py",
         "mode": 420
       },
       {
@@ -109,6 +114,11 @@
       {
         "source": "scripts/instruction-guides/part-10.md",
         "path": "instruction-guides/part-10.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-11.md",
+        "path": "instruction-guides/part-11.md",
         "mode": 420
       }
     ]

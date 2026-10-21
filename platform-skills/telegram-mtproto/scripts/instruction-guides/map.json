@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "originalSha256": "0df16ae9f0b182cb791bbee7aa3d0a9782870468efbb76c7f1ca37f06d6ddae2",
+  "originalSha256": "18abdec2ee56b3ae726081a0e8eb4c249db41fa7a35aab494cc4b1213dbd363d",
   "sections": [
     {
       "file": "part-01.md",
@@ -56,14 +56,20 @@
     {
       "file": "part-09.md",
       "relocatedLinks": [],
-      "bytes": 12716,
-      "sha256": "137322a7b3dda8bfaa90eed040b86cff939620551928dfc46502b9cac5a82ef6"
+      "bytes": 12870,
+      "sha256": "6a2a678f23ec025618b7cf4849c1be27335c52c258dcd781b18ec2cbaa278b1d"
     },
     {
       "file": "part-10.md",
       "relocatedLinks": [],
       "bytes": 12826,
       "sha256": "fe19b025153e493faafbdb811eaba18241325d1a9762d004eb3222755c1f570d"
+    },
+    {
+      "file": "part-11.md",
+      "relocatedLinks": [],
+      "bytes": 9698,
+      "sha256": "bd29d5fbde3d04fb3319878b023ed717c6ef95e12e89bc2eafb43b77ab69ffa6"
     }
   ]
 }

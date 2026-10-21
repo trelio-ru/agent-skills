@@ -10,7 +10,7 @@ import json
 import re
 from datetime import datetime
 
-VERSION = "2.10.0"
+VERSION = "2.11.0"
 READS = {"topics", "topic-read", "poll", "pins", "message-stats", "public-forwards", "invites", "join-requests"}
 MUTATIONS = {"topic-send", "react", "poll-create", "poll-vote", "poll-close", "pin", "unpin", "invite-create", "join-request"}
 COMMANDS = READS | MUTATIONS
@@ -89,6 +89,8 @@ def add_parsers(commands, positive_id):
         if name == "join-request":
             p.add_argument("--user-id", type=positive_id, required=True)
             p.add_argument("--decision", choices=("approve", "decline"), required=True)
+        if name in {"topic-send", "poll-create"}:
+            p.add_argument("--send-as")
         if name in MUTATIONS:
             mode = p.add_mutually_exclusive_group(required=True)
             mode.add_argument("--dry-run", action="store_true")
@@ -460,6 +462,10 @@ async def mutation(client, entity, args, identity, r, f, t, u, markdown):
     operation = {"version": VERSION, "command": args.command, "chatId": u.get_peer_id(entity)}
     preview = {"command": args.command, "chat": r.public_entity(entity), "actingAccount": r.public_entity(me)}
     command, request = args.command, None
+    native_sender, selected_sender = None, None
+    if command in {"topic-send", "poll-create"} and getattr(args, "send_as", None) is not None:
+        native_sender, selected_sender = await r.import_interaction_tools().select_sender(client, entity, me, args.send_as, r)
+        operation["sender"] = preview["sender"] = selected_sender
     c = r.import_channel_tools()
     if command in {"react", "poll-vote", "poll-close", "pin", "unpin"}:
         message = await exact(client, entity, args.message_id, r, u)
@@ -527,7 +533,7 @@ async def mutation(client, entity, args, identity, r, f, t, u, markdown):
         poll = t.Poll(id=0, question=t.TextWithEntities(text=question, entities=[]), hash=0,
                       answers=[t.PollAnswer(text=t.TextWithEntities(text=label, entities=[]), option=bytes([i])) for i, label in enumerate(labels)],
                       multiple_choice=args.multiple, public_voters=args.public_voters)
-        request = f.messages.SendMediaRequest(peer=entity, media=t.InputMediaPoll(poll=poll), message="", clear_draft=False, send_as=t.InputPeerSelf())
+        request = f.messages.SendMediaRequest(peer=entity, media=t.InputMediaPoll(poll=poll), message="", clear_draft=False, send_as=native_sender if selected_sender is not None else t.InputPeerSelf())
     elif command == "invite-create":
         await admin(entity, r)
         title = text(args.title, 32, r)
@@ -566,10 +572,12 @@ async def mutation(client, entity, args, identity, r, f, t, u, markdown):
     try:
         if command == "topic-send":
             sent = await client.send_message(entity, raw, reply_to=selected.id if selected.id != 1 else None,
-                                            parse_mode=r.TELEGRAM_TEXT_PARSE_MODE, clear_draft=False, send_as=me, **options)
+                                            parse_mode=r.TELEGRAM_TEXT_PARSE_MODE, clear_draft=False, send_as=native_sender if selected_sender is not None else me, **options)
             sent = r.exact_provider_message(sent, entity, sent.id, u)
             delivered = await exact(client, entity, sent.id, r, u)
             r.import_authoring_tools().verify_delivery(delivered, args, r)
+            if selected_sender is not None:
+                r.import_interaction_tools().verify_sender(delivered, entity, selected_sender, r, u)
             if (not getattr(delivered, "out", False) or not in_topic(delivered, selected.id)
                     or delivered.message != body or r.provider_content_digest(getattr(delivered, "entities", None) or []) != r.provider_content_digest(entities)):
                 raise ValueError
@@ -583,6 +591,8 @@ async def mutation(client, entity, args, identity, r, f, t, u, markdown):
                 if len(rows) != 1:
                     raise ValueError
                 delivered = await exact(client, entity, rows[0].id, r, u)
+                if selected_sender is not None:
+                    r.import_interaction_tools().verify_sender(delivered, entity, selected_sender, r, u)
                 _poll, _opts, public, _definition = poll_state(delivered, r)
                 if (public["question"] != question or [option["text"] for option in public["options"]] != labels
                         or public["multipleChoice"] != args.multiple or public["anonymous"] == args.public_voters or public["closed"]):
