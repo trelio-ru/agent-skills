@@ -608,7 +608,7 @@ def load_policy(identity: Identity) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise TelegramRuntimeError(f"Cannot read local policy {path}: {error}") from error
+        raise TelegramRuntimeError("Cannot read the local sending policy; preserve it and inspect its configuration.") from error
     mode = data.get("sendMode")
     # Old installations may retain a device-wide authorization. Reading it
     # must never authorize a new conversation; preserve the file for rollback
@@ -1467,6 +1467,18 @@ def import_conversation_tools():
     return sys.modules[name]
 
 
+def import_inbox_tools():
+    """Resolve the signed sibling without SDK/account IO, including -I mode."""
+    name = "trelio_telegram_inbox_tools"
+    if name not in sys.modules:
+        source = Path(__file__).resolve().with_name("inbox_tools.py")
+        spec = importlib.util.spec_from_file_location(name, source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules[name] = module
+    return sys.modules[name]
+
+
 def import_telethon_global_search():
     """Load the fixed TL request and helpers used by resumable global search."""
 
@@ -1628,7 +1640,7 @@ def build_client(args: argparse.Namespace, identity: Identity):
     # outcome to the caller instead of silently submitting it a second time.
     # Ordinary reads retain the library's safe retry behavior.
     request_policy = {}
-    if getattr(args, "command", None) in (import_community_tools().COMMANDS | import_authoring_tools().COMMANDS | import_interaction_tools().COMMANDS | import_conversation_tools().COMMANDS):
+    if getattr(args, "command", None) in (import_community_tools().COMMANDS | import_authoring_tools().COMMANDS | import_interaction_tools().COMMANDS | import_conversation_tools().COMMANDS | import_inbox_tools().COMMANDS):
         request_policy = {"receive_updates": False}
     if getattr(args, "command", None) in {"monitor", "read-reference", "audience-count", "channel-stats", "album"}:
         # The fixed poll owns its explicit cursor. Disable the SDK's parallel
@@ -1644,7 +1656,7 @@ def build_client(args: argparse.Namespace, identity: Identity):
     }:
         request_policy = {"request_retries": 0, "flood_sleep_threshold": 0,
                           "raise_last_call_error": True}
-    if getattr(args, "command", None) in (import_community_tools().MUTATIONS | import_authoring_tools().MUTATIONS | import_interaction_tools().MUTATIONS | import_conversation_tools().MUTATIONS):
+    if getattr(args, "command", None) in (import_community_tools().MUTATIONS | import_authoring_tools().MUTATIONS | import_interaction_tools().MUTATIONS | import_conversation_tools().MUTATIONS | import_inbox_tools().MUTATIONS):
         # Even metadata writes (pins, reactions, admissions) are not safe to
         # re-submit after a lost reply. Read-only previews use the same client.
         request_policy = {"receive_updates": False, "request_retries": 0,
@@ -5494,6 +5506,7 @@ async def command_send_async(args: argparse.Namespace, identity: Identity) -> di
         else None
     )
     client = build_client(args, identity)
+    mutation_started = False
     try:
         await ensure_authorized(client)
         entity = await resolve_entity(client, args.chat)
@@ -5512,6 +5525,7 @@ async def command_send_async(args: argparse.Namespace, identity: Identity) -> di
             # for Telegram to convert it into an immediate message.
             assert_schedule_lead_time(schedule_at)
             send_options["schedule"] = schedule_at
+        mutation_started = True
         sent = await client.send_message(entity, text or None, **send_options)
         sent = await import_authoring_tools().delivery_readback(client, entity, sent, args, sys.modules[__name__])
         result = {
@@ -5536,13 +5550,17 @@ async def command_send_async(args: argparse.Namespace, identity: Identity) -> di
             result["scheduledAt"] = format_utc_datetime(schedule_at)
             result["message"] = public_message(sent)
         return result
-    except TelegramRuntimeError:
+    except TelegramRuntimeError as error:
+        if mutation_started and not error.code:
+            error.code = "TELEGRAM_ACTION_OUTCOME_UNKNOWN"
         raise
     except Exception as error:
         if selected_author:
-            raise TelegramRuntimeError("Telegram selected-author send is unavailable; verify exact state before retrying.") from error
+            raise TelegramRuntimeError("Telegram selected-author send is unavailable; verify exact state before retrying.",
+                code="TELEGRAM_ACTION_OUTCOME_UNKNOWN" if not args.dry_run else None) from error
         raise TelegramRuntimeError(
-            f"Telegram send failed or its result is ambiguous: {error}. Do not retry automatically."
+            "Telegram send failed or its result is ambiguous. Do not retry automatically.",
+            code="TELEGRAM_ACTION_OUTCOME_UNKNOWN" if mutation_started else None,
         ) from error
     finally:
         try:
@@ -5551,7 +5569,8 @@ async def command_send_async(args: argparse.Namespace, identity: Identity) -> di
             if selected_author:
                 raise TelegramRuntimeError("Telegram cleanup failed; verify exact chat/queue before retrying.",
                     code="TELEGRAM_ACTION_OUTCOME_UNKNOWN" if not args.dry_run else None) from error
-            raise
+            raise TelegramRuntimeError("Telegram cleanup failed; verify exact live state before retrying.",
+                code="TELEGRAM_ACTION_OUTCOME_UNKNOWN" if mutation_started else "TELEGRAM_CLEANUP_FAILED") from error
 
 
 def edit_text(args: argparse.Namespace) -> str:
@@ -5696,7 +5715,7 @@ async def command_edit_preview_async(
     except TelegramRuntimeError:
         raise
     except Exception as error:
-        raise TelegramRuntimeError(f"Cannot prepare Telegram edit preview: {error}") from error
+        raise TelegramRuntimeError("Cannot prepare Telegram edit preview; inspect the safe diagnostic.") from error
     finally:
         await client.disconnect()
 
@@ -5720,9 +5739,9 @@ async def command_edit_async(args: argparse.Namespace, identity: Identity) -> di
     )
     replacement_text = edit_text(args)
     client = build_client(args, identity)
-    await ensure_authorized(client)
     mutation_started = False
     try:
+        await ensure_authorized(client)
         entity, target, operation = await load_edit_preview(
             client,
             args,
@@ -5761,17 +5780,24 @@ async def command_edit_async(args: argparse.Namespace, identity: Identity) -> di
             "policyMode": mode,
             "retryPolicy": "Do not retry automatically after an ambiguous failure.",
         }
-    except TelegramRuntimeError:
+    except TelegramRuntimeError as error:
+        if mutation_started and not error.code:
+            error.code = "TELEGRAM_ACTION_OUTCOME_UNKNOWN"
         raise
     except Exception as error:
         if mutation_started:
             raise TelegramRuntimeError(
-                f"Telegram edit failed or its result is ambiguous: {error}. "
-                "Read the exact message before deciding whether another edit is needed."
+                "Telegram edit failed or its result is ambiguous. "
+                "Read the exact message before deciding whether another edit is needed.",
+                code="TELEGRAM_ACTION_OUTCOME_UNKNOWN",
             ) from error
-        raise TelegramRuntimeError(f"Cannot validate Telegram edit target: {error}") from error
+        raise TelegramRuntimeError("Cannot validate Telegram edit target; inspect the safe diagnostic.") from error
     finally:
-        await client.disconnect()
+        try:
+            await client.disconnect()
+        except Exception as error:
+            raise TelegramRuntimeError("Telegram cleanup failed; verify exact live state before retrying.",
+                code="TELEGRAM_ACTION_OUTCOME_UNKNOWN" if mutation_started else "TELEGRAM_CLEANUP_FAILED") from error
 
 
 def provider_content_digest(value: Any) -> str:
@@ -6430,6 +6456,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
             return asyncio.run(import_channel_tools().run(args, identity, sys.modules[__name__]))
         if args.command in import_conversation_tools().COMMANDS:
             return asyncio.run(import_conversation_tools().run(args, identity, sys.modules[__name__]))
+        if args.command in import_inbox_tools().COMMANDS:
+            return asyncio.run(import_inbox_tools().run(args, identity, sys.modules[__name__]))
         if args.command in import_interaction_tools().COMMANDS:
             return asyncio.run(import_interaction_tools().run(args, identity, sys.modules[__name__]))
         if args.command in import_authoring_tools().COMMANDS:
@@ -6567,6 +6595,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_authoring_tools().add_parsers(commands, positive_message_id)
     import_interaction_tools().add_parsers(commands, positive_message_id)
     import_conversation_tools().add_parsers(commands, positive_message_id)
+    import_inbox_tools().add_parsers(commands, positive_message_id)
     commands.add_parser("bootstrap", help="Install the pinned local Telethon runtime")
     commands.add_parser("doctor", help="Check local runtime, policy and session without revealing secrets")
     policy = commands.add_parser("policy", help="Read or update local sending policy")
@@ -6832,17 +6861,17 @@ def main() -> int:
             result = command_policy(args)
         else:
             result = run_async_command(args)
-    except (TelegramRuntimeError, OSError, UnicodeError, ValueError) as error:
+    except Exception as error:
         if BROWSER_PROMPT_SESSION is not None:
             BROWSER_PROMPT_SESSION.finish(
                 title="Вход не завершён",
                 message="Вернитесь в Codex, проверьте сообщение об ошибке и запустите вход заново.",
             )
             time.sleep(0.4)
-        if isinstance(error, TelegramRuntimeError):
-            error_payload = error.public_payload()
-        else:
-            error_payload = {"ok": False, "error": str(error)}
+        # Never print arbitrary SDK/network/filesystem exception strings: they
+        # can contain private paths, request bodies or connection credentials.
+        # Existing recovery/outcome codes retain precedence over causal hints.
+        error_payload = import_inbox_tools().safe_error(error, sys.modules[__name__]).public_payload()
         print(json.dumps(error_payload, ensure_ascii=False), file=sys.stderr)
         return 2
     finally:

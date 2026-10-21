@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.12.0",
-    "summary": "Ответы с точной цитатой, длинные тексты серией с проверкой каждой части, управление архивом и личными уведомлениями выбранного чата."
+    "version": "2.13.0",
+    "summary": "Непросмотренные упоминания и реакции, общий список облачных черновиков, управление личными папками и закрепами чатов, явная прочитанность и безопасная диагностика ошибок."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.12.0",
+    "version": "2.13.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
@@ -74,6 +74,11 @@
       {
         "source": "scripts/conversation_tools.py",
         "path": "conversation_tools.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/inbox_tools.py",
+        "path": "inbox_tools.py",
         "mode": 420
       },
       {
@@ -134,6 +139,11 @@
       {
         "source": "scripts/instruction-guides/part-12.md",
         "path": "instruction-guides/part-12.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-13.md",
+        "path": "instruction-guides/part-13.md",
         "mode": 420
       }
     ]

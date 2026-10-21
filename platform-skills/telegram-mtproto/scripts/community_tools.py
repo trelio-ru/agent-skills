@@ -10,7 +10,7 @@ import json
 import re
 from datetime import datetime
 
-VERSION = "2.12.0"
+VERSION = "2.13.0"
 READS = {"topics", "topic-read", "poll", "pins", "message-stats", "public-forwards", "invites", "join-requests"}
 MUTATIONS = {"topic-send", "react", "poll-create", "poll-vote", "poll-close", "pin", "unpin", "invite-create", "join-request"}
 COMMANDS = READS | MUTATIONS

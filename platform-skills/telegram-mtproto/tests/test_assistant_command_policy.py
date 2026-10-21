@@ -32,7 +32,10 @@ class AssistantCommandPolicy(unittest.TestCase):
                        ["__trelio_accounts_import"], ["edit"], ["delete"],
                        ["forward"], ["scheduled-cancel"], ["invite-create"],
                        ["join-request"], ["topic-create"], ["draft-save"],
-                       ["send-series"], ["archive"], ["unarchive"], ["mute"], ["unmute"]):
+                       ["send-series"], ["archive"], ["unarchive"], ["mute"], ["unmute"],
+                       ["mentions"], ["unread-reactions"], ["drafts"], ["folder-info"], ["dialog-state"],
+                       ["folder-create"], ["folder-rename"], ["folder-add-chat"], ["folder-remove-chat"],
+                       ["chat-pin"], ["chat-unpin"], ["mark-read"], ["mark-unread"]):
             self.assertFalse(any(denied[:len(prefix)] == prefix for prefix in prefixes), denied)
         self.assertIn(["read-reference"], prefixes)
         self.assertIn(["reply"], prefixes)
