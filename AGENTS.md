@@ -25,7 +25,13 @@ Channel counter не заменяет `channelFull.participants_count`.
 фактический provider period/DC, bounded graphs без tokens и nullable counters.
 Bulk preview привязан к account/source/destination/bytes; одноразовый approval
 погашается до отправки. Неизвестный/частичный результат не разрешает replay.
-Новый `channel_tools.py` и все обязательные guides входят в signed package.
+`channel_tools.py`, `community_tools.py` и все обязательные guides входят в signed package.
+Темы/реакции/опросы/закрепы/admin commands и scheduled bulk следуют тому же
+[контракту сообщений](docs/telegram-mtproto-message-workflows.md): exact peer/thread,
+own choice, send-as и queue namespace проверяются отдельно. Новые metadata
+writes используют existing one-use preview journal и post-read, не replay.
+Исчезновение pending заявки с первой страницы не доказывает решение; approve
+проверяет membership, неполная pagination не доказывает отсутствие.
 Native DialogFolder исключается по constructor до чтения peer/folder metadata:
 сводная строка архива не является чатовой принадлежностью либо history target.
 

@@ -33,7 +33,7 @@ const releaseManifest = JSON.parse(releaseSource);
 test("Telegram MTProto release preserves privacy, search, scheduled-message, edit and Markdown contracts", () => {
   assert.match(skillInstructions, /members --chat ID_OR_USERNAME/u);
   for (const source of [skillInstructions, connectionDocs]) {
-    for (const command of ["channel-stats", "send-album", "forward", "commentsCount", "groupedId", "TELEGRAM_BULK_DELIVERY_UNKNOWN"]) {
+    for (const command of ["channel-stats", "send-album", "forward", "commentsCount", "groupedId", "TELEGRAM_BULK_DELIVERY_UNKNOWN", "topic-send", "poll-create", "poll-vote", "join-request", "message-stats", "TELEGRAM_ACTION_OUTCOME_UNKNOWN"]) {
       assert.ok(source.includes(command), `Missing delivered channel contract: ${command}`);
     }
   }
@@ -105,9 +105,9 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /`views`/u);
     assert.match(source, /views=null|`null`/u);
   }
-  assert.equal(releaseManifest.release.version, "2.8.0");
+  assert.equal(releaseManifest.release.version, "2.9.0");
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.8.0");
+  assert.equal(releaseManifest.runtime.version, "2.9.0");
   assert.equal(releaseManifest.runtime.minimumHostVersion, "3.7.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),

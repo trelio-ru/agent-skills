@@ -56,7 +56,7 @@ POLICY_MODES = ("confirm", "read-only")
 # timezone contract on every supported OS without falling back to guessed UTC
 # offsets or platform-specific timezone names.
 RUNTIME_PYTHON_PACKAGES = (
-    "telethon>=1.44,<2",
+    "telethon>=1.45,<2",
     "qrcode[pil]>=8,<9",
     "tzdata>=2025.2,<2027",
 )
@@ -81,6 +81,7 @@ MAX_ENTITY_USERNAME_CHARS = 64
 MAX_CHAT_REFERENCE_CHARS = 256
 MAX_FILE_NAME_CHARS = 512
 CHANNEL_TOOLS_MODULE = None
+COMMUNITY_TOOLS_MODULE = None
 # Reaction metadata travels with every normalized message, including period
 # exports. Bound it here rather than adding unbounded per-message RPC lookups.
 MAX_REACTION_TYPES = 64
@@ -1416,6 +1417,18 @@ def import_channel_tools():
     return CHANNEL_TOOLS_MODULE
 
 
+def import_community_tools():
+    """Keep the larger command family in a signed sibling, including -I mode."""
+    global COMMUNITY_TOOLS_MODULE
+    if COMMUNITY_TOOLS_MODULE is None:
+        source = Path(__file__).resolve().with_name("community_tools.py")
+        spec = importlib.util.spec_from_file_location("trelio_telegram_community_tools", source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        COMMUNITY_TOOLS_MODULE = module
+    return COMMUNITY_TOOLS_MODULE
+
+
 def import_telethon_global_search():
     """Load the fixed TL request and helpers used by resumable global search."""
 
@@ -1466,11 +1479,11 @@ def import_telethon_workflows():
         from telethon import events, functions, types, utils
         from telethon.extensions import markdown
         version = tuple(int(part) for part in telethon.__version__.split(".")[:2])
-        if version < (1, 44):
+        if version < (1, 45):
             raise ImportError
     except (ImportError, ValueError) as error:
         raise TelegramRuntimeError(
-            "Telegram message workflows require Telethon >=1.44. Run bootstrap once."
+            "Telegram message workflows require Telethon >=1.45. Run bootstrap once."
         ) from error
     return functions.messages, types, utils, events, markdown
 
@@ -1577,6 +1590,8 @@ def build_client(args: argparse.Namespace, identity: Identity):
     # outcome to the caller instead of silently submitting it a second time.
     # Ordinary reads retain the library's safe retry behavior.
     request_policy = {}
+    if getattr(args, "command", None) in import_community_tools().COMMANDS:
+        request_policy = {"receive_updates": False}
     if getattr(args, "command", None) in {"monitor", "read-reference", "audience-count", "channel-stats", "album"}:
         # The fixed poll owns its explicit cursor. Disable the SDK's parallel
         # passive update subscription; it must not create an invisible second
@@ -1591,6 +1606,11 @@ def build_client(args: argparse.Namespace, identity: Identity):
     }:
         request_policy = {"request_retries": 0, "flood_sleep_threshold": 0,
                           "raise_last_call_error": True}
+    if getattr(args, "command", None) in import_community_tools().MUTATIONS:
+        # Even metadata writes (pins, reactions, admissions) are not safe to
+        # re-submit after a lost reply. Read-only previews use the same client.
+        request_policy = {"receive_updates": False, "request_retries": 0,
+                          "flood_sleep_threshold": 0, "raise_last_call_error": True}
     return TelegramClient(
         str(session_path(identity)),
         api_id,
@@ -6249,6 +6269,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
             return asyncio.run(command_audience_count_async(args, identity))
         if args.command in {"channel-stats", "album", "send-album", "forward"}:
             return asyncio.run(import_channel_tools().run(args, identity, sys.modules[__name__]))
+        if args.command in import_community_tools().COMMANDS:
+            return asyncio.run(import_community_tools().run(args, identity, sys.modules[__name__]))
         if args.command == "members":
             return asyncio.run(command_members_async(args, identity))
         if args.command == "read":
@@ -6376,6 +6398,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_connection_arguments(parser)
     commands = parser.add_subparsers(dest="command", required=True)
     import_channel_tools().add_parsers(commands, positive_message_id)
+    import_community_tools().add_parsers(commands, positive_message_id)
     commands.add_parser("bootstrap", help="Install the pinned local Telethon runtime")
     commands.add_parser("doctor", help="Check local runtime, policy and session without revealing secrets")
     policy = commands.add_parser("policy", help="Read or update local sending policy")

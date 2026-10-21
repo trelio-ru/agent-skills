@@ -1,6 +1,6 @@
 Перед первым использованием запусти `bootstrap`, который установит зависимости
 Telegram и QR-кода, затем напрямую `doctor`. Новые message workflows требуют
-Telethon `>=1.44,<2`; если сохранилась старая зависимость, один `bootstrap`
+Telethon `>=1.45,<2`; если сохранилась старая зависимость, один `bootstrap`
 обновляет её без нового входа. Локальная
 identity всегда задаётся trusted host-ом из текущих `companyId`, `memberId` и
 `connectionId`; агент не переносит эти значения в runtime arguments.

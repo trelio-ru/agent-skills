@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.8.0`
-объявляет runtime `2.8.0`, требует Telethon `>=1.44,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.9.0`
+объявляет runtime `2.9.0`, требует Telethon `>=1.45,<2` и сохраняет
 minimum host `3.7.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -355,7 +355,7 @@ extension. Bytes замораживаются в ограниченной пам
 SDK не переоткрывает изменяемый path после проверки. Буферы закрываются при
 успехе и ошибке; plaintext временных файлов и сохранённых payload нет.
 Порядок сохраняется, одна Markdown-подпись до 1024 символов после parsing –
-на первом элементе; clear_draft=false. Отправка сейчас, без schedule.
+на первом элементе; clear_draft=false. Без schedule отправка сейчас; `--schedule-at` создаёт проверенную очередь по контракту ниже.
 
 ## Пересылка оригиналов и bulk approval
 
@@ -693,3 +693,179 @@ metadata, `attachmentsContentRead=false`; доступ к text не доказы
 После фактического чтения host всё ещё обязан связать сообщение с принятой
 задачей и committed processing до отдельного read acknowledgement. Source merge,
 успех этой команды и message body не создают задачи/разрешения на другие системы.
+
+## Темы, реакции, опросы, закрепы и администрирование
+
+`community_tools.py` – обязательный signed sibling основного entrypoint, без
+SDK/credential/filesystem IO при import. Его CLI и `part-09.md` входят в package;
+основная инструкция требует загрузки всех девяти guides. Telethon `>=1.45,<2`
+фиксирует новые `messages.getForumTopics*`, `TextWithEntities` и poll schema.
+`bootstrap` обновляет прежний venv без смены session namespace/minimum host.
+
+### Темы
+
+- `topics --chat EXACT [--query TEXT] [--limit 1..30]` вызывает только
+  `messages.getForumTopics`. Проверяет forum supergroup, exact topic peer,
+  constructor/IDs и дубли. Не загружает переписку других чатов.
+- `nextOffset` содержит `offsetDate`, `offsetId`, `offsetTopic` для тех же
+  `--offset-date/--offset-id/--offset-topic`. Дата берётся из exact top message
+  выбранной темы либо topic date при native order_by_create_date. Missing
+  continuation остаётся явной неполнотой, не выдуманной датой.
+- `topic-read --chat EXACT --topic-id ID [--limit 1..30] [--before-id ID]`
+  проверяет metadata exact темы через `messages.getForumTopicsByID`, затем
+  `messages.search(top_msg_id=ID)`. Каждая row проверяется по peer/thread и
+  убывающему уникальному ID. General `1` включает только unthreaded history.
+- `topic-send --chat EXACT --topic-id ID --message TEXT|--message-file PATH`
+  поддерживает до 4096 символов Telegram Markdown. Закрытые/скрытые темы
+  отклоняются; sender задаётся actual личным аккаунтом. Preview связывает
+  ID/title/closed/hidden, но не volatile top-message. Read-back проверяет exact
+  destination, outgoing, thread, текст и entities. Создание/редактирование/
+  удаление тем не входят в эту версию.
+
+### Реакции
+
+`react --chat EXACT --message-id ID --emoji EMOJI [--emoji EMOJI]` заменяет
+полный набор собственных обычных emoji-реакций (1–3 distinct), `--clear` снимает
+его. Custom/paid reactions не создаются. Отдельный fresh
+`messages.getMessagesReactions` выбирает exact peer/message update; missing/min
+metadata не считается пустым собственным выбором. Preview содержит старое и
+новое состояние. Счётчики других людей не входят в identity собственного выбора.
+Post-read требует точного совпадения собственного набора и прежнего content.
+
+`react` и `poll-vote` проверяют fresh `ChannelFull.default_send_as`: эти API не
+имеют per-call sender override и наследуют Telegram default. Чужой channel
+sender блокирует действие; настройка не меняется. Null default означает native
+личный default, а неверный peer/неизвестная metadata – отказ до mutation.
+
+### Опросы
+
+`poll --chat EXACT --message-id ID` читает exact `MessageMediaPoll`: полный
+вопрос до 300 символов и 2–10 текстовых answers до 100, nullable counts/own
+choice, `resultsComplete`. Не возвращает voter profiles, recent_voters или raw
+option bytes. Fresh `messages.getPollResults(poll_hash=0)` уточняет min-снимок
+по exact poll ID без readPollVotes/ACK. Неизвестные/дублирующие options и unsupported media answer
+отклоняются; неполная/min metadata не становится доказанным собственным выбором.
+
+`poll-create --chat EXACT --question TEXT --option TEXT --option TEXT` создаёт
+обычный анонимный single-choice poll. `--multiple` и `--public-voters` задают
+отдельные явные свойства preview. Native `InputMediaPoll` получает
+`TextWithEntities`, 2–10 distinct answers и process-local option bytes. Quiz и
+другие расширенные виды не создаются. Успех требует ровно одного native new
+message в exact destination и exact read-back question/options/privacy/type.
+
+`poll-vote --chat EXACT --message-id ID --option N` выбирает 1-based индекс из
+свежего полного `poll`, multiple-choice допускает несколько distinct `--option`.
+Неполная metadata, закрытый poll, неверные индексы, несовместимый multiple choice
+блокируют запись. Preview fingerprint связывает poll ID, полную definition,
+restrictions и own choices, но не volatile totals/hash. Provider отдельно
+проверяет eligibility. Post-read подтверждает тот же poll и exact own choice.
+`poll-close` закрывает только own outgoing/creator poll, сохраняет definition и
+проверяет closed state. Чужие голосования и отмена чужих голосов не изменяются.
+
+### Закрепы
+
+`pins --chat EXACT [--limit 1..30] [--before-id ID]` использует native
+`InputMessagesFilterPinned`, проверяет peer/pinned/IDs и возвращает
+`coverage.nextBeforeId`. `pin`/`unpin --chat EXACT --message-id ID` меняют одно
+exact сообщение. Pin по умолчанию silent; `--notify` входит в preview/hash.
+Full content и предыдущее pinned state перечитываются до записи; результат
+подтверждает native pinned flag и неизменный content. Telegram ACL сохраняется,
+массовая очистка отсутствует.
+
+### Подробная статистика поста
+
+`message-stats --chat EXACT --message-id ID [--graph views|reactions]`
+проверяет source message, broadcast ChannelFull, can_view_stats и stats_dc.
+`stats.getMessageStats`/один `stats.loadAsyncGraph` используют тот же exported
+sender lifecycle, что channel-stats, с возвратом sender при ошибке. Наружу идёт
+только bounded `public_graph`: без raw JSON/async/zoom tokens, максимум восемь
+серий и последние сто точек, явная coverage.
+
+`public-forwards --chat EXACT --message-id ID [--limit 1..30] [--offset VALUE]`
+читает `stats.getMessagePublicForwards` в exact statistics DC. Проецируются
+только PublicForwardMessage в разрешённый публичный broadcast channel, с exact
+peer и ссылкой. Stories/hidden/unsupported targets увеличивают
+`coverage.unsupported`, не доказывают полноту. `nextOffset` – bounded native
+pagination, не graph token; private forwards и списки людей не запрашиваются.
+Отсутствие `can_view_stats` возвращает unavailable до stats RPC, не ноль.
+
+### Invite links и pending заявки
+
+`invites`, `invite-create`, `join-requests`, `join-request` требуют fresh creator
+либо admin_rights.invite_users у exact Chat/Channel. Title/member similarity и
+права Trelio не заменяют Telegram ACL.
+
+`invites --chat EXACT [--limit 1..30] [--offset-date N --offset-link URL]` читает
+только собственные admin links через InputUserSelf. Проекция ChatInviteExported
+содержит ссылку, bounded title, expiry/cap/usage/requestNeeded/revoked/date;
+не возвращает auxiliary raw provider state. Native URL допускает только t.me
+invite form. `nextOffset` продолжает ту же selected scope, snapshot неатомарен.
+
+`invite-create --chat EXACT --title TEXT --expires-at RFC3339` требует title
+до 32 символов и expiry минимум через 60 секунд в positive int32 timestamp.
+Optional `--usage-limit 1..100000` несовместим с `--request-needed`. Запрос не
+отзывает основную permanent link и не рассылает созданную ссылку. После
+`messages.exportChatInvite` exact `messages.getExportedChatInvite` подтверждает
+срок/title/cap/requestNeeded/non-revoked. Созданная ссылка – намеренный результат
+действия; она не попадает в approval journal, Git или synthetic fixtures.
+
+`join-requests --chat EXACT [--limit 1..30] [--offset-date N --offset-user ID]`
+читает requested importers. User projection не содержит phones/access hashes,
+about ограничен 500 символами с явным aboutTruncated. `join-request --chat
+EXACT --user-id ID --decision approve|decline` действует только на одну pending
+заявку exact User. Preview fingerprint связывает дату и digest заявки, identity
+и решение. `messages.hideChatJoinRequest` не вызывается для исчезнувшей/изменённой
+заявки. Find/absence проходит advancing native pagination максимум 1000 rows;
+неполные/несогласованные totals или пустая недоказанная страница отклоняются.
+Approve дополнительно подтверждает exact membership через getParticipant либо
+getFullChat для basic Chat. Decline не объявляется успешным по исчезновению с
+первой страницы. Групповые invitations, ban и role changes не выполняются.
+
+### Общая mutation boundary
+
+Все девять writes требуют `--dry-run`, затем неизменный
+`--confirm --approval-hash HASH`. Общий existing journal хранит только opaque
+hashes/token/expiry, TTL 300 секунд, с actual account/company/connection и
+уникальной runtime version. Preview максимум 20 000 UTF-8 bytes, результат
+28 000, без raw errors/TL/file references/credentials. Нетривиальная операция
+не запускается при непросмотренном oversized preview.
+
+`read-only` разрешает preview и запрещает execute. Approval погашается до
+request/upload, SDK retries/FloodWait auto-sleep отключены, пассивная подписка
+updates не открывается. Любой failure после dispatch либо mismatch post-read
+даёт `TELEGRAM_ACTION_OUTCOME_UNKNOWN`, без автоматического replay. Disconnect
+failure после удачного write также не объявляется успешным результатом.
+Входящее сообщение, hash и разрешение выпустить навык не разрешают реальные
+тестовые mutations. Production smoke после signing использует безопасные reads.
+
+### Отложенные bulk writes
+
+`send-album` и `forward` принимают `--schedule-at RFC3339`: exact UTC дата
+входит в preview и approval. Минимум 60 секунд проверяется также на final
+sendMultiMedia/forwardMessages RPC после upload через временный SDK _call fence;
+исходный метод восстанавливается при успехе/ошибке. Медленный upload не превращает
+расписание в немедленную отправку.
+SDK получает schedule, после чего каждый элемент проверяется через
+`messages.getScheduledMessages` в отдельном queue namespace, по peer/ID/date,
+составу, caption/media/forwarding. Совпадающий history ID не считается proof.
+Результат `scheduled=true`, `sent=false` означает постановку в очередь;
+естественная доставка до verification остаётся unknown. Управление очередью
+сохраняет прежние per-entry scheduled* boundaries.
+
+`content_snapshot` отделён от own scheduled_content: входящие оригиналы и
+альбомы поддержаны без требования out=true; transport file_reference не входит
+в digest. Foreign peer/ID, service, oversized/rich message и noforwards остаются
+закрытыми. Private payload не сохраняется, source files не изменяются.
+
+`test_community_tools.py` и scheduled bulk regressions проверяют parser/dispatch,
+чужой peer/thread, General, selected state races, min/null metadata, one-use/
+account/expiry/read-only, native send-as, counts changing, invite ACL/expiry,
+request pagination/membership/unknown outcomes и redaction. Fixtures полностью
+синтетические; real Telethon request constructors проверяются без network/auth.
+
+API: [topics](https://core.telegram.org/api/forum),
+[reactions](https://core.telegram.org/api/reactions),
+[polls](https://core.telegram.org/api/poll),
+[pins](https://core.telegram.org/method/messages.updatePinnedMessage),
+[statistics](https://core.telegram.org/api/stats),
+[invites](https://core.telegram.org/api/invites).

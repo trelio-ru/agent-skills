@@ -10,11 +10,12 @@ import io
 import json
 import math
 import re
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "2.8.0"
+VERSION = "2.9.0"
 MAX_ALBUM_ITEMS = 10
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_ALBUM_BYTES = 100 * 1024 * 1024
@@ -50,6 +51,7 @@ def add_parsers(commands, positive_id):
     forward.add_argument("--chat", required=True)
     forward.add_argument("--message-id", type=bounded_id, action="append", required=True)
     for parser in (send, forward):
+        parser.add_argument("--schedule-at", help="RFC 3339 delivery time, at least 60 seconds in the future")
         mode = parser.add_mutually_exclusive_group(required=True)
         mode.add_argument("--dry-run", action="store_true")
         mode.add_argument("--confirm", action="store_true")
@@ -208,6 +210,19 @@ def public_row(r, message, entity):
     return {**r.public_message(message), "link": r.message_link(entity, message.id)}
 
 
+def content_snapshot(message, r):
+    """Fingerprint readable originals, including other people's messages.
+
+    scheduled_content intentionally requires an own outgoing queue entry. It
+    must not be reused to read an incoming album, forward it or react to it.
+    Identity/ID are checked separately; refreshed transport refs are excluded.
+    """
+    if getattr(message, "rich_message", None) is not None:
+        raise r.TelegramRuntimeError("Unsupported rich-message content cannot be reviewed completely.")
+    return r.provider_content_digest({field: getattr(message, field, None) for field in
+                                    ("message", "entities", "media", "reply_markup", "reply_to", "edit_date")})
+
+
 async def read_album(client, args, r):
     _functions, utils, _markdown = api()
     entity = await r.resolve_entity(client, args.chat)
@@ -235,7 +250,7 @@ async def read_album(client, args, r):
     # Re-read the chosen message to detect a concurrent edit/deletion instead
     # of presenting a mixed source snapshot as a complete immutable album.
     current = checked_message(r, utils, entity, await client.get_messages(entity, ids=selected.id), selected.id)
-    if r.scheduled_content(current) != r.scheduled_content(selected) or r.public_message(current)["groupedId"] != group:
+    if content_snapshot(current, r) != content_snapshot(selected, r) or r.public_message(current)["groupedId"] != group:
         raise r.TelegramRuntimeError("Telegram album changed while it was being read.")
     return {"available": True, "chat": r.public_entity(entity), "groupedId": group,
             "messages": [public_row(r, row, entity) for row in rows],
@@ -292,6 +307,37 @@ def mutation_content(message, r):
             for field in ("message", "entities", "media")}
 
 
+@contextmanager
+def scheduled_request_fence(client, scheduled_at, r):
+    """Check the schedule at the final RPC, after slow album uploads.
+
+    A pre-upload check alone is unsafe: Telegram turns an expired schedule into
+    immediate delivery. Telethon routes both sendMultiMedia and forwardMessages
+    through _call; wrap only this invocation and restore the original even on
+    failure. Upload/media-conversion RPCs stay unchanged. No session or request
+    payload is logged, stored or sent outside the existing SDK transport.
+    """
+    if scheduled_at is None:
+        yield
+        return
+    original = getattr(client, "_call", None)
+    if not callable(original):
+        raise r.TelegramRuntimeError("The SDK cannot enforce a final scheduled-delivery check; run bootstrap.")
+
+    async def guarded(sender, request, *args, **kwargs):
+        requests = request if isinstance(request, (list, tuple)) else [request]
+        for item in requests:
+            if type(item).__name__ in {"SendMultiMediaRequest", "ForwardMessagesRequest"}:
+                r.assert_schedule_lead_time(scheduled_at)
+        return await original(sender, request, *args, **kwargs)
+
+    client._call = guarded
+    try:
+        yield
+    finally:
+        client._call = original
+
+
 async def bulk_mutation(client, args, identity, r):
     if (args.dry_run and args.approval_hash) or (not args.dry_run and not re.fullmatch(r"[0-9a-f]{64}", args.approval_hash or "")):
         raise r.TelegramRuntimeError("Prepare --dry-run, then the unchanged --confirm --approval-hash operation.")
@@ -306,6 +352,11 @@ async def bulk_mutation(client, args, identity, r):
     preview = {"chat": r.public_entity(destination), "chatId": utils.get_peer_id(destination)}
     files = []
     try:
+        scheduled_at = r.parse_schedule_at(args.schedule_at) if args.schedule_at else None
+        if scheduled_at and not 0 < scheduled_at.timestamp() < 2**31:
+            raise r.TelegramRuntimeError("Schedule must fit Telegram's positive int32 timestamp.")
+        operation["scheduledAt"] = r.format_utc_datetime(scheduled_at) if scheduled_at else None
+        preview["scheduledAt"] = operation["scheduledAt"]
         if args.command == "send-album":
             files, file_previews = frozen_files(args.file, r)
             # Existing caption reader already guards local UTF-8 input. The
@@ -330,7 +381,7 @@ async def bulk_mutation(client, args, identity, r):
             if any(getattr(row, "noforwards", False) for row in originals):
                 raise r.TelegramRuntimeError("A selected Telegram original protects its content from forwarding.")
             operation.update(source=utils.get_peer_id(source), ids=ids,
-                             snapshots=[{"content": r.scheduled_content(row), "groupedId": r.public_message(row)["groupedId"],
+                             snapshots=[{"content": content_snapshot(row, r), "groupedId": r.public_message(row)["groupedId"],
                                          "origin": r.provider_content_digest(getattr(row, "fwd_from", None))} for row in originals])
             preview.update(sourceChat=r.public_entity(source), sourceChatId=utils.get_peer_id(source),
                            messages=[public_row(r, row, source) for row in originals], preservesAttribution=True)
@@ -346,16 +397,31 @@ async def bulk_mutation(client, args, identity, r):
         # does not restore authority; a new preview is not a retry permission.
         r.scheduled_approval(identity, account.id, operation, args.approval_hash)
         try:
-            if args.command == "send-album":
-                sent = await client.send_file(destination, files, caption=[caption] + [""] * (len(files) - 1),
-                                              parse_mode=r.TELEGRAM_TEXT_PARSE_MODE, clear_draft=False, force_document=False)
-                expected_count = len(files)
-            else:
-                sent = await client.forward_messages(destination, ids, from_peer=source,
-                                                     drop_author=False, drop_media_captions=False)
-                expected_count = len(ids)
+            if scheduled_at:
+                r.assert_schedule_lead_time(scheduled_at)
+            with scheduled_request_fence(client, scheduled_at, r):
+                if args.command == "send-album":
+                    sent = await client.send_file(destination, files, caption=[caption] + [""] * (len(files) - 1),
+                                                  parse_mode=r.TELEGRAM_TEXT_PARSE_MODE, clear_draft=False, force_document=False,
+                                                  schedule=scheduled_at)
+                    expected_count = len(files)
+                else:
+                    sent = await client.forward_messages(destination, ids, from_peer=source,
+                                                         drop_author=False, drop_media_captions=False, schedule=scheduled_at)
+                    expected_count = len(ids)
             if not isinstance(sent, (list, tuple)) or len(sent) != expected_count:
                 raise ValueError
+            if scheduled_at:
+                # Queue IDs live in a separate namespace. History reads cannot
+                # verify a scheduled operation with a coinciding numeric ID.
+                verified = []
+                for row in sent:
+                    queued = await r.get_scheduled_target(client, destination, row.id)
+                    checked_message(r, utils, destination, queued, row.id)
+                    if r.normalize_schedule_datetime(queued.date) != scheduled_at:
+                        raise ValueError
+                    verified.append(queued)
+                sent = verified
             seen_ids = set()
             for index, row in enumerate(sent):
                 row_id = getattr(row, "id", None)
@@ -376,7 +442,9 @@ async def bulk_mutation(client, args, identity, r):
                 groups = {r.public_message(row)["groupedId"] for row in sent}
                 if len(groups) != 1 or None in groups:
                     raise ValueError
-            result = {"sent": True, "chat": r.public_entity(destination), "messageIds": [row.id for row in sent],
+            result = {"sent": scheduled_at is None, "scheduled": scheduled_at is not None,
+                    "scheduledAt": operation["scheduledAt"],
+                    "chat": r.public_entity(destination), "messageIds": [row.id for row in sent],
                     "messages": [public_row(r, row, destination) for row in sent],
                     "retryPolicy": "Do not repeat automatically; read back exact destination first.",
                     "securityBoundary": "chat-only"}
