@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "taskCommands": [
+    ["guides"], ["doctor"], ["policy", "show"],
+    ["dialogs"], ["resolve-phone"], ["audience-count"], ["members"], ["folders"],
+    ["read"], ["read-reference"], ["thread"], ["search"], ["export"], ["daily-export"],
+    ["scheduled"], ["download"], ["send"], ["reply"], ["transcribe"], ["album"],
+    ["channel-stats"], ["message-stats"], ["public-forwards"], ["topics"],
+    ["topic-read"], ["poll"], ["pins"], ["chat-info"], ["send-as"], ["draft"]
+  ]
+}

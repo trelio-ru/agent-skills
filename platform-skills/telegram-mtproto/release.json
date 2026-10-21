@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.11.0",
-    "summary": "Выбор отображаемого отправителя, карточка прав и ограничений чата, удаление одного собственного сообщения с явной областью и проверкой результата."
+    "version": "2.11.1",
+    "summary": "Подписанная классификация task-команд ассистента сохраняет обычное чтение и переписку, отдельно закрывая login, bootstrap, локальную policy и административные записи."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.11.0",
+    "version": "2.11.1",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
@@ -30,6 +30,11 @@
       "local-accounts-v1"
     ],
     "files": [
+      {
+        "source": "scripts/trelio-assistant-execution.json",
+        "path": "trelio-assistant-execution.json",
+        "mode": 420
+      },
       {
         "source": "scripts/trelio-telegram.py",
         "path": "trelio-telegram.py",

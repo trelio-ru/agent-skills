@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.11.0`
-объявляет runtime `2.11.0`, требует Telethon `>=1.45,<2` и сохраняет
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.11.1`
+объявляет runtime `2.11.1`, требует Telethon `>=1.45,<2` и сохраняет
 minimum host `3.7.0`,
 connection definition, package credential и namespace личной сессии.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
@@ -17,6 +17,19 @@ connection definition, package credential и namespace личной сессии
 Согласие на отправку даёт оператор в текущем разговоре; permission profile,
 sandbox и approval mode клиента его не выдают и не заменяют. Runtime
 patch не меняет backend, plugin, connection или minimum host.
+
+## Task-профиль цифрового ассистента
+
+Source 2.11.1 включает `trelio-assistant-execution.json` в прежний signed file
+inventory. Общий host проверяет literal parser-leaf prefixes до account/native
+I/O и повторно перед исполнением. Разрешены чтение, поиск, metadata, загрузка
+выбранного файла и обычные send/reply с прежней отдельной sending authority.
+Login/bootstrap, importer, local policy writes, passive monitor, admin/queue
+mutations и source ACK не входят в generic task surface. Они не разрешаются
+текстом сообщения или наличием аккаунта; fixed source admissions независимы.
+Human CLI не меняется, новый executor/SDK/vault не создаётся. Descriptor не
+включает live source/coordinator и не доказывает Windows business E2E; для
+старого host его наличие не является доказательством enforce/readiness.
 
 ## Кодировка CLI
 
