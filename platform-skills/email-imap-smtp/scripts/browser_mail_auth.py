@@ -288,7 +288,10 @@ def profile(args, runtime):
                 return {"protocol": API, "profiles": [], "marksRead": False}
             lower, upper = max(1, next_uid - 500), next_uid - 1
             quoted = b'"' + brand.encode("utf-8") + b'"'
-            status, rows = runtime.email_ack_metadata(client, "search", "UTF-8", "UID", f"{lower}:{upper}", "TEXT", quoted)
+            # uid() is the raw command wrapper, not IMAP4.search(charset,...):
+            # it does not insert CHARSET for us. Keep the real wire valid for
+            # both ASCII and non-ASCII brand anchors without a lossy fallback.
+            status, rows = runtime.email_ack_metadata(client, "search", "CHARSET", "UTF-8", "UID", f"{lower}:{upper}", "TEXT", quoted)
             if status != "OK" or not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0] or b"", bytes):
                 raise ValueError()
             uids = (rows[0] or b"").split()

@@ -164,6 +164,7 @@ class BrowserMailAuthentication(unittest.TestCase):
                          'bodyAnchor': 'Example', 'digits': 6, 'recipientVerified': True}])
         self.assertNotIn('123456', json.dumps(result))
         self.assertNotIn('Example account code', json.dumps(result))
+        self.assertEqual(client.sent[1], b'TEST2 UID SEARCH CHARSET UTF-8 UID 1:11 TEXT "Example"\r\n')
         self.assertFalse(any(b'STORE' in x or b' SELECT ' in x for x in client.sent))
 
     def test_otp_literal_limit_refuses_before_body_allocation_without_raising_export_limits(self):
