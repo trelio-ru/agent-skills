@@ -9,7 +9,7 @@ import { parseArguments, run } from '../scripts/trelio-gosuslugi.mjs';
 const root = new URL('../', import.meta.url);
 const hash = text => crypto.createHash('sha256').update(text).digest('hex');
 
-test('short main instructions fit publication budget and all original safety sections survive verbatim', async () => {
+test('short main instructions fit publication budget and the complete current contract matches its pinned map', async () => {
   const main = await fs.readFile(new URL('SKILL.md', root), 'utf8');
   assert.ok(Buffer.byteLength(main.trim()) <= 16384);
   const map = JSON.parse(await fs.readFile(new URL('references/instruction-map.json', root), 'utf8'));
@@ -26,6 +26,16 @@ test('short main instructions fit publication budget and all original safety sec
   assert.equal(hash(recovered.join('')), map.originalSha256);
   assert.match(main, /полностью прочитай документы/u);
   assert.match(main, /недоступен, обрезан/u);
+});
+
+test('all login guides reuse user authority for standard disclosure while preserving independent decisions', async () => {
+  const guides = (await getInstructionGuides()).guides;
+  for (const name of ['safety', 'runtime', 'esia']) {
+    const text = (await fs.readFile(guides[name].path, 'utf8')).replace(/\s+/gu, ' ');
+    assert.match(text, /[Сс]тандартное (?:разрешение|согласие) ЕСИА/u, name);
+    assert.match(text, /(?:без повторного вопроса|повторного подтверждения|без повторного вопроса или ручного клика)/u, name);
+    assert.match(text, /(?:[Дд]ругие согласия|неподдерживаемое|Неизвестные права)/u, name);
+  }
 });
 
 test('guides work before identity, browser binding or native credential access', async () => {

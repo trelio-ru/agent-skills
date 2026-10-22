@@ -78,7 +78,8 @@ try {
     const postAuth = new URL('https://passport.pochta.ru/oauth2/authorize');
     postAuth.search = new URLSearchParams({ redirect_uri: origin + '/api/auth/callback',
       state: 'synthetic-post-state', client_id: 'SYNTHETIC_POST', response_type: 'code' });
-    let loginPosts = 0, personalRoleReturns = 0;
+    let loginPosts = 0, personalRoleReturns = 0, consentPosts = 0;
+    const withConsent = index === 0 || index === 9;
     const workingForm = '<form id="work"><input name="arbitrary"><input type="file"><input type="checkbox" name="consent"><button>Сохранить</button></form><a href="/download" download>Скачать</a><script>document.querySelector("#work").onsubmit=e=>{e.preventDefault();document.body.dataset.saved=document.querySelector("input").value}</script>';
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
@@ -142,7 +143,22 @@ try {
         // separately cover a successful 302 response and callback replay.
         if (sso) return route.fulfill({ contentType: 'text/html; charset=utf-8',
           body: `<script>location.replace(${JSON.stringify(callback)})</script>` });
-        if (index === 3 && url.pathname === '/manual-post') {
+        if (withConsent && url.pathname === '/consent') {
+          // One ordinary same-page flow and one QR/password popup flow must
+          // accept the standard profile disclosure with the production broker.
+          // The relying-party form consent below remains independently owned.
+          body = `<h1>Разрешение на действия с персональными данными</h1>
+            <h2>Информационная система, которая запрашивает разрешение</h2><p>Учебная система</p>
+            <h3>Запрашиваемые действия</h3><ul><li>Просмотр списка ваших организаций</li>
+            <li>Просмотр вашей фамилии, имени и отчества</li><li>Просмотр вашего адреса электронной почты</li>
+            <li>Просмотр вашего СНИЛС</li></ul><h3>Согласие на выдачу разрешения</h3>
+            <p>Нажимая «Выдать разрешение», вы предоставляете информационной системе права на указанные действия.</p>
+            <button>Выдать разрешение</button><button>Отказать</button><script>
+            document.querySelector('button').onclick=async()=>{await fetch('/consent-post',{method:'POST'});
+              setTimeout(()=>location.href=${JSON.stringify(callback)},750)};</script>`;
+        } else if (withConsent && url.pathname === '/consent-post') {
+          consentPosts++; body = 'ok';
+        } else if (index === 3 && url.pathname === '/manual-post') {
           // The browser's human challenge submits inside the same bound ESIA
           // popup. The authorizer must notice this POST and resume itself.
           body = 'ok';
@@ -162,7 +178,7 @@ try {
           // the password button. Such labels are not active challenges, even
           // though the page-wide text classifier correctly flags biometrics.
           body = '<h1>Вход по QR-коду</h1><p>Наведите камеру и подтвердите вход в приложении «Госуслуги»</p><button onclick="location.href=\'/login\'">Логин и пароль</button><button>Биометрия</button>';
-        } else body = `<form><label>Телефон<input id="login" name="login"></label><label>Пароль<input id="password" name="password" type="password"></label><button>Войти</button></form><script>document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch('/login-post',{method:'POST',body:new URLSearchParams(new FormData(e.target))});location.href=${JSON.stringify(index === 10 ? 'https://roles.gosuslugi.ru/roles' : withTotp ? 'https://esia.gosuslugi.ru/totp' : callback)}};</script>`;
+        } else body = `<form><label>Телефон<input id="login" name="login"></label><label>Пароль<input id="password" name="password" type="password"></label><button>Войти</button></form><script>document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch('/login-post',{method:'POST',body:new URLSearchParams(new FormData(e.target))});location.href=${JSON.stringify(index === 10 ? 'https://roles.gosuslugi.ru/roles' : withConsent ? 'https://esia.gosuslugi.ru/consent' : withTotp ? 'https://esia.gosuslugi.ru/totp' : callback)}};</script>`;
       } else if (url.origin === 'https://another-workflow.example.org') body = '<h1>Следующий шаг произвольного сценария</h1>';
       else return route.abort();
       await route.fulfill({ status, headers, contentType: 'text/html; charset=utf-8', body: '<!doctype html><meta charset="utf-8">' + body });
@@ -251,6 +267,7 @@ try {
     }
     const result = await current.authenticated;
     assert.equal(result.page, page); assert.equal(result.context, context); assert.equal(loginPosts, sso ? 0 : 1);
+    assert.equal(consentPosts, withConsent ? 1 : 0, 'one profile grant, including delayed navigation without replay');
     if (index === 12) assert.deepEqual(result.serviceResponse, { httpStatus: 503, httpOrigin: callbackOrigin },
       'an unknown broker callback error is caller-owned, not an ESIA refusal');
     if (index === 10) {

@@ -15,10 +15,122 @@ import { childEnvironment, LEASE_MS, RUNTIME_VERSION, RuntimeError } from '../sc
 import { observeEsiaAuthorization, safeAuthorizationFailure } from '../scripts/playwright-client.mjs';
 import { EsiaAuthorizer } from '../scripts/esia-authorizer.mjs';
 import { authRpc } from '../scripts/auth-rpc.mjs';
+import { isLoginConsent } from '../scripts/esia-consent.mjs';
 import { waitForSessionChange, withSessionContinuation } from '../scripts/session-wait.mjs';
 import { ServiceFlow, serviceForOrigin } from '../scripts/esia-flow.mjs';
 
 const supported = ['darwin', 'win32'].includes(process.platform);
+
+// Public UI vocabulary with an invented relying party; no real account,
+// company, complaint or auth request is copied into the public regression.
+const loginConsentText = `Разрешение на действия с персональными данными
+Информационная система, которая запрашивает разрешение
+Учебная информационная система
+Запрашиваемые действия
+Просмотр списка ваших организаций
+Просмотр вашей фамилии, имени и отчества
+Просмотр вашего адреса электронной почты
+Просмотр вашего СНИЛС
+Согласие на выдачу разрешения
+Нажимая «Выдать разрешение», вы предоставляете информационной системе права на указанные действия.
+Разрешение можно отозвать на Госуслугах: профиль → Согласия и доверенности → Разрешения
+Выдать разрешение`;
+
+test('login authority covers the standard ESIA profile disclosure but no other actions or scopes', () => {
+  assert.equal(isLoginConsent(loginConsentText), true);
+  assert.equal(isLoginConsent(loginConsentText.replaceAll('\n', '\r\n')), true);
+  assert.equal(isLoginConsent(loginConsentText.replaceAll('\n', ' ')), true);
+  for (const text of [
+    loginConsentText.replace('Просмотр вашего СНИЛС', 'Отправка заявления'),
+    loginConsentText.replace('Просмотр вашего СНИЛС', 'Просмотр ваших медицинских документов'),
+    loginConsentText.replace('Просмотр вашего СНИЛС', 'Просмотр вашего СНИЛС и подписание документов'),
+  ]) assert.equal(isLoginConsent(text), false);
+  for (const suffix of [' CAPTCHA', ' Подтвердите push', ' Оплата', ' Подписание документа'])
+    assert.equal(isLoginConsent(loginConsentText + suffix), false);
+  assert.equal(isLoginConsent(loginConsentText.replace('Учебная информационная система', '')), false);
+  assert.equal(isLoginConsent(loginConsentText.replace('Запрашиваемые действия', 'Действия')), false);
+  assert.equal(isLoginConsent(loginConsentText + '\nЗапрашиваемые действия'), false);
+  assert.equal(isLoginConsent(loginConsentText.replace(/Просмотр[^\n]+\n/g, '')), false);
+  assert.equal(isLoginConsent(loginConsentText + ' '.repeat(16000)), false);
+});
+
+function consentPage() {
+  const fixture = { text: loginConsentText, clicks: 0, fields: 0, buttons: 1, enabled: true,
+    connected: true, consumed: false, disposed: 0, url: 'https://esia.gosuslugi.ru/consent' };
+  const element = { isVisible: async () => true, isEnabled: async () => fixture.enabled,
+    evaluate: async () => fixture.connected,
+    click: async () => { fixture.clicks++; fixture.onClick?.(); },
+    dispose: async () => { fixture.disposed++; } };
+  const button = { filter() { return this; }, count: async () => fixture.buttons,
+    isEnabled: async () => fixture.enabled, elementHandle: async () => element };
+  const inputs = { filter() { return this; }, count: async () => fixture.fields };
+  fixture.page = { url: () => fixture.url, getByRole: () => button,
+    locator: selector => selector === 'body' ? { innerText: async () => fixture.text } : inputs };
+  fixture.flow = { allowSecret() { if (fixture.returning) throw new RuntimeError('service_authorization_request_required'); } };
+  fixture.consume = () => { assert.equal(fixture.consumed, false); fixture.consumed = true; };
+  fixture.run = permit => authRpc(fixture.page, fixture.flow, { operation: 'grant-login-consent' },
+    permit ?? (async () => {}), { consumeLoginConsent: fixture.consume });
+  return fixture;
+}
+
+test('fixed ESIA consent action rechecks scopes, fields, native permit and callback before one click', async () => {
+  const accepted = consentPage();
+  assert.deepEqual(await accepted.run(), { granted: true });
+  assert.equal(accepted.clicks, 1); assert.equal(accepted.consumed, true); assert.equal(accepted.disposed, 1);
+  for (const change of [fixture => { fixture.text += ' Оплата'; }, fixture => { fixture.fields = 1; },
+    fixture => { fixture.buttons = 2; }, fixture => { fixture.enabled = false; }]) {
+    const fixture = consentPage(); change(fixture);
+    assert.deepEqual(await fixture.run(), { granted: false });
+    assert.equal(fixture.clicks, 0); assert.equal(fixture.consumed, false);
+  }
+  for (const change of [fixture => { fixture.text = fixture.text.replace('Учебная', 'Другая'); },
+    fixture => { fixture.text = fixture.text.replace('Просмотр вашего СНИЛС', 'Оплата'); },
+    fixture => { fixture.fields = 1; }, fixture => { fixture.connected = false; }]) {
+    const fixture = consentPage(); let permits = 0;
+    assert.deepEqual(await fixture.run(async () => { if (++permits === 2) change(fixture); }), { granted: false });
+    assert.equal(fixture.clicks, 0); assert.equal(fixture.consumed, false);
+  }
+  const returning = consentPage(); let permits = 0;
+  await assert.rejects(returning.run(async () => { if (++permits === 2) returning.returning = true; }),
+    /service_authorization_request_required/);
+  assert.equal(returning.clicks, 0); assert.equal(returning.consumed, false);
+  const unclaimed = consentPage();
+  await assert.rejects(authRpc(unclaimed.page, unclaimed.flow, { operation: 'grant-login-consent' }, async () => {}),
+    /authorization_permission_required/);
+  unclaimed.url = 'https://other.example.org/consent';
+  await assert.rejects(unclaimed.run(), /secret_origin_rejected/);
+  const uncertain = consentPage(); uncertain.onClick = () => { throw new RuntimeError('session_unreachable'); };
+  await assert.rejects(uncertain.run(), /session_unreachable/);
+  assert.equal(uncertain.clicks, 1); assert.equal(uncertain.consumed, true);
+});
+
+test('delegated authorizer grants login disclosure without a human prompt and preserves no-replay on failure', async () => {
+  for (const outcome of ['granted', 'unsupported', 'uncertain']) {
+    const phases = [], operations = [];
+    const authorizer = new EsiaAuthorizer({}, { permit: async () => {}, onPhase: async value => phases.push(value) });
+    let returned = false;
+    authorizer.call = async (command, packet) => {
+      if (command === 'auth-state') return { atAuth: true, returned, postCount: 0 };
+      if (['complete', 'show'].includes(command)) return {};
+      operations.push(packet.operation);
+      if (packet.operation === 'observe') return { text: loginConsentText, queries: {
+        login: { count: 0 }, password: { count: 0 }, code: { count: 0 }, checkboxes: { fields: [] },
+      } };
+      assert.equal(packet.operation, 'grant-login-consent');
+      if (outcome === 'uncertain') throw new RuntimeError('session_unreachable');
+      returned = outcome === 'granted'; return { granted: returned };
+    };
+    if (outcome === 'uncertain') {
+      await assert.rejects(authorizer.authenticate({}), /session_unreachable/);
+      assert.equal(authorizer.consentSent, true);
+    } else {
+      assert.equal(await authorizer.authenticate({}), outcome === 'granted');
+      assert.equal(phases.includes('user_required'), outcome === 'unsupported');
+      if (outcome === 'unsupported') assert.equal(authorizer.manualReason, 'consent_required');
+    }
+    assert.deepEqual(operations, ['observe', 'grant-login-consent']);
+  }
+});
 const identity = {
   company: '11111111-1111-4111-8111-111111111111',
   member: '22222222-2222-4222-8222-222222222222',

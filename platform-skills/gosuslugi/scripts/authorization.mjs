@@ -111,7 +111,7 @@ export function createAuthorizationBroker({
   const authToken = crypto.randomBytes(32).toString('hex'),
     secretFingerprints = [];
   let authorization = null,
-    claim = null, finished = false;
+    claim = null, finished = false, loginConsentSent = false;
   function redact(text) {
     // Keep only hashes after private typing. Even a later page that echoes an
     // input cannot expose its plaintext through the public snapshot channel.
@@ -299,7 +299,15 @@ export function createAuthorizationBroker({
     )
       secretFingerprints.push({ length: packet.text.length, hash: digest(packet.text) });
     try {
-      return await authRpc(portal.page, portal.serviceFlow, packet, permit);
+      return await authRpc(portal.page, portal.serviceFlow, packet, permit, {
+        consumeLoginConsent() {
+          // The existing exact-origin claim is the user's login authority.
+          // Consume once per transaction before dispatch, including ambiguous
+          // failures; another process/resume must not repeat a consent click.
+          requireThat(!loginConsentSent, 'auth_consent_already_dispatched');
+          loginConsentSent = true;
+        },
+      });
     } catch (error) {
       // A final TOTP character can submit the form, commit the callback and
       // close its popup before Playwright acknowledges typing. Do not repeat
