@@ -42,7 +42,7 @@ def child_environment() -> dict[str, str]:
         # No bearer, OTP, password or request payload is propagated in env.
         "TRELIO_BROWSER_MAIL_MODULE_URL", "TRELIO_LOCAL_FORM_NODE_EXECUTABLE",
         "TRELIO_SKILL_ID", "TRELIO_SKILL_COMPANY_ID", "TRELIO_SKILL_MEMBER_ID",
-        "TRELIO_ORIGIN",
+        "TRELIO_ORIGIN", "TRELIO_CONFIG_HOME",
     }
     return {name: value for name, value in os.environ.items() if name.upper() in names}
 

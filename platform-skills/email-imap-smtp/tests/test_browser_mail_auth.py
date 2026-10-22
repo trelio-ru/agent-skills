@@ -174,7 +174,7 @@ class BrowserMailAuthentication(unittest.TestCase):
         self.assertTrue(client.responses.closed)
 
     def test_actual_private_process_contract_has_no_code_in_argv_env_or_public_errors(self):
-        module = Path.cwd() / 'synthetic' / 'trelio-browser-mail-bridge.mjs'
+        module = Path.cwd() / 'synthetic' / 'trelio-browser-session.mjs'
         node = Path.cwd() / 'synthetic' / 'node'
         with mock.patch.dict(os.environ, {'TRELIO_BROWSER_MAIL_MODULE_URL': module.as_uri(),
                                          'TRELIO_LOCAL_FORM_NODE_EXECUTABLE': str(node)}), \

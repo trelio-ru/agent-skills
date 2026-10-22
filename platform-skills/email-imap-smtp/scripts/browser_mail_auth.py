@@ -44,7 +44,7 @@ def private_host(message, runtime):
         if os.name == "nt" and re.match(r"^/[a-zA-Z]:/", name):
             name = name[1:]
         module = Path(name)
-        if not module.is_absolute() or module.name != "trelio-browser-mail-bridge.mjs":
+        if not module.is_absolute() or module.name != "trelio-browser-session.mjs":
             raise ValueError()
         runtime.require_credential_lease()
         result = subprocess.run([str(node), str(module)], input=json.dumps(message).encode("utf-8"),
