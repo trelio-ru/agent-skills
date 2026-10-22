@@ -164,7 +164,7 @@ class BrowserMailAuthentication(unittest.TestCase):
                          'bodyAnchor': 'Example', 'digits': 6, 'recipientVerified': True}])
         self.assertNotIn('123456', json.dumps(result))
         self.assertNotIn('Example account code', json.dumps(result))
-        self.assertEqual(client.sent[1], b'TEST2 UID SEARCH CHARSET UTF-8 UID 1:11 TEXT "Example"\r\n')
+        self.assertEqual(client.sent[1], b'TEST2 UID SEARCH UID 1:11 TEXT "Example"\r\n')
         self.assertFalse(any(b'STORE' in x or b' SELECT ' in x for x in client.sent))
 
     def test_otp_literal_limit_refuses_before_body_allocation_without_raising_export_limits(self):
@@ -173,6 +173,36 @@ class BrowserMailAuthentication(unittest.TestCase):
         with self.assertRaises(M.EmailReferenceError):
             M.fetch_raw_message(client, '11', verify_reference=True, maximum_bytes=256*1024)
         self.assertTrue(client.responses.closed)
+
+    def test_unicode_profile_uses_one_real_literal_and_bounded_response(self):
+        for enabled in (False, True):
+            client = ScriptedImap(examine(1, next_uid=12) + b'+ literal ready\r\n'
+                + b'* SEARCH\r\nTEST2 OK searched\r\n' + examine(3, next_uid=12))
+            if enabled:
+                client._mode_utf8()
+            with mock.patch.object(M, 'imap_connection', return_value=contextlib.nullcontext(client)):
+                result = B.profile(NS(account='synthetic', folder=None, brand='Пример'), M)
+            self.assertEqual(result['profiles'], [])
+            charset = b'' if enabled else b'CHARSET UTF-8 '
+            self.assertEqual(client.sent[1], b'TEST2 UID SEARCH ' + charset + b'UID 1:11 TEXT {12}\r\n')
+            self.assertEqual(client.sent[2], 'Пример'.encode())
+            self.assertIsNone(client.literal)
+            self.assertFalse(any(b'STORE' in x for x in client.sent))
+
+    def test_profile_errors_reveal_only_fixed_stage_never_native_text(self):
+        for stream, stage in (
+            (examine(1, next_uid=12) + b'TEST2 NO private code 123456\r\n', 'SEARCH'),
+            (examine(1, next_uid=12) + b'* SEARCH ' + b' '.join(str(n).encode() for n in range(1, 22))
+                + b'\r\nTEST2 OK searched\r\n', 'CANDIDATES'),
+            (examine(1, next_uid=12) + b'* SEARCH 11\r\nTEST2 OK searched\r\n'
+                + b'* 1 FETCH (UID 11 RFC822.SIZE 262145 BODY[] {262145}\r\n', 'FETCH'),
+        ):
+            client = ScriptedImap(stream)
+            with mock.patch.object(M, 'imap_connection', return_value=contextlib.nullcontext(client)):
+                with self.assertRaises(M.MailboxError) as caught:
+                    B.profile(NS(account='synthetic', folder=None, brand='Example'), M)
+            self.assertEqual(str(caught.exception), 'EMAIL_BROWSER_AUTH_PROFILE_' + stage + '_UNAVAILABLE')
+            self.assertFalse(any(b'STORE' in x for x in client.sent))
 
     def test_actual_private_process_contract_has_no_code_in_argv_env_or_public_errors(self):
         module = Path.cwd() / 'synthetic' / 'trelio-browser-session.mjs'

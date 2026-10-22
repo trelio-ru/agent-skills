@@ -280,27 +280,48 @@ def profile(args, runtime):
     account = runtime.load_account(args.account)
     runtime.require_imap(account)
     results = []
+    # Diagnostics are a finite stage chosen by this implementation. Never use
+    # a server exception, message header, UID, address or response as a code.
+    stage = "CONNECT"
     try:
         with runtime.imap_connection(account) as client:
+            stage = "SELECT"
             folder = runtime.select_folder(client, args.folder, special_use=getattr(args, 'special_use', None))
+            stage = "POSITION"
             validity, next_uid = runtime.email_monitor_position(client)
             if next_uid <= 1:
                 return {"protocol": API, "profiles": [], "marksRead": False}
             lower, upper = max(1, next_uid - 500), next_uid - 1
-            quoted = b'"' + brand.encode("utf-8") + b'"'
-            # uid() is the raw command wrapper, not IMAP4.search(charset,...):
-            # it does not insert CHARSET for us. Keep the real wire valid for
-            # both ASCII and non-ASCII brand anchors without a lossy fallback.
-            status, rows = runtime.email_ack_metadata(client, "search", "CHARSET", "UTF-8", "UID", f"{lower}:{upper}", "TEXT", quoted)
+            stage = "SEARCH"
+            # ASCII needs no CHARSET extension. Non-ASCII must be a real IMAP
+            # literal (rev1 quoted strings allow only 7-bit), with the same
+            # pre-allocation metadata guard on the incoming response. This is
+            # one search, never a retry using broader or transliterated text.
+            if brand.isascii():
+                status, rows = runtime.email_ack_metadata(client, "search", None, "UID", f"{lower}:{upper}", "TEXT", '"' + brand + '"')
+            else:
+                # A bytes-valued imaplib literal is APPEND-specific after
+                # UTF8=ACCEPT (it adds UTF8 parentheses). The existing bounded
+                # continuation writer preserves SEARCH's value grammar.
+                writer = runtime.ImapSearchLiteralWriter([brand.encode("utf-8")])
+                client.literal = writer.next_chunk
+                try:
+                    charset = () if client.utf8_enabled is True else ("CHARSET", "UTF-8")
+                    status, rows = runtime.email_ack_metadata(client, "search", *charset, "UID", f"{lower}:{upper}", "TEXT", "{" + str(len(brand.encode("utf-8"))) + "}")
+                finally:
+                    client.literal = None
             if status != "OK" or not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0] or b"", bytes):
                 raise ValueError()
             uids = (rows[0] or b"").split()
+            stage = "CANDIDATES"
             if len(uids) > 20 or len(set(uids)) != len(uids):
                 raise ValueError()
             for encoded in uids:
                 if not re.fullmatch(rb"[1-9][0-9]{0,9}", encoded) or not lower <= int(encoded) <= upper:
                     raise ValueError()
+                stage = "FETCH"
                 raw = runtime.fetch_raw_message(client, encoded.decode("ascii"), verify_reference=True, maximum_bytes=256 * 1024)
+                stage = "PARSE"
                 message = email.message_from_bytes(raw, policy=default)
                 if message.defects or account.email_address.lower() not in exact_addresses(message, ["To"]):
                     continue
@@ -321,12 +342,15 @@ def profile(args, runtime):
                     if item not in results:
                         results.append(item)
                 raw = b""; codes = []
+            stage = "VERIFY"
             runtime.select_folder(client, folder)
             if runtime.email_monitor_position(client)[0] != validity:
                 raise ValueError()
+            stage = "CLOSE"
+        stage = "RESULT"
         if len(results) > 5:
             raise ValueError()
         return {"protocol": API, "profiles": results, "marksRead": False,
                 "coverage": "last_500_uid_slots", "originalTextOmitted": True}
     except Exception:
-        raise runtime.MailboxError("EMAIL_BROWSER_AUTH_PROFILE_UNAVAILABLE") from None
+        raise runtime.MailboxError("EMAIL_BROWSER_AUTH_PROFILE_" + stage + "_UNAVAILABLE") from None
