@@ -56,7 +56,7 @@ POLICIES_DIR = CONFIG_DIR / "policies"
 KEYCHAIN_SERVICE_PREFIX = "trelio-email"
 POLICY_MODES = ("confirm", "read-only")
 CONNECTION_MODES = ("imap_smtp", "smtp_only")
-IMAP_COMMANDS = {"monitor", "read-reference", "ack-reference", "folders", "search", "read", "save-message", "attachments", "save-attachment", "reply"}
+IMAP_COMMANDS = {"authentication-profile", "authentication-browser", "monitor", "read-reference", "ack-reference", "folders", "search", "read", "save-message", "attachments", "save-attachment", "reply"}
 MAX_ACCOUNT_DESCRIPTION_CHARS = 2_000
 MAX_SIGNATURE_BYTES = 16 * 1024
 MAX_MESSAGE_BYTES = 25 * 1024 * 1024
@@ -1947,7 +1947,7 @@ def parse_message_uid(value: str) -> str:
 
 
 def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: bool = False,
-                      reference_headers: bool = False) -> bytes:
+                      reference_headers: bool = False, maximum_bytes: int | None = None) -> bytes:
     """Fetch and bound the exact RFC822 payload returned by IMAP.
 
     Source export must use these original bytes. Parsing and serializing an
@@ -1964,6 +1964,13 @@ def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: 
     if reference_headers and not verify_reference:
         raise EmailReferenceError("EMAIL_REFERENCE_INPUT_INVALID")
     literal_limit = MAX_REPLY_HEADER_CHARS if reference_headers else MAX_MESSAGE_BYTES
+    # A private OTP reader needs much less than a complete attachment export.
+    # It may tighten the SAME pre-allocation reader, never enlarge its budget
+    # or use a bound only after imaplib has already allocated a huge literal.
+    if maximum_bytes is not None:
+        if not verify_reference or type(maximum_bytes) is not int or not 1 <= maximum_bytes <= literal_limit:
+            raise EmailReferenceError("EMAIL_REFERENCE_INPUT_INVALID")
+        literal_limit = maximum_bytes
     # PEEK makes read-state preservation explicit even if this helper is later
     # used with a writable connection. BODY[] still returns exact RFC822 bytes.
     if verify_reference:
@@ -2025,7 +2032,7 @@ def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: 
     if not isinstance(raw_message, bytes):
         raise MailboxError(f"Message UID {uid} returned an invalid RFC822 payload.")
     if len(raw_message) > literal_limit:
-        if reference_headers:
+        if reference_headers or maximum_bytes is not None:
             raise EmailReferenceError("EMAIL_REFERENCE_INCOMPLETE")
         raise MailboxError(f"Message UID {uid} exceeds the {MAX_MESSAGE_BYTES} byte safety limit.")
     if verify_reference:
@@ -3358,6 +3365,20 @@ def command_signature(args: argparse.Namespace) -> dict[str, Any]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Trelio IMAP/SMTP mailbox CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    auth_parser = subparsers.add_parser("authentication-browser", help="Privately deliver one email code to an existing protected browser attempt")
+    add_mailbox_arguments(auth_parser)
+    def browser_request(value):
+        if not re.fullmatch(r"[a-f0-9]{64}\.[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value):
+            raise argparse.ArgumentTypeError("EMAIL_BROWSER_AUTH_INPUT_INVALID")
+        return value
+    auth_parser.add_argument("--request", required=True, type=browser_request)
+    auth_parser.add_argument("--mark-read-after-success", action="store_true", help="Use separately authorized exact-message Seen after verified login")
+    auth_parser.add_argument("--verify-only", action="store_true", help="Reconcile a previous result without another code delivery or STORE")
+    auth_parser.set_defaults(handler=command_authentication_browser)
+    auth_profile = subparsers.add_parser("authentication-profile", help="Discover safe sender/literal matcher evidence without returning email codes")
+    add_mailbox_arguments(auth_profile)
+    auth_profile.add_argument("--brand", required=True)
+    auth_profile.set_defaults(handler=command_authentication_browser)
     configure_parser = subparsers.add_parser("configure", help="Configure one account interactively")
     configure_parser.add_argument("--account", required=True)
     configure_parser.add_argument("--smtp-only", action="store_true",
@@ -3531,6 +3552,16 @@ def selected_local_account() -> dict[str, Any] | None:
     # locator unchanged even when the user renames the common catalogue entry.
     value["mailbox_name"] = normalize_account_name(value["providerRef"] or value["id"])
     return value
+
+
+def command_authentication_browser(args: argparse.Namespace) -> dict[str, Any]:
+    # Signed sibling code only; no model-selected source or raw IMAP fallback.
+    # This helper's public result contains status, never MIME/OTP/private grant.
+    spec = importlib.util.spec_from_file_location("browser_mail_auth", Path(__file__).resolve().with_name("browser_mail_auth.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    handler = module.profile if args.command == 'authentication-profile' else module.complete
+    return handler(args, sys.modules[__name__])
 
 
 def import_existing_accounts() -> dict[str, Any]:

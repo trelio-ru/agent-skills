@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.6.4",
-    "summary": "Подписанная классификация команд отделяет работу task-агента от настройки ящика, изменения локальной политики и отдельного ACK источника."
+    "version": "2.7.0",
+    "summary": "Приватное email-подтверждение входа браузерных навыков: код передаётся прямо в форму, использованное письмо отмечается прочитанным только после успешного входа"
   },
   "connection": null,
   "runtime": {
-    "version": "2.6.4",
-    "minimumHostVersion": "3.7.0",
+    "version": "2.7.0",
+    "minimumHostVersion": "3.15.0",
     "entrypoint": {
       "path": "trelio-email.py",
       "interpreter": "python"
@@ -87,6 +87,16 @@
       {
         "source": "scripts/instruction-guides/part-06.md",
         "path": "instruction-guides/part-06.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/browser_mail_auth.py",
+        "path": "browser_mail_auth.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-07.md",
+        "path": "instruction-guides/part-07.md",
         "mode": 420
       }
     ]
