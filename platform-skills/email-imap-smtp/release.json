@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.7.0",
-    "summary": "Приватное email-подтверждение входа браузерных навыков: код передаётся прямо в форму, использованное письмо отмечается прочитанным только после успешного входа"
+    "version": "2.7.1",
+    "summary": "Совместимый поиск шаблонов email-входа через IMAP и безопасная диагностика этапов без текста письма или кода"
   },
   "connection": null,
   "runtime": {
-    "version": "2.7.0",
+    "version": "2.7.1",
     "minimumHostVersion": "3.15.0",
     "entrypoint": {
       "path": "trelio-email.py",

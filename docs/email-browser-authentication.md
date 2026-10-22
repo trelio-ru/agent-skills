@@ -35,6 +35,11 @@ authoring/live verification. Он читает bounded PEEK candidates по TEXT
 literal anchors из brand/фиксированного словаря и длина единственного кода;
 тема/тело/OTP/auth URL исключены. Ничего не помечается прочитанным. Такой
 результат не является signed matcher, входом или mutation authority.
+ASCII brand идёт без CHARSET, Unicode — одним synchronizing literal с CHARSET
+UTF-8 до ENABLE UTF8=ACCEPT и без CHARSET после него. В обоих случаях incoming
+metadata ограничена до allocation. Ошибка profile возвращает только fixed этап
+`EMAIL_BROWSER_AUTH_PROFILE_<STAGE>_UNAVAILABLE`, без raw IMAP/адреса/UID/текста.
+Этап помогает локализовать отказ, но не доказывает отсутствие письма или доступа.
 
 Tests используют реальный stdlib IMAP encoder/parser и synthetic socket stream:
 baseline до запроса, PEEK, exact recipient/sender, stale/ambiguous/missing mail,

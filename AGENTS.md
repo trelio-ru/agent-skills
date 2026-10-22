@@ -255,6 +255,10 @@ No provider/site selectors belong in mail. Readonly UID baseline precedes any
 browser input; exact sender/recipient/UIDVALIDITY and one code stay in private
 pipes. Positive browser evidence and the SAME host ACK fence are required for
 exact additive Seen. Lost delivery/STORE never grants replay or another mailbox.
+Authoring profile uses ASCII SEARCH without CHARSET, Unicode synchronizing
+literals and bounded metadata. Failures expose only implementation-selected
+CONNECT/SELECT/POSITION/SEARCH/CANDIDATES/FETCH/PARSE/VERIFY/CLOSE/RESULT stages;
+never native exception text, mail content or a reason inferred from a stage.
 Для почтовой отправки сохраняй исходные байты вложений, различай отказ SMTP
 и неизвестный результат, не выводи raw reply; читай
 [контракт диагностики](docs/email-send-diagnostics.md).
