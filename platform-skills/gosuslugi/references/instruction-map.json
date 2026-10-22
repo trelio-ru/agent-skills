@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "sourceVersion": "4.5.4",
-  "originalSha256": "2f20aa7f9b7a03d6016e087d29761e62a3f2e452e4944d63ec91aa3ae471e846",
+  "sourceVersion": "4.5.7",
+  "originalSha256": "5603b90d2613b198ca7491803b0ae0582b311709ae82ea1b4c9d99950d5039a3",
   "sections": [
     {
       "heading": "---",
@@ -19,15 +19,15 @@
     {
       "heading": "## Основное правило",
       "file": "references/safety.md",
-      "sha256": "8d57c69fe42b072ac04e7658362fb2d12f486fe8575dab881092254ba69a656d",
-      "bytes": 6839,
+      "sha256": "344322eedf70bcedac83558d269f4dc6542c2226e3547019c67a91ef69c34687",
+      "bytes": 7453,
       "sourceSuffix": "\n"
     },
     {
       "heading": "## Защищённый runtime",
       "file": "references/runtime-commands.md",
-      "sha256": "f7803aea6f1a561dbe1028404cf9929a42f9388934b88f75d7a542392d5b5d52",
-      "bytes": 15464,
+      "sha256": "acf69ade61e3a50c00b9a7cd1aa3179794d0cda1ac213d913e9fdaf5d9441541",
+      "bytes": 15942,
       "sourceSuffix": "\n"
     },
     {
@@ -40,8 +40,8 @@
     {
       "heading": "## Произвольные Playwright-сценарии и ЕСИА",
       "file": "references/esia-authorization.md",
-      "sha256": "5ca1dbcf9337f0bd621e7a1935acc71c55e2e306d29c4d6fd84d3142503e5b9a",
-      "bytes": 9716,
+      "sha256": "674599b11c3fbef6701baa9f56dfb1179dde0c04f30c6c9a7f7a7b207578b301",
+      "bytes": 10177,
       "relocatedLinks": [
         {
           "from": "(references/playwright-client.md)",
@@ -67,8 +67,8 @@
     {
       "heading": "## Авторизация",
       "file": "references/portal-authorization.md",
-      "sha256": "8a83640e10591f465c9135b748e37263e24f213f75245eef86b026c6698e7527",
-      "bytes": 1496,
+      "sha256": "13fb04832c006aaafcc1a51556387ee3334769e479b238d414d5f91a44f190a8",
+      "bytes": 1676,
       "sourceSuffix": "\n"
     },
     {

@@ -1,4 +1,5 @@
 import { authOrigin, requireThat, RuntimeError } from './core.mjs';
+import { grantLoginConsent } from './esia-consent.mjs';
 
 // Private process protocol, never an agent-facing browser/evaluate tool.
 // The authorizer supplies bounded selectors; all evaluation bodies are fixed
@@ -25,7 +26,7 @@ function locator(page, query, depth = 0) {
   }
   return result;
 }
-export async function authRpc(page, flow, packet, permit) {
+export async function authRpc(page, flow, packet, permit, { consumeLoginConsent } = {}) {
   await permit();
   flow.allowSecret();
   requireThat(authOrigin(page.url()), 'secret_origin_rejected');
@@ -37,6 +38,13 @@ export async function authRpc(page, flow, packet, permit) {
     flow.allowSecret();
     requireThat(page.url() === before && authOrigin(page.url()), 'auth_page_changed');
   };
+  if (packet.operation === 'grant-login-consent') {
+    // Only the claimed broker supplies this one-shot capability. Generic click
+    // retains its consent denylist; selectors/fields cannot widen this action.
+    requireThat(typeof consumeLoginConsent === 'function' && !packet.query && !packet.text,
+      'authorization_permission_required');
+    return grantLoginConsent(page, { permit, unchanged, consume: consumeLoginConsent });
+  }
   if (packet.operation === 'observe') {
     requireThat(packet.queries && Object.keys(packet.queries).length <= 12, 'auth_query_invalid');
     const text = (await page.locator('body').innerText()).slice(0, 16000),

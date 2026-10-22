@@ -32,6 +32,7 @@ export class EsiaAuthorizer {
     this.completed = false;
     this.returnOnly = false;
     this.qrSent = false;
+    this.consentSent = false;
     this.manualReason = null;
     this.manualPostCount = null;
   }
@@ -249,7 +250,21 @@ export class EsiaAuthorizer {
             /предостав.{0,120}(доступ|сведен|данн)|разреш.{0,80}(доступ|сведен|данн)|соглас.{0,80}(передач|обработ)/i.test(
               current.text,
             ));
-        if (consent) return this.manual('consent_required', state.postCount);
+        if (consent) {
+          if (!this.consentSent) {
+            // The broker reviews the full standard ESIA profile disclosure on
+            // this claimed transaction. Login authority already covers it;
+            // unsupported consent still requires a separate human decision.
+            this.consentSent = true;
+            const result = await this.call('auth-operation', { operation: 'grant-login-consent' });
+            if (!result.granted) {
+              this.consentSent = false; // Exact negative reply proves no dispatch.
+              return this.manual('consent_required', state.postCount);
+            }
+          }
+          await new Promise(resolve => setTimeout(resolve, 500));
+          continue;
+        }
         // A page-wide text classifier cannot tell a QR instruction from an
         // alternative method advertised below the fold. Bind the transition
         // to the one visible password-choice button before classifying a
