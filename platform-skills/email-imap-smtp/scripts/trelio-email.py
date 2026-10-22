@@ -18,6 +18,7 @@ import hashlib
 import html
 import http.server
 import imaplib
+import itertools
 import importlib.util
 import json
 import mimetypes
@@ -1945,16 +1946,24 @@ def parse_message_uid(value: str) -> str:
         raise argparse.ArgumentTypeError(str(error)) from error
 
 
-def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: bool = False) -> bytes:
+def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: bool = False,
+                      reference_headers: bool = False) -> bytes:
     """Fetch and bound the exact RFC822 payload returned by IMAP.
 
     Source export must use these original bytes. Parsing and serializing an
     ``email.message.Message`` again could change header folding, line endings,
     transfer encodings, or MIME boundaries and would no longer be a faithful
     evidentiary copy of the selected mailbox object.
+
+    The internal reference_headers mode uses the same strict reader for only
+    the requested identity headers, with a smaller aggregate literal budget;
+    those bytes are never described as an original/full message export.
     """
 
     uid = validate_message_uid(uid)
+    if reference_headers and not verify_reference:
+        raise EmailReferenceError("EMAIL_REFERENCE_INPUT_INVALID")
+    literal_limit = MAX_REPLY_HEADER_CHARS if reference_headers else MAX_MESSAGE_BYTES
     # PEEK makes read-state preservation explicit even if this helper is later
     # used with a writable connection. BODY[] still returns exact RFC822 bytes.
     if verify_reference:
@@ -1963,7 +1972,7 @@ def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: 
         # reader only for this FETCH, before allocation; never patch the global
         # SDK, credential transport or another worker's connection.
         original_read, original_readline = client.read, client.readline
-        literal_remaining, metadata_remaining = MAX_MESSAGE_BYTES, MAX_REFERENCE_METADATA_BYTES
+        literal_remaining, metadata_remaining = literal_limit, MAX_REFERENCE_METADATA_BYTES
         def bounded_read(size):
             nonlocal literal_remaining
             if type(size) is not int or not 0 <= size <= literal_remaining:
@@ -1984,7 +1993,11 @@ def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: 
             return line
         client.read, client.readline = bounded_read, bounded_readline
         try:
-            status, data = client.uid("fetch", uid, "(UID RFC822.SIZE BODY.PEEK[])")
+            # Source routing reads only these three identity headers, through
+            # the SAME bounded literal/metadata reader. No body, address,
+            # subject, extra socket or writable SELECT is needed for a tag.
+            section = "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID IN-REPLY-TO REFERENCES)])" if reference_headers else "(UID RFC822.SIZE BODY.PEEK[])"
+            status, data = client.uid("fetch", uid, section)
         except BaseException:
             # A refused literal can still be pending on the socket. Ordinary
             # IMAP context cleanup would send LOGOUT and parse that same unread
@@ -2011,7 +2024,9 @@ def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: 
     raw_message = payloads[0]
     if not isinstance(raw_message, bytes):
         raise MailboxError(f"Message UID {uid} returned an invalid RFC822 payload.")
-    if len(raw_message) > MAX_MESSAGE_BYTES:
+    if len(raw_message) > literal_limit:
+        if reference_headers:
+            raise EmailReferenceError("EMAIL_REFERENCE_INCOMPLETE")
         raise MailboxError(f"Message UID {uid} exceeds the {MAX_MESSAGE_BYTES} byte safety limit.")
     if verify_reference:
         # A successful FETCH status or a matching requested UID is insufficient:
@@ -2036,7 +2051,12 @@ def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: 
             raise EmailReferenceError("EMAIL_REFERENCE_UNAVAILABLE")
         fields = {}
         remaining = envelope[1]
-        token = re.compile(rb"\s*(UID ([1-9][0-9]*)|RFC822\.SIZE ([0-9]+)|BODY\[\] \{([0-9]+)\})(?=\s|$)", re.I)
+        # A server can normalize the order/case of the requested header names;
+        # accept exactly that set, never duplicates or an added header/body.
+        header_names = b"|".join(re.escape(b" ".join(names)) for names in itertools.permutations(
+            [b"MESSAGE-ID", b"IN-REPLY-TO", b"REFERENCES"]))
+        body_section = rb"BODY\[HEADER\.FIELDS \((?:" + header_names + rb")\)\]" if reference_headers else rb"BODY\[\]"
+        token = re.compile(rb"\s*(UID ([1-9][0-9]*)|RFC822\.SIZE ([0-9]+)|" + body_section + rb" \{([0-9]+)\})(?=\s|$)", re.I)
         while remaining.strip():
             match = token.match(remaining)
             if match is None:
@@ -2046,7 +2066,10 @@ def fetch_raw_message(client: imaplib.IMAP4_SSL, uid: str, *, verify_reference: 
                 raise EmailReferenceError("EMAIL_REFERENCE_UNAVAILABLE")
             fields[key] = int(value)
             remaining = remaining[match.end():]
-        if fields != {"uid": int(uid), "size": len(raw_message), "literal": len(raw_message)}:
+        expected = {"uid": int(uid), "literal": len(raw_message)}
+        if not reference_headers:
+            expected["size"] = len(raw_message)
+        if fields != expected:
             raise EmailReferenceError("EMAIL_REFERENCE_UNAVAILABLE")
     return raw_message
 
@@ -2338,7 +2361,37 @@ def email_monitor_position(client: imaplib.IMAP4_SSL) -> tuple[int, int]:
     return result[0], result[1]
 
 
+def email_conversation_key(scope: str, validity: int, uid: int, message: Message) -> str:
+    """Opaque account/folder/UIDVALIDITY-bound thread hint, NEVER authority.
+
+    Reuse the reply parser rather than interpreting subjects, addresses or UI
+    labels. References are untrusted source metadata: a matching root may route
+    context only after the host's independent task/audience decision. It cannot
+    prove sender identity, an owner command, processing or permission to send.
+    Missing identity stays a singleton UID; malformed/ambiguous identities are
+    not silently repaired into a different thread.
+    """
+    own = reply_message_ids(message, "Message-ID")
+    parents = reply_message_ids(message, "In-Reply-To")
+    references = reply_message_ids(message, "References")
+    if len(own) > 1 or len(parents) > 1:
+        raise MailboxError("email_conversation_ambiguous_identity")
+    root = (references or parents or own)
+    identity = ["message-id", root[0]] if root else ["uid", str(uid)]
+    encoded = json.dumps(["email-conversation/v1", scope, str(validity), identity], separators=(",", ":")).encode("utf-8")
+    return "email-conversation/v1." + hashlib.sha256(encoded).hexdigest()
+
+
+def email_conversation_key_argument(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"email-conversation/v1\.[a-f0-9]{64}", value):
+        raise argparse.ArgumentTypeError("EMAIL_REFERENCE_INPUT_INVALID")
+    return value
+
+
 def command_monitor(args: argparse.Namespace) -> dict[str, Any]:
+    conversation_refs = getattr(args, "conversation_references", False)
+    if type(conversation_refs) is not bool:
+        raise EmailMonitorError("EMAIL_MONITOR_INVALID_CURSOR")
     account = load_account(args.account)
     # Keep the low-level guard as well as IMAP_COMMANDS CLI admission: an
     # SMTP-only sender must fail before native unlock or network access.
@@ -2389,6 +2442,18 @@ def command_monitor(args: argparse.Namespace) -> dict[str, Any]:
             # absent/deleted slots may be skipped. Otherwise advance only through
             # the last returned UID, preserving the remainder for the next page.
             committed_through = selected[-1] if len(uids) > args.limit else through
+            conversation_keys = {}
+            if conversation_refs:
+                for uid in selected:
+                    raw = fetch_raw_message(client, str(uid), verify_reference=True, reference_headers=True)
+                    header = email.message_from_bytes(raw, policy=default)
+                    if header.defects or header.get_payload() or any(name.lower() not in {
+                            "message-id", "in-reply-to", "references"} for name in header.keys()):
+                        raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+                    conversation_keys[uid] = email_conversation_key(scope, validity, uid, header)
+                # ALL headers finish before the existing final UIDVALIDITY
+                # recheck. Any failed/missing/oversized literal keeps the old
+                # cursor; no partial page or guessed task escapes this handler.
             select_folder(client, folder)
             fresh_validity, fresh_next = email_monitor_position(client)
             if fresh_validity != validity:
@@ -2396,11 +2461,13 @@ def command_monitor(args: argparse.Namespace) -> dict[str, Any]:
             if fresh_next < next_uid:
                 raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
             events = [{"id": f"uid:{validity}:{uid}", "revision": email_reference_revision(scope, validity, uid),
-                       "uid": str(uid), "uidValidity": str(validity), "kind": "new"} for uid in selected]
+                       "uid": str(uid), "uidValidity": str(validity), "kind": "new",
+                       **({"conversationKey": conversation_keys[uid]} if conversation_refs else {})} for uid in selected]
             return {"schemaVersion": 1, "baselineOnly": False, "events": events,
                     "nextCursor": email_monitor_cursor(scope, validity, committed_through),
                     "hasMore": committed_through < fresh_next - 1,
-                    "coverage": {"historicalBackfill": False, "bodyContentRead": False},
+                    "coverage": {"historicalBackfill": False, "bodyContentRead": False,
+                                 **({"conversationHeadersRead": bool(selected)} if conversation_refs else {})},
                     "readState": {"readReceiptsSent": False}}
     except EmailMonitorError:
         raise
@@ -2452,6 +2519,13 @@ def command_read_reference(args: argparse.Namespace) -> dict[str, Any]:
         validate_message_uid(args.uid)
         validate_message_uid(args.uid_validity)
         email_reference_digest_argument(args.expected_revision)
+        conversation_ref = getattr(args, "conversation_reference", False)
+        expected_conversation = getattr(args, "expected_conversation_key", None)
+        if type(conversation_ref) is not bool:
+            raise ValueError()
+        if expected_conversation is not None:
+            email_conversation_key_argument(expected_conversation)
+            conversation_ref = True
     except (ValueError, TypeError, MailboxError, argparse.ArgumentTypeError) as error:
         raise EmailReferenceError("EMAIL_REFERENCE_INPUT_INVALID") from error
     account = load_account(args.account)
@@ -2469,6 +2543,9 @@ def command_read_reference(args: argparse.Namespace) -> dict[str, Any]:
                 raise EmailReferenceError("EMAIL_REFERENCE_UNAVAILABLE")
             raw = fetch_raw_message(client, args.uid, verify_reference=True)
             message = email.message_from_bytes(raw, policy=default)
+            conversation_key = email_conversation_key(scope, validity, uid, message) if conversation_ref else None
+            if expected_conversation is not None and conversation_key != expected_conversation:
+                raise EmailReferenceError("EMAIL_REFERENCE_CHANGED")
             projected = public_mail_message(message, args.uid, folder)
             # No truncation may masquerade as a complete read. Bound the whole
             # result, including native MIME/header/attachment metadata, not just
@@ -2483,7 +2560,8 @@ def command_read_reference(args: argparse.Namespace) -> dict[str, Any]:
                 raise EmailReferenceError("EMAIL_REFERENCE_UNAVAILABLE")
             result = {"schemaVersion": 1, "protocol": "email-message-read/v1",
                       "reference": {"id": f"uid:{validity}:{uid}", "revision": revision,
-                                    "uid": str(uid), "uidValidity": str(validity)},
+                                    "uid": str(uid), "uidValidity": str(validity),
+                                    **({"conversationKey": conversation_key} if conversation_ref else {})},
                       "message": projected, "originalSha256": hashlib.sha256(raw).hexdigest(),
                       "coverage": {"textComplete": True, "attachmentsContentRead": False, "otherMessagesIncluded": False},
                       "readState": {"marksRead": False, "readReceiptsSent": False}}
@@ -3311,12 +3389,17 @@ def build_parser() -> argparse.ArgumentParser:
     monitor_parser.add_argument("--cursor", type=email_monitor_cursor_argument,
                                 help="Previous scoped read checkpoint; not an authorization token")
     monitor_parser.add_argument("--limit", type=int, default=100, choices=range(1, 101), metavar="1..100")
+    monitor_parser.add_argument("--conversation-references", action="store_true",
+                                help="Read bounded identity headers and return account-scoped opaque thread hints, never task/sender authority")
     monitor_parser.set_defaults(handler=command_monitor)
     reference_parser = subparsers.add_parser("read-reference", help="Read one exact monitor UID/UIDVALIDITY reference without marking seen")
     add_mailbox_arguments(reference_parser)
     reference_parser.add_argument("--uid", required=True, type=parse_message_uid)
     reference_parser.add_argument("--uid-validity", required=True, type=parse_message_uid)
     reference_parser.add_argument("--expected-revision", required=True, type=email_reference_digest_argument)
+    reference_parser.add_argument("--conversation-reference", action="store_true", help="Include an opaque native thread hint for reviewed routing")
+    reference_parser.add_argument("--expected-conversation-key", type=email_conversation_key_argument,
+                                  help="Verify a previously reviewed native thread hint before returning content")
     reference_parser.set_defaults(handler=command_read_reference)
     ack_parser = subparsers.add_parser("ack-reference", help="Verify or explicitly mark one exact previously read reference as Seen")
     add_mailbox_arguments(ack_parser)

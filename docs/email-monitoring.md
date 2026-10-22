@@ -49,6 +49,40 @@ source merge не устанавливает монитор и не меняет
 
 ## Чтение точной ссылки
 
+### Ссылка на переписку
+
+Явный `monitor --conversation-references` добавляет `conversationKey` к каждой
+возвращённой ссылке. Через тот же bounded IMAP reader читаются только
+`Message-ID`, `In-Reply-To`, `References` выбранного UID: PEEK header fields,
+не тело, адреса или тема. На каждый FETCH действуют общий 16 КиБ literal budget
+до allocation и прежний суммарный metadata budget; произвольные headers/body,
+повторный/чужой UID и неизвестные поля ответа отклоняются. Перестановка exact
+трёх header field names и UID после literal допустимы. Все headers читаются
+до финальной сверки UIDVALIDITY; ошибка не возвращает частичную страницу/cursor.
+Обычный `monitor` без opt-in сохраняет прежний wire/output без FETCH headers.
+
+Ключ `email-conversation/v1.<sha256>` вычисляется из domain purpose, native
+account/folder scope, UIDVALIDITY и первого References, иначе одного In-Reply-To,
+иначе Message-ID. Используется тот же строгий reply parser, без темы/адресов,
+исправления повреждённых headers или угадывания цепочки. При отсутствии всех
+IDs получается singleton UID; неоднозначные/повреждённые IDs закрывают чтение.
+В ключе нет исходного Message-ID, адресов, тела или пароля. Это scoped hash
+недоверенных headers, **не HMAC/capability, доказательство отправителя, команда
+владельца, processing receipt или разрешение раскрыть письмо задаче**.
+Связь с задачей и её аудитория по-прежнему проверяются trusted host отдельно.
+
+`read-reference --conversation-reference` вычисляет тот же hint из полных
+исходных bytes для явного review/routing. `--expected-conversation-key KEY`
+включает эту проекцию и дополнительно сверяет key до выдачи body; несовпадение
+даёт `EMAIL_REFERENCE_CHANGED`. Некорректный selector отклоняется до account/
+credential I/O. Без новых flags прежний read-reference ABI сохраняется.
+Digest оригинала, strict UID/literal и полное чтение остаются независимы.
+
+Opt-in не обрабатывает исходный unread backlog, не сбрасывает checkpoint,
+не включает source/queue/ACK и не создаёт задачи. Host должен отдельно выбрать
+bounded page size под свой общий deadline, сохранить refs/cursor атомарно и
+довести routing/read/committed processing/native ACK до сквозного результата.
+
 `read-reference --uid UID --uid-validity UIDVALIDITY --expected-revision SHA256`
 использует тот же выбранный account/folder, native guardian и credential lease.
 Синтаксический отказ предшествует native unlock; SMTP-only остаётся закрытым.
