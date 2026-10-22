@@ -242,6 +242,8 @@ MAX task policy v2 additionally denies model browser executable/window/budget
 overrides. Legacy host refusal is preserved until common enforcement is verified;
 the descriptor alone does not prove readiness or native owner identity.
 Для пассивного IMAP `monitor` читай [контракт](docs/email-monitoring.md): UIDVALIDITY, scoped checkpoint, finite readonly range; без ACK/новых задач.
+Opt-in conversation refs reuse bounded PEEK identity headers and the reply parser;
+scope-bound hashes are routing hints, never sender/owner or task authority.
 IMAP `read-reference` сверяет scoped identity до/после PEEK и exact UID/полный literal; общий literal budget списывается до allocation, metadata lines тоже суммарно ограничены. Отказ прекращает connection без LOGOUT; оба reader восстанавливаются, partial result не выдаётся.
 IMAP exact ACK uses the same native guardian/account engine: identity/full-byte hash,
 one additive Seen write, native FLAGS read-back and readonly reconciliation. Host

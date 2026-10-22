@@ -46,6 +46,19 @@ UID, UIDVALIDITY, event ID и digest ревизии. Имена папок, ад
 из входящего письма нельзя получить разрешение на отправку, раскрытие либо
 действие в Trelio. SMTP-only отклоняет monitor до native unlock/сети.
 
+Для отдельно разрешённого routing `monitor --conversation-references` читает
+только bounded `Message-ID/In-Reply-To/References` headers выбранных UID и
+возвращает scoped `email-conversation/v1.<sha256>`. Обычный monitor по-прежнему
+не читает headers. Никаких адресов/тем/body в refs; invalid/ambiguous metadata
+не дают частичного cursor. Это hash недоверенных headers, не HMAC, sender/owner
+proof, task authority или готовая связь с задачей. Не выбирай задачу по теме
+и не создавай её из письма. Missing IDs остаются singleton UID.
+`read-reference --conversation-reference` возвращает тот же hint для review;
+`--expected-conversation-key KEY` сверяет ранее проверенную ссылку до выдачи
+содержимого. Флаг не отменяет ACL, исходное согласование аудитории, exact full
+read и committed processing. Первоначальная unread история и активация source/
+queue/ACK остаются отдельными host gates; новый baseline их не доказывает.
+
 ## Отметка прочитанности точной ссылки
 
 После отдельного разрешения изменить read-state и полного `read-reference`
