@@ -279,7 +279,7 @@ def profile(args, runtime):
         raise runtime.MailboxError("EMAIL_BROWSER_AUTH_BOUND_ACCOUNT_REQUIRED")
     account = runtime.load_account(args.account)
     runtime.require_imap(account)
-    results = []
+    results, candidate_limit_reached, oversized_skipped = [], False, 0
     # Diagnostics are a finite stage chosen by this implementation. Never use
     # a server exception, message header, UID, address or response as a code.
     stage = "CONNECT"
@@ -314,13 +314,33 @@ def profile(args, runtime):
                 raise ValueError()
             uids = (rows[0] or b"").split()
             stage = "CANDIDATES"
-            if len(uids) > 20 or len(set(uids)) != len(uids):
+            if len(uids) > 500 or len(set(uids)) != len(uids):
                 raise ValueError()
             for encoded in uids:
                 if not re.fullmatch(rb"[1-9][0-9]{0,9}", encoded) or not lower <= int(encoded) <= upper:
                     raise ValueError()
+            # This is authoring evidence, not selection/delivery of a login
+            # code. A busy brand can match many ordinary messages. Examine a
+            # bounded newest sample and declare partial coverage instead of
+            # claiming the whole range was checked. find_code stays strict:
+            # it must still reject multiple current OTP candidates.
+            candidate_limit_reached = len(uids) > 20
+            for uid in sorted((int(value) for value in uids), reverse=True)[:20]:
+                stage = "SIZE"
+                # Skip large newsletters/attachments using ONLY exact native
+                # UID + RFC822.SIZE metadata; never allocate their bodies and
+                # never retry a rejected literal on a second connection.
+                status, sizes = runtime.email_ack_metadata(client, "fetch", str(uid), "(UID RFC822.SIZE)")
+                if status != "OK" or not isinstance(sizes, list) or len(sizes) != 1 or not isinstance(sizes[0], bytes):
+                    raise ValueError()
+                size = re.fullmatch(rb'[1-9][0-9]{0,9} \((?:UID ([1-9][0-9]{0,9}) RFC822\.SIZE ([0-9]{1,10})|RFC822\.SIZE ([0-9]{1,10}) UID ([1-9][0-9]{0,9}))\)', sizes[0], re.I)
+                if not size or int(size[1] or size[4]) != uid:
+                    raise ValueError()
+                if int(size[2] or size[3]) > 256 * 1024:
+                    oversized_skipped += 1
+                    continue
                 stage = "FETCH"
-                raw = runtime.fetch_raw_message(client, encoded.decode("ascii"), verify_reference=True, maximum_bytes=256 * 1024)
+                raw = runtime.fetch_raw_message(client, str(uid), verify_reference=True, maximum_bytes=256 * 1024)
                 stage = "PARSE"
                 message = email.message_from_bytes(raw, policy=default)
                 if message.defects or account.email_address.lower() not in exact_addresses(message, ["To"]):
@@ -351,6 +371,9 @@ def profile(args, runtime):
         if len(results) > 5:
             raise ValueError()
         return {"protocol": API, "profiles": results, "marksRead": False,
-                "coverage": "last_500_uid_slots", "originalTextOmitted": True}
+                "coverage": "latest_20_matching_candidates_in_last_500_uid_slots",
+                "candidateLimitReached": candidate_limit_reached, "oversizedSkipped": oversized_skipped,
+                "sampleComplete": not candidate_limit_reached and oversized_skipped == 0,
+                "originalTextOmitted": True}
     except Exception:
         raise runtime.MailboxError("EMAIL_BROWSER_AUTH_PROFILE_" + stage + "_UNAVAILABLE") from None

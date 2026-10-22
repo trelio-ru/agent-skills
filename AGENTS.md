@@ -257,8 +257,12 @@ pipes. Positive browser evidence and the SAME host ACK fence are required for
 exact additive Seen. Lost delivery/STORE never grants replay or another mailbox.
 Authoring profile uses ASCII SEARCH without CHARSET, Unicode synchronizing
 literals and bounded metadata. Failures expose only implementation-selected
-CONNECT/SELECT/POSITION/SEARCH/CANDIDATES/FETCH/PARSE/VERIFY/CLOSE/RESULT stages;
+CONNECT/SELECT/POSITION/SEARCH/CANDIDATES/SIZE/FETCH/PARSE/VERIFY/CLOSE/RESULT stages;
 never native exception text, mail content or a reason inferred from a stage.
+Profile discovery validates the complete bounded UID result, then samples only
+the newest 20 matches with explicit partial coverage and exact SIZE preflight.
+Oversized mail is skipped without BODY; source-code delivery remains strict and
+does not inherit this sampling or its relaxed evidence completeness.
 Для почтовой отправки сохраняй исходные байты вложений, различай отказ SMTP
 и неизвестный результат, не выводи raw reply; читай
 [контракт диагностики](docs/email-send-diagnostics.md).

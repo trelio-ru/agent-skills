@@ -35,6 +35,11 @@ authoring/live verification. Он читает bounded PEEK candidates по TEXT
 literal anchors из brand/фиксированного словаря и длина единственного кода;
 тема/тело/OTP/auth URL исключены. Ничего не помечается прочитанным. Такой
 результат не является signed matcher, входом или mutation authority.
+Из полного bounded UID результата проверяются последние 20 совпадений;
+candidateLimitReached/sampleComplete явно описывают выборку. Exact UID/SIZE
+preflight пропускает письма свыше 256 КиБ до BODY и возвращает oversizedSkipped.
+Неполная выборка не доказывает отсутствие шаблона. Это только authoring discovery:
+find_code по-прежнему требует единственное свежее подходящее письмо без sampling.
 ASCII brand идёт без CHARSET, Unicode — одним synchronizing literal с CHARSET
 UTF-8 до ENABLE UTF8=ACCEPT и без CHARSET после него. В обоих случаях incoming
 metadata ограничена до allocation. Ошибка profile возвращает только fixed этап
