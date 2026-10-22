@@ -250,6 +250,11 @@ IMAP `read-reference` сверяет scoped identity до/после PEEK и exa
 IMAP exact ACK uses the same native guardian/account engine: identity/full-byte hash,
 one additive Seen write, native FLAGS read-back and readonly reconciliation. Host
 committed processing/ACK lease remain separate authority; see email-monitoring.
+Generic browser OTP delivery follows [the protected mail contract](docs/email-browser-authentication.md).
+No provider/site selectors belong in mail. Readonly UID baseline precedes any
+browser input; exact sender/recipient/UIDVALIDITY and one code stay in private
+pipes. Positive browser evidence and the SAME host ACK fence are required for
+exact additive Seen. Lost delivery/STORE never grants replay or another mailbox.
 Для почтовой отправки сохраняй исходные байты вложений, различай отказ SMTP
 и неизвестный результат, не выводи raw reply; читай
 [контракт диагностики](docs/email-send-diagnostics.md).
