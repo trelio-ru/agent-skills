@@ -242,6 +242,8 @@ MAX task policy v2 additionally denies model browser executable/window/budget
 overrides. Legacy host refusal is preserved until common enforcement is verified;
 the descriptor alone does not prove readiness or native owner identity.
 Для пассивного IMAP `monitor` читай [контракт](docs/email-monitoring.md): UIDVALIDITY, scoped checkpoint, finite readonly range; без ACK/новых задач.
+Initial unread opt-in creates a separate bounded v2 stream under the original UID ceiling;
+forward v1 remains independent of UNSEEN. Never reset an existing cursor or claim an atomic historical unread snapshot.
 Opt-in conversation refs reuse bounded PEEK identity headers and the reply parser;
 scope-bound hashes are routing hints, never sender/owner or task authority.
 IMAP `read-reference` сверяет scoped identity до/после PEEK и exact UID/полный literal; общий literal budget списывается до allocation, metadata lines тоже суммарно ограничены. Отказ прекращает connection без LOGOUT; оба reader восстанавливаются, partial result не выдаётся.

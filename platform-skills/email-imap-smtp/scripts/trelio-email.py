@@ -2301,8 +2301,12 @@ def email_monitor_scope(account: Account, folder: str) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def email_monitor_cursor(scope: str, validity: int, last_uid: int) -> str:
+def email_monitor_cursor(scope: str, validity: int, last_uid: int, *, backfill_through: int | None = None) -> str:
     value = {"v": 1, "scope": scope, "uidValidity": validity, "lastUid": last_uid}
+    if backfill_through is not None:
+        # This is a separate history stream, never a replacement for the v1
+        # forward position. Its original ceiling cannot grow as mail arrives.
+        value.update(v=2, mode="initial_unread", throughUid=backfill_through)
     return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).decode().rstrip("=")
 
 
@@ -2313,19 +2317,30 @@ def email_reference_revision(scope: str, validity: int, uid: int) -> str:
     return hashlib.sha256(f"{scope}:{validity}:{uid}".encode()).hexdigest()
 
 
-def parse_email_monitor_cursor(value: str, scope: str | None = None) -> dict:
+def parse_email_monitor_cursor(value: str, scope: str | None = None, *, allow_backfill: bool = False) -> dict:
     try:
         if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,1024}", value):
             raise ValueError()
         raw = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
         current = json.loads(raw)
-        if not isinstance(current, dict) or set(current) != {"v", "scope", "uidValidity", "lastUid"} or type(current["v"]) is not int or current["v"] != 1:
+        if not isinstance(current, dict) or type(current.get("v")) is not int:
+            raise ValueError()
+        fields = {"v", "scope", "uidValidity", "lastUid"}
+        if current["v"] == 2 and allow_backfill:
+            fields |= {"mode", "throughUid"}
+            if current.get("mode") != "initial_unread" or type(current.get("throughUid")) is not int or not 0 <= current["throughUid"] < 2**32:
+                raise ValueError()
+        elif current["v"] != 1:
+            raise ValueError()
+        if set(current) != fields:
             raise ValueError()
         if not isinstance(current["scope"], str) or not re.fullmatch(r"[a-f0-9]{64}", current["scope"]):
             raise ValueError()
         if type(current["uidValidity"]) is not int or not 0 < current["uidValidity"] < 2**32:
             raise ValueError()
         if type(current["lastUid"]) is not int or not 0 <= current["lastUid"] < 2**32:
+            raise ValueError()
+        if current["v"] == 2 and current["lastUid"] > current["throughUid"]:
             raise ValueError()
         if scope is not None and current["scope"] != scope:
             raise EmailMonitorError("EMAIL_MONITOR_SCOPE_CHANGED")
@@ -2341,7 +2356,7 @@ def email_monitor_cursor_argument(value: str) -> str:
     # credential unlock. Scope equality additionally needs the resolved native
     # folder/account and is repeated inside the owned read below.
     try:
-        parse_email_monitor_cursor(value)
+        parse_email_monitor_cursor(value, allow_backfill=True)
     except EmailMonitorError as error:
         raise argparse.ArgumentTypeError(error.code) from None
     return value
@@ -2388,40 +2403,64 @@ def email_conversation_key_argument(value: str) -> str:
     return value
 
 
-def command_monitor(args: argparse.Namespace) -> dict[str, Any]:
-    conversation_refs = getattr(args, "conversation_references", False)
-    if type(conversation_refs) is not bool:
+def validate_email_monitor_arguments(args: argparse.Namespace) -> None:
+    """Reject mode/cursor mixing before native guardian or credential I/O.
+
+    Scope equality still requires the selected native account/folder and is
+    repeated inside the owned IMAP read. A source's trusted journal, not this
+    unsigned cursor, decides whether an initial history stream may be created.
+    """
+    unread = getattr(args, "unread_backfill", False)
+    if type(unread) is not bool or type(getattr(args, "conversation_references", False)) is not bool:
         raise EmailMonitorError("EMAIL_MONITOR_INVALID_CURSOR")
+    if type(args.limit) is not int or not 1 <= args.limit <= 100:
+        raise EmailMonitorError("EMAIL_MONITOR_INVALID_CURSOR")
+    if args.cursor is not None:
+        old = parse_email_monitor_cursor(args.cursor, allow_backfill=unread)
+        if unread != (old["v"] == 2):
+            raise EmailMonitorError("EMAIL_MONITOR_INVALID_CURSOR")
+
+
+def command_monitor(args: argparse.Namespace) -> dict[str, Any]:
+    validate_email_monitor_arguments(args)
+    conversation_refs = getattr(args, "conversation_references", False)
+    unread_backfill = getattr(args, "unread_backfill", False)
     account = load_account(args.account)
     # Keep the low-level guard as well as IMAP_COMMANDS CLI admission: an
     # SMTP-only sender must fail before native unlock or network access.
     require_imap(account)
-    if type(args.limit) is not int or not 1 <= args.limit <= 100:
-        raise EmailMonitorError("EMAIL_MONITOR_INVALID_CURSOR")
     try:
         with imap_connection(account) as client:
             folder = select_folder(client, args.folder, special_use=args.special_use)
             scope = email_monitor_scope(account, folder)
-            old = parse_email_monitor_cursor(args.cursor, scope) if args.cursor is not None else None
+            old = parse_email_monitor_cursor(args.cursor, scope, allow_backfill=unread_backfill) if args.cursor is not None else None
             validity, next_uid = email_monitor_position(client)
             if old is None:
                 return {"schemaVersion": 1, "baselineOnly": True, "events": [],
                         "nextCursor": email_monitor_cursor(scope, validity, next_uid - 1), "hasMore": False,
-                        "coverage": {"historicalBackfill": False, "bodyContentRead": False},
+                        **({"initialUnreadCursor": email_monitor_cursor(scope, validity, 0, backfill_through=next_uid - 1)} if unread_backfill else {}),
+                        "coverage": {"historicalBackfill": False, "bodyContentRead": False,
+                                     **({"initialUnreadBackfillAvailable": True} if unread_backfill else {})},
                         "readState": {"readReceiptsSent": False}}
             if validity != old["uidValidity"]:
                 raise EmailMonitorError("EMAIL_MONITOR_UIDVALIDITY_CHANGED")
             after = old["lastUid"]
             if after >= next_uid:
                 raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
-            through = min(next_uid - 1, after + EMAIL_MONITOR_SCAN_SPAN)
+            ceiling = old["throughUid"] if unread_backfill else next_uid - 1
+            if ceiling >= next_uid:
+                raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
+            through = min(ceiling, after + EMAIL_MONITOR_SCAN_SPAN)
             uids = []
             if through > after:
                 # A finite UID range bounds the native search itself. Avoid
                 # n:*: when n exceeds the current max, IMAP reverses that range
-                # and could return the old last message. No flags/body/header
+                # and could return the old last message. UNSEEN belongs ONLY
+                # to the explicitly separate initial stream. Forward reads
+                # still catch mail already read on another device. No body/header
                 # read, writable SELECT, STORE, CLOSE/EXPUNGE or SMTP belongs here.
-                status, data = client.uid("search", None, "UID", f"{after + 1}:{through}")
+                status, data = client.uid("search", None, "UID", f"{after + 1}:{through}",
+                                          *(["UNSEEN"] if unread_backfill else []))
                 if status != "OK" or not isinstance(data, list) or len(data) != 1 or data[0] is not None and not isinstance(data[0], bytes):
                     raise EmailMonitorError("EMAIL_MONITOR_INVALID_RESPONSE")
                 wire = data[0] or b""
@@ -2464,9 +2503,12 @@ def command_monitor(args: argparse.Namespace) -> dict[str, Any]:
                        "uid": str(uid), "uidValidity": str(validity), "kind": "new",
                        **({"conversationKey": conversation_keys[uid]} if conversation_refs else {})} for uid in selected]
             return {"schemaVersion": 1, "baselineOnly": False, "events": events,
-                    "nextCursor": email_monitor_cursor(scope, validity, committed_through),
-                    "hasMore": committed_through < fresh_next - 1,
-                    "coverage": {"historicalBackfill": False, "bodyContentRead": False,
+                    "nextCursor": email_monitor_cursor(scope, validity, committed_through,
+                                                       backfill_through=ceiling if unread_backfill else None),
+                    "hasMore": committed_through < (ceiling if unread_backfill else fresh_next - 1),
+                    "coverage": {"historicalBackfill": unread_backfill, "bodyContentRead": False,
+                                 **({"initialUnreadOnly": True, "snapshotAtomic": False,
+                                     "backfillThroughUid": str(ceiling)} if unread_backfill else {}),
                                  **({"conversationHeadersRead": bool(selected)} if conversation_refs else {})},
                     "readState": {"readReceiptsSent": False}}
     except EmailMonitorError:
@@ -3391,6 +3433,8 @@ def build_parser() -> argparse.ArgumentParser:
     monitor_parser.add_argument("--limit", type=int, default=100, choices=range(1, 101), metavar="1..100")
     monitor_parser.add_argument("--conversation-references", action="store_true",
                                 help="Read bounded identity headers and return account-scoped opaque thread hints, never task/sender authority")
+    monitor_parser.add_argument("--unread-backfill", action="store_true",
+                                help="Create a separate initial-unread seed, or resume its v2 cursor; never reset a forward checkpoint")
     monitor_parser.set_defaults(handler=command_monitor)
     reference_parser = subparsers.add_parser("read-reference", help="Read one exact monitor UID/UIDVALIDITY reference without marking seen")
     add_mailbox_arguments(reference_parser)
@@ -3527,6 +3571,8 @@ def main(*, _owned: bool = False) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "monitor":
+            validate_email_monitor_arguments(args)
         if args.command == "ack-reference":
             validate_email_ack_arguments(args)
             if args.confirm and load_email_policy(args.account)["sendMode"] == "read-only":

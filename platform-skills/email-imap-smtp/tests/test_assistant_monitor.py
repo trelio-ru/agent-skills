@@ -40,6 +40,9 @@ class Monitor(unittest.TestCase):
     def cursor(self,uid=10,validity=17,folder='INBOX',account=ACCOUNT):
         return M.email_monitor_cursor(M.email_monitor_scope(account,folder),validity,uid)
 
+    def unread_cursor(self,uid=0,through=10,validity=17,folder='INBOX'):
+        return M.email_monitor_cursor(M.email_monitor_scope(ACCOUNT,folder),validity,uid,backfill_through=through)
+
     def page(self,client,**overrides):
         with mock.patch.object(M,'imap_connection',return_value=contextlib.nullcontext(client)):
             return M.command_monitor(self.args(**overrides))
@@ -53,6 +56,95 @@ class Monitor(unittest.TestCase):
         self.assertEqual(M.parse_email_monitor_cursor(page['nextCursor'],M.email_monitor_scope(ACCOUNT,'INBOX'))['lastUid'],10)
         self.assertFalse(page['coverage']['historicalBackfill'])
         self.assertFalse(page['readState']['readReceiptsSent'])
+        self.assertNotIn('initialUnreadCursor',page,'ordinary monitor retains its original projection')
+
+    def test_opt_in_baseline_returns_separate_forward_and_initial_unread_positions(self):
+        client=ScriptedImap(examine(1))
+        page=self.page(client,unread_backfill=True)
+        self.assertTrue(page['baselineOnly']);self.assertEqual(page['events'],[])
+        forward=M.parse_email_monitor_cursor(page['nextCursor'])
+        initial=M.parse_email_monitor_cursor(page['initialUnreadCursor'],allow_backfill=True)
+        self.assertEqual(forward['v'],1);self.assertEqual(forward['lastUid'],10)
+        self.assertEqual(initial,dict(v=2,mode='initial_unread',scope=forward['scope'],
+                                      uidValidity=17,lastUid=0,throughUid=10))
+        self.assertTrue(page['coverage']['initialUnreadBackfillAvailable'])
+        self.assertEqual(client.sent,[b'TEST1 EXAMINE "INBOX"\r\n'])
+        with self.assertRaises(M.EmailMonitorError):
+            M.parse_email_monitor_cursor(page['initialUnreadCursor'])
+
+    def test_initial_unread_uses_finite_native_unseen_under_original_ceiling(self):
+        wire=examine(1,next_uid=14)+b'* SEARCH 3 8 10\r\nTEST2 OK found\r\n'+examine(3,next_uid=16)
+        client=ScriptedImap(wire)
+        page=self.page(client,cursor=self.unread_cursor(),unread_backfill=True)
+        self.assertEqual(client.sent[1],b'TEST2 UID SEARCH UID 1:10 UNSEEN\r\n')
+        self.assertEqual([row['uid'] for row in page['events']],['3','8','10'])
+        self.assertFalse(page['hasMore'],'new mail must not extend the initial history stream')
+        self.assertEqual(M.parse_email_monitor_cursor(page['nextCursor'],allow_backfill=True)['throughUid'],10)
+        self.assertTrue(page['coverage']['historicalBackfill']);self.assertTrue(page['coverage']['initialUnreadOnly'])
+        self.assertFalse(page['coverage']['snapshotAtomic']);self.assertFalse(page['coverage']['bodyContentRead'])
+        self.assertFalse(page['readState']['readReceiptsSent'])
+        self.assertEqual(self.page(ScriptedImap(wire),cursor=self.unread_cursor(),unread_backfill=True),page)
+        # The ordinary forward position remains independent: it reads all new
+        # UIDs, including those read on another device during history paging.
+        forward=ScriptedImap(examine(1,next_uid=16)+b'* SEARCH 11 15\r\nTEST2 OK found\r\n'+examine(3,next_uid=16))
+        new=self.page(forward,cursor=self.cursor())
+        self.assertEqual([row['uid'] for row in new['events']],['11','15'])
+        self.assertEqual(forward.sent[1],b'TEST2 UID SEARCH UID 11:15\r\n')
+
+    def test_initial_unread_partial_pages_keep_original_uid_ceiling(self):
+        first=ScriptedImap(examine(1)+b'* SEARCH 2 5 8 10\r\nTEST2 OK found\r\n'+examine(3,next_uid=14))
+        page=self.page(first,cursor=self.unread_cursor(),unread_backfill=True,limit=2)
+        position=M.parse_email_monitor_cursor(page['nextCursor'],allow_backfill=True)
+        self.assertEqual(position['lastUid'],5);self.assertEqual(position['throughUid'],10)
+        self.assertTrue(page['hasMore'])
+        following=ScriptedImap(examine(1,next_uid=20)+b'* SEARCH 8 10\r\nTEST2 OK found\r\n'+examine(3,next_uid=20))
+        final=self.page(following,cursor=page['nextCursor'],unread_backfill=True)
+        self.assertEqual(following.sent[1],b'TEST2 UID SEARCH UID 6:10 UNSEEN\r\n')
+        self.assertEqual([row['uid'] for row in final['events']],['8','10']);self.assertFalse(final['hasMore'])
+
+    def test_initial_unread_empty_slots_and_empty_mailbox_still_finish(self):
+        client=ScriptedImap(examine(1,next_uid=30001)+b'* SEARCH\r\nTEST2 OK empty\r\n'+examine(3,next_uid=30001))
+        page=self.page(client,cursor=self.unread_cursor(through=25000),unread_backfill=True)
+        self.assertEqual(client.sent[1],b'TEST2 UID SEARCH UID 1:10000 UNSEEN\r\n')
+        self.assertTrue(page['hasMore']);self.assertEqual(page['events'],[])
+        self.assertEqual(M.parse_email_monitor_cursor(page['nextCursor'],allow_backfill=True)['lastUid'],10000)
+        empty=ScriptedImap(examine(1,next_uid=1,exists=0)+examine(2,next_uid=2,exists=1))
+        final=self.page(empty,cursor=self.unread_cursor(through=0),unread_backfill=True)
+        self.assertFalse(final['hasMore']);self.assertEqual(final['events'],[])
+        self.assertEqual(len(empty.sent),2,'new arrival is for the forward stream, never a reversed SEARCH range')
+
+    def test_initial_unread_rejects_regressed_or_changed_uid_namespace(self):
+        for wire in (examine(1,next_uid=10),examine(1,validity=18),
+                     examine(1)+b'* SEARCH 5\r\nTEST2 OK found\r\n'+examine(3,validity=18)):
+            with self.assertRaises(M.EmailMonitorError):
+                self.page(ScriptedImap(wire),cursor=self.unread_cursor(),unread_backfill=True)
+
+    def test_initial_unread_bad_native_results_are_not_empty_success(self):
+        for ids in (b'0',b'11',b'5 5',b'1:2',b'x'):
+            with self.assertRaises(M.EmailMonitorError):
+                self.page(ScriptedImap(examine(1)+b'* SEARCH '+ids+b'\r\nTEST2 OK found\r\n'),
+                          cursor=self.unread_cursor(),unread_backfill=True)
+
+    def test_mode_cursor_mixing_fails_before_native_or_account_io(self):
+        cases=[['--unread-backfill','--cursor',self.cursor()],['--cursor',self.unread_cursor()]]
+        for extra in cases:
+            with mock.patch.object(M,'native_runtime') as native,mock.patch.object(M,'load_password') as password, \
+                 mock.patch.object(M,'load_account') as account,contextlib.redirect_stderr(io.StringIO()) as errors, \
+                 mock.patch.object(M.sys,'argv',['trelio-email.py','monitor','--account','synthetic',*extra]):
+                self.assertEqual(M.main(),2)
+                self.assertIn('EMAIL_MONITOR_INVALID_CURSOR',errors.getvalue())
+                native.assert_not_called();password.assert_not_called();account.assert_not_called()
+
+    def test_initial_unread_cursor_shape_is_closed_and_stays_scoped(self):
+        valid=json.loads(base64.urlsafe_b64decode(self.unread_cursor()+'='*(-len(self.unread_cursor())%4)))
+        for update in ({'mode':'forward'},{'throughUid':True},{'throughUid':2**32},
+                       {'lastUid':11},{'v':True},{'extra':'untrusted'}):
+            encoded=base64.urlsafe_b64encode(json.dumps({**valid,**update}).encode()).decode().rstrip('=')
+            with self.assertRaises(M.EmailMonitorError):
+                M.parse_email_monitor_cursor(encoded,allow_backfill=True)
+        with self.assertRaises(M.EmailMonitorError) as caught:
+            self.page(ScriptedImap(examine(1)),cursor=self.unread_cursor(folder='OTHER'),unread_backfill=True)
+        self.assertEqual(caught.exception.code,'EMAIL_MONITOR_SCOPE_CHANGED')
 
     def test_actual_protocol_is_examine_and_finite_uid_search_only(self):
         client=ScriptedImap(examine(1,next_uid=14)+b'* SEARCH 11 12 13\r\nTEST2 OK found\r\n'+examine(3,next_uid=14))
@@ -118,12 +210,12 @@ class Monitor(unittest.TestCase):
                 self.page(client,cursor=self.cursor())
 
     def test_cursor_malformed_or_wrong_account_folder_binding_never_searches(self):
-        for cursor in ('x','a'*1025,self.cursor(folder='PRIVATE FOLDER'),
-                       self.cursor(account=replace(ACCOUNT,username='other@example.test'))):
+        for cursor,sends in (('x',0),('a'*1025,0),(self.cursor(folder='PRIVATE FOLDER'),1),
+                             (self.cursor(account=replace(ACCOUNT,username='other@example.test')),1)):
             client=ScriptedImap(examine(1))
             with self.assertRaises(M.EmailMonitorError):
                 self.page(client,cursor=cursor)
-            self.assertEqual(len(client.sent),1)
+            self.assertEqual(len(client.sent),sends,'malformed syntax fails before account selection; scope needs one native EXAMINE')
         cursor=self.cursor()
         with mock.patch.dict(os.environ,{'TRELIO_SKILL_MEMBER_ID':'different-member'}):
             with self.assertRaises(M.EmailMonitorError) as caught:
