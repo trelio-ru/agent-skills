@@ -33,9 +33,10 @@ class ConversationReferences(unittest.TestCase):
                                                      'TRELIO_SKILL_MEMBER_ID': 'synthetic-member'}))
         self.scope = M.email_monitor_scope(ACCOUNT, 'INBOX')
 
-    def monitor(self, client):
+    def monitor(self, client, **overrides):
         args = NS(command='monitor', account='synthetic', folder=None, special_use=None, limit=100,
                   cursor=M.email_monitor_cursor(self.scope, 17, 10), conversation_references=True)
+        vars(args).update(overrides)
         with mock.patch.object(M, 'imap_connection', return_value=contextlib.nullcontext(client)):
             return M.command_monitor(args)
 
@@ -52,6 +53,24 @@ class ConversationReferences(unittest.TestCase):
         self.assertTrue(value['coverage']['conversationHeadersRead'])
         self.assertNotIn('example.test', json.dumps(value))
         self.assertEqual(value['readState'], {'readReceiptsSent': False})
+
+    def test_initial_unread_reuses_the_same_bounded_headers_and_final_namespace_check(self):
+        seed=M.email_monitor_cursor(self.scope,17,0,backfill_through=10)
+        for validity in [17,18]:
+            client=ScriptedImap(examine(1,next_uid=12)+b'* SEARCH 5\r\nTEST2 OK searched\r\n'
+                                +header_fetch(uid=5)+examine(4,next_uid=20,validity=validity))
+            if validity!=17:
+                with self.assertRaises(M.EmailMonitorError):
+                    self.monitor(client,cursor=seed,unread_backfill=True)
+                continue
+            value=self.monitor(client,cursor=seed,unread_backfill=True)
+            self.assertEqual(client.sent[1],b'TEST2 UID SEARCH UID 1:10 UNSEEN\r\n')
+            self.assertEqual(client.sent[2],b'TEST3 UID FETCH 5 (UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID IN-REPLY-TO REFERENCES)])\r\n')
+            self.assertEqual(value['events'][0]['conversationKey'],M.email_conversation_key(
+                self.scope,17,5,email.message_from_bytes(HEADER,policy=M.default)))
+            self.assertFalse(value['hasMore']);self.assertFalse(value['coverage']['bodyContentRead'])
+            self.assertTrue(value['coverage']['conversationHeadersRead'])
+            self.assertNotIn('example.test',json.dumps(value))
 
     def test_header_field_order_and_uid_after_literal_are_legal_but_extra_fields_are_not(self):
         for fields in [b'MESSAGE-ID IN-REPLY-TO REFERENCES', b'REFERENCES MESSAGE-ID IN-REPLY-TO']:

@@ -15,8 +15,9 @@ binding и фактически выбранной папке. Он содерж
 комментарий, подпись и темы писем не являются scope/authority.
 
 Первый вызов возвращает `baselineOnly=true`, `lastUid=UIDNEXT-1`. Это точка начала,
-не доказательство обработанной истории/unread очереди. Initial backfill, source
-lease и включение фонового цикла остаются самостоятельными host gates. Следующая
+не доказательство обработанной истории/unread очереди. Явный initial unread flow
+ниже даёт отдельную ограниченную ветку; source lease и включение фонового цикла
+остаются самостоятельными host gates. Обычная forward
 страница читает EXAMINE metadata и конечный UID SEARCH range до 10 000 slots,
 без UNSEEN, `n:*`, FETCH body/headers, writable SELECT, STORE, EXPUNGE или SMTP.
 До 100 refs/page; при превышении позиция только на последнем возвращённом UID.
@@ -46,6 +47,39 @@ source merge не устанавливает монитор и не меняет
 
 Нормативные границы: [UID/UIDNEXT/UIDVALIDITY](https://www.rfc-editor.org/rfc/rfc9051.html#section-2.3.1.1),
 [EXAMINE](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.3.3).
+
+## Исходная непрочитанная почта
+
+Только явный `monitor --unread-backfill` **без cursor** добавляет к обычному
+baseline отдельный `initialUnreadCursor`: scoped v2 cursor с `mode=initial_unread`,
+`lastUid=0` и фиксированным `throughUid=UIDNEXT-1`. Обычный `nextCursor` остаётся
+v1 forward checkpoint. Host атомарно сохраняет обе позиции в своём прежнем журнале
+и проверяет их независимо: backlog не блокирует новые UID. Provider не создаёт
+snapshot-файл, очередь или дополнительный credential store.
+
+Для страницы исходной истории host передаёт `--unread-backfill --cursor V2`.
+Тот же readonly scanner добавляет `UNSEEN` только к конечному диапазону максимум
+10 000 UID slots, ограниченному исходным `throughUid`. Страница возвращает до
+100 refs; частичный результат продвигается лишь до последнего выданного UID.
+Пустые диапазоны тоже продвигаются. `hasMore` относится только к этому backlog;
+новые письма за исходным ceiling проверяются отдельным forward cursor **без
+UNSEEN**, включая уже прочитанные на другом устройстве.
+
+Исторический UNSEEN – состояние на момент проверки соответствующей страницы,
+не атомарный snapshot прочитанности всех старых писем при подключении. Уже
+полученный SEARCH UID не отбрасывается из-за последующего чтения на другом
+устройстве. Удалённые до проверки сообщения и старые письма, ставшие прочитанными
+до своей страницы, не объявляются восстановленными. Более широкая история
+требует отдельного поручения; baseline не даёт такого разрешения.
+
+V1 cursor вместе с `--unread-backfill`, V2 без этого flag, смешанные/неизвестные
+поля и malformed positions отклоняются до native/credential I/O. Scope и
+UIDVALIDITY повторяются после account selection и чтения. Existing forward
+cursor нельзя превращать в новый initial seed: host включает этот opt-in лишь
+для ещё не начатого источника. Старые sources требуют отдельного review, без
+reset прежней позиции. Обычный monitor без flag сохраняет прежний wire/ABI.
+Optional conversation references используют те же bounded PEEK headers; body,
+STORE/EXPUNGE/SMTP, routing authority и ACK по-прежнему отсутствуют.
 
 ## Чтение точной ссылки
 
@@ -78,8 +112,8 @@ IDs получается singleton UID; неоднозначные/повреж�
 credential I/O. Без новых flags прежний read-reference ABI сохраняется.
 Digest оригинала, strict UID/literal и полное чтение остаются независимы.
 
-Opt-in не обрабатывает исходный unread backlog, не сбрасывает checkpoint,
-не включает source/queue/ACK и не создаёт задачи. Host должен отдельно выбрать
+Conversation opt-in сам не обрабатывает исходный unread backlog, не сбрасывает
+checkpoint, не включает source/queue/ACK и не создаёт задачи. Host должен отдельно выбрать
 bounded page size под свой общий deadline, сохранить refs/cursor атомарно и
 довести routing/read/committed processing/native ACK до сквозного результата.
 
