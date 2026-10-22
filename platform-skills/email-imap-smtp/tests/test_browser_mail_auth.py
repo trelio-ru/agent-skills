@@ -157,7 +157,8 @@ class BrowserMailAuthentication(unittest.TestCase):
     def test_safe_profile_never_returns_subject_body_code_or_url_and_never_marks_seen(self):
         raw = RAW.replace(b'Subject: Sign in', b'Subject: Example code 123456')
         client = ScriptedImap(examine(1, next_uid=12) + b'* SEARCH 11\r\nTEST2 OK searched\r\n'
-            + fetched(tag=3, raw=raw) + examine(4, next_uid=12))
+            + b'* 1 FETCH (UID 11 RFC822.SIZE ' + str(len(raw)).encode() + b')\r\nTEST3 OK size\r\n'
+            + fetched(tag=4, raw=raw) + examine(5, next_uid=12))
         with mock.patch.object(M, 'imap_connection', return_value=contextlib.nullcontext(client)):
             result = B.profile(NS(account='synthetic', folder=None, brand='Example'), M)
         self.assertEqual(result['profiles'], [{'sender': 'login@example.test', 'subjectAnchor': 'Example',
@@ -195,7 +196,10 @@ class BrowserMailAuthentication(unittest.TestCase):
             (examine(1, next_uid=12) + b'* SEARCH ' + b' '.join(str(n).encode() for n in range(1, 22))
                 + b'\r\nTEST2 OK searched\r\n', 'CANDIDATES'),
             (examine(1, next_uid=12) + b'* SEARCH 11\r\nTEST2 OK searched\r\n'
+                + b'* 1 FETCH (UID 11 RFC822.SIZE 100)\r\nTEST3 OK size\r\n'
                 + b'* 1 FETCH (UID 11 RFC822.SIZE 262145 BODY[] {262145}\r\n', 'FETCH'),
+            (examine(1, next_uid=12) + b'* SEARCH 11\r\nTEST2 OK searched\r\n'
+                + b'* 1 FETCH (UID 12 RFC822.SIZE 100)\r\nTEST3 OK size\r\n', 'SIZE'),
         ):
             client = ScriptedImap(stream)
             with mock.patch.object(M, 'imap_connection', return_value=contextlib.nullcontext(client)):
@@ -203,6 +207,24 @@ class BrowserMailAuthentication(unittest.TestCase):
                     B.profile(NS(account='synthetic', folder=None, brand='Example'), M)
             self.assertEqual(str(caught.exception), 'EMAIL_BROWSER_AUTH_PROFILE_' + stage + '_UNAVAILABLE')
             self.assertFalse(any(b'STORE' in x for x in client.sent))
+
+    def test_profile_busy_brand_samples_newest_twenty_and_reports_large_skips_without_body(self):
+        # SEARCH ordering is not a trust boundary. All 21 UIDs are validated;
+        # only the newest 20 get bounded SIZE preflight, never BODY/STORE.
+        candidates = list(range(480, 501))
+        stream = examine(1, next_uid=502) + b'* SEARCH ' + b' '.join(str(n).encode() for n in reversed(candidates)) + b'\r\nTEST2 OK searched\r\n'
+        for tag, uid in enumerate(reversed(candidates[1:]), start=3):
+            stream += b'* 1 FETCH (RFC822.SIZE 262145 UID ' + str(uid).encode() + b')\r\nTEST' + str(tag).encode() + b' OK size\r\n'
+        client = ScriptedImap(stream + examine(23, next_uid=502))
+        with mock.patch.object(M, 'imap_connection', return_value=contextlib.nullcontext(client)):
+            result = B.profile(NS(account='synthetic', folder=None, brand='Example'), M)
+        self.assertEqual(result['profiles'], [])
+        self.assertTrue(result['candidateLimitReached'])
+        self.assertEqual(result['oversizedSkipped'], 20)
+        self.assertFalse(result['sampleComplete'])
+        self.assertFalse(any(b'BODY' in value or b'STORE' in value for value in client.sent))
+        self.assertIn(b'UID FETCH 500 (UID RFC822.SIZE)', client.sent[2])
+        self.assertNotIn('123456', json.dumps(result))
 
     def test_actual_private_process_contract_has_no_code_in_argv_env_or_public_errors(self):
         module = Path.cwd() / 'synthetic' / 'trelio-browser-session.mjs'
