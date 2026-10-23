@@ -233,3 +233,19 @@ test('native MAX range is chronological rather than numeric ID ordering and reje
   history(value,{seq:4,rows:[{...rows[0],attaches:[{type:'FILE',fileId:999n}]},rows[1]],mark:100,unread:2});
   assert.equal(gate.consume(receipt(),1),false);assert.equal(gate.status().attempted,false);
 });
+
+test('MAX MessagePack uint64 timestamps remain exact and unsafe times never authorize ACK',()=>{
+  const value=observer(),base=1792690000000n;
+  value.observeOutbound(frame(49,{chatId:77n,from:-1n,backward:100},{cmd:0,seq:3}),1);
+  value.observeInbound(frame(49,{chat:{id:77n,participants:{111:base},newMessages:1},
+    messages:[{id:12n,sender:222n,time:base+1000n,text:'Synthetic'}]},{seq:3}),1);
+  assert.equal(value.snapshot('77').messages[0].time,Number(base+1000n));
+  const gate=createMaxExactReadGate({observer:value,chatId:'77',messageId:'12',coveredMessageIds:['12']});
+  value.observeOutbound(frame(49,{chatId:77n,from:-1n,backward:100},{cmd:0,seq:4}),1);
+  value.observeInbound(frame(49,{chat:{id:77n,participants:{111:base},newMessages:1},
+    messages:[{id:12n,sender:222n,time:base+1000n,text:'Synthetic'}]},{seq:4}),1);
+  assert.equal(gate.consume(frame(50,{type:'READ_MESSAGE',chatId:77n,messageId:12n,mark:base+1000n},{cmd:0,seq:8}),1),true);
+  gate.observeInbound(frame(50,{mark:base+1000n,unread:0},{seq:8}),1);assert.equal(gate.status().acknowledged,true);
+  history(value,{seq:5,rows:[{id:13n,sender:222n,time:9007199254740992n,text:'Unsafe'}],mark:0,unread:1});
+  assert.equal(value.snapshot('77'),null);
+});

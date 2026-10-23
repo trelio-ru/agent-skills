@@ -20,7 +20,13 @@ const nativeId = value => {
   const text = integer(value);
   return text && /^-?(?:0|[1-9]\d{0,38})$/u.test(text) ? text : null;
 };
-const nativeTime = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+// MessagePack may use uint64 even for safely representable millisecond time.
+// Keep IDs as decimal bigint strings, but compare time/ranges only after this
+// exact bounded conversion; unsafe integers never gain rounded ACK authority.
+const nativeTime = value => {
+  if (typeof value === 'bigint') return value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+};
 const failure = () => { throw new Error('MAX_NATIVE_PROTOCOL_UNAVAILABLE'); };
 const canonical = value => {
   if (Buffer.isBuffer(value)) return value;
@@ -178,7 +184,7 @@ export const createMaxNativeObserver = () => {
       const { payload } = decodeMaxNativeFrame(frame), chatId = nativeId(payload?.chatId);
       if (!chatId || !Number.isInteger(payload.backward) || payload.backward < 1 || payload.backward > MAX_ROWS
         || payload.postId !== undefined || payload.getMessages === false || pending.size >= 100) return;
-      pending.set(`${socket}:${header.seq}`, { chatId, backward: payload.backward, from: nativeTime(payload.from) ?? payload.from });
+      pending.set(`${socket}:${header.seq}`, { chatId, backward: payload.backward, from: payload.from === -1n ? -1 : nativeTime(payload.from) ?? payload.from });
     } catch { failed = true; }
   };
   const observeInbound = (frame, socket) => {
@@ -275,7 +281,7 @@ export const createMaxExactReadGate = ({ observer, chatId, messageId, coveredMes
       if (decoded.cmd !== 0 || decoded.opcode !== 50 || !ownObject(payload)
         || Object.keys(payload).sort().join(',') !== 'chatId,mark,messageId,type'
         || payload.type !== 'READ_MESSAGE' || nativeId(payload.chatId) !== chatId
-        || nativeId(payload.messageId) !== messageId || payload.mark !== coverage.target.time) return false;
+        || nativeId(payload.messageId) !== messageId || nativeTime(payload.mark) !== coverage.target.time) return false;
       const fresh = observer.snapshot(chatId);
       if (fresh === original || fresh?.socket !== socket || fresh?.viewerId !== original.viewerId) return false;
       const current = inspectMaxReadCoverage({ history: fresh, messageId, coveredMessageIds });
