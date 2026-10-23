@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk",
-    "version": "0.1.1",
-    "summary": "Убраны запреты на разделы ВКонтакте; браузерная навигация поддерживает поддомены VK и vk.me"
+    "version": "0.2.0",
+    "summary": "Загрузка одного или нескольких файлов любых форматов через интерфейс ВКонтакте с сохранением исходных имён и байтов"
   },
   "connection": {
     "schemaVersion": 1,
@@ -15,15 +15,16 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.1.1",
-    "minimumHostVersion": "3.11.0",
+    "version": "0.2.0",
+    "minimumHostVersion": "3.17.0",
     "entrypoint": { "path": "trelio-vk.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
     "browserSession": { "apiVersion": 1, "sessionClass": "protected-snapshot", "manualAssist": true },
     "files": [
       { "source": "scripts/trelio-vk.mjs", "path": "trelio-vk.mjs", "mode": 493 },
       { "source": "references/workflow.md", "path": "references/workflow.md", "mode": 420 },
-      { "source": "references/security.md", "path": "references/security.md", "mode": 420 }
+      { "source": "references/security.md", "path": "references/security.md", "mode": 420 },
+      { "source": "references/uploads.md", "path": "references/uploads.md", "mode": 420 }
     ]
   }
 }

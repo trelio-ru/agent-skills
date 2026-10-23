@@ -9,13 +9,13 @@ clipboard, selectors, evaluate или произвольного результ�
 
 ## Browser и scope
 
-Signed implementation закрепляет observationMode=text, attachment opt-in,
+Signed implementation закрепляет observationMode=text, download/upload opt-ins,
 HTTPS origins и начальную страницу VK. Caller не меняет их аргументом или env.
 Навигация разрешает HTTPS на vk.ru/vk.com с поддоменами и exact vk.me.
 Проверка DNS label исключает чужие suffix/prefix lookalikes; userinfo,
 нестандартные порты, другие схемы и сторонние сайты не входят в scope.
-У provider нет запрета на разделы VK по их названию. Отсутствие команды
-загрузки, камеры или микрофона является технической границей конкретного действия.
+У provider нет запрета на разделы VK по их названию. Недоступный control,
+камера или микрофон являются технической границей конкретного действия.
 Host применяет origin/document/MIME policy также к redirects и clicks.
 
 Host запускает отдельный managed headed Chromium без remote-debugging
@@ -104,8 +104,10 @@ attachment_link_required/unsupported/too_large/limit_reached не сбрасыв
 Это не антивирусная проверка и не обещание шифрования всего диска. Чтение и
 разрешённое сохранение сохраняют обычные ACL/provenance; ZIP/macros/executable
 не запускаются. Получение само по себе не даёт поручения на пересылку или
-публикацию. Команды исходящей загрузки в этом API пока нет; это capability gap,
-а не запрет на фото.
+публикацию. `upload-files` использует host-frozen regular originals, native
+chooser и исходный frame/document/manual/lease gate по [контракту](uploads.md).
+Типы не фильтруются; bytes не выдаются модели и не исполняются. Неизвестный
+input не повторяется, копии вне auth profile сохраняются до cleanup.
 
 Чтение может менять native unread state VK; browser interface не предоставляет
 passive PEEK, source intake или ACK. Сообщения, посты, комментарии, реакции,

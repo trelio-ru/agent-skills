@@ -2,8 +2,9 @@
 import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
-const MINIMUM_HOST_VERSION = '3.11.0';
+const MINIMUM_HOST_VERSION = '3.17.0';
 // The user chooses the VK workflow. A section moving onto a VK subdomain must
 // not become a provider-authored product ban. Keep the network boundary at the
 // actual VK hostnames, with label-aware matching, HTTPS and no userinfo/ports.
@@ -27,6 +28,7 @@ const commands = {
   navigate: { url: 'string' },
   click: { frameId: 'string', x: 'number', y: 'number' },
   'download-attachment': { frameId: 'string', x: 'number', y: 'number' },
+  'upload-files': { frameId: 'string', x: 'number', y: 'number', files: 'string[]' },
   scroll: { frameId: 'string', x: 'number', y: 'number', deltaY: 'number', deltaX: 'number?' },
   'type-text': { frameId: 'string', text: 'string' },
   key: { frameId: 'string', key: 'string' },
@@ -43,6 +45,18 @@ export function parseVkCommand(argv) {
     if (!Object.hasOwn(commands[operation], field) || Object.hasOwn(args, field)) fail();
     const type = commands[operation][field].replace('?', '');
     const value = flags[index + 1];
+    if (type === 'string[]') {
+      // CLI transports only explicit local paths. The host freezes the files
+      // before browser input; the provider never reads their bytes or changes
+      // their permissions, and has no alternate HTTP/clipboard upload path.
+      let files;
+      try { files = JSON.parse(value); } catch { fail(); }
+      if (!Array.isArray(files) || !files.length || files.length > 32
+        || files.some(file => typeof file !== 'string' || !path.isAbsolute(file)
+          || file.length > 4096 || /[\u0000-\u001f]/u.test(file))) fail();
+      args[field] = files;
+      continue;
+    }
     if (type === 'boolean' && !['true', 'false'].includes(value)) fail();
     if (type === 'number' && !/^-?\d+$/u.test(value)) fail();
     args[field] = type === 'number' ? Number(value) : type === 'boolean' ? value === 'true' : value;
@@ -71,7 +85,7 @@ async function readGuides() {
   return {
     schemaVersion: 1,
     requiredBeforeWork: 'all_in_order',
-    guides: await Promise.all(['workflow', 'security'].map(async name => {
+    guides: await Promise.all(['workflow', 'security', 'uploads'].map(async name => {
       const packaged = new URL(`./references/${name}.md`, import.meta.url);
       // The signed package puts the entrypoint at its root; the checkout uses
       // scripts/. Neither candidate is influenced by caller flags or env.
@@ -104,7 +118,11 @@ export async function runVk(argv, env = process.env) {
   try { moduleUrl = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank'); }
   catch { throw new Error('VK_HOST_REQUIRED'); }
   if (moduleUrl.protocol !== 'file:' || env.TRELIO_SKILL_ID !== 'vk') throw new Error('VK_HOST_REQUIRED');
-  const { runVisualSession } = await import(moduleUrl.href);
+  const { runVisualSession, VISUAL_FILE_UPLOAD_API } = await import(moduleUrl.href);
+  // Never advertise successful selection through an older visual interface
+  // that lacks native chooser delivery. Signed minimum admission normally
+  // upgrades it first; cleanup/metadata keep their existing recovery route.
+  if (operation === 'upload-files' && VISUAL_FILE_UPLOAD_API !== 'trelio.visual-file-upload/v1') throw new Error('VK_HOST_UPGRADE_REQUIRED');
 
   // Search submission uses the same worker-owned completion/pacing state as
   // Avito. Ordinary reads, source navigation and message sending never mark a
@@ -122,7 +140,7 @@ export async function runVk(argv, env = process.env) {
   // protected snapshot, lease and one-use input frames; no alternate transport
   // or caller-selected browser implementation is available here.
   const policy = {
-    observationMode: 'text', attachmentDownloads: true,
+    observationMode: 'text', attachmentDownloads: true, fileUploads: true,
     origins: [...ORIGINS], domains: [...DOMAINS], env,
   };
   if (operation === 'navigate') {
@@ -147,7 +165,7 @@ if (process.argv[1] && await fs.realpath(process.argv[1]) === await fs.realpath(
   catch (error) {
     // Host/native errors can contain private URLs, input or filesystem paths.
     // Only static provider codes cross stdout; never print the raw exception.
-    const safeCodes = ['VK_COMMAND_INVALID', 'VK_HOST_REQUIRED', 'VK_NAVIGATION_BLOCKED'];
+    const safeCodes = ['VK_COMMAND_INVALID', 'VK_HOST_REQUIRED', 'VK_HOST_UPGRADE_REQUIRED', 'VK_NAVIGATION_BLOCKED'];
     process.stdout.write(`${JSON.stringify({ schemaVersion: 1, state: 'error',
       code: safeCodes.includes(error?.message) ? error.message : 'VK_RUNTIME_FAILED' })}\n`);
     process.exitCode = 1;

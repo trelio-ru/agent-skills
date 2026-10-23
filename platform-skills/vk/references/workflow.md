@@ -1,6 +1,6 @@
 # Вход и работа во ВКонтакте
 
-Runtime использует host visual-browser API >=3.11.0: text-first, protected
+Runtime использует host visual-browser API >=3.17.0: text-first, protected
 snapshot, ручной вход, completion-based pacing, лимит вкладок и bounded
 входящие originals. Managed Chromium, secure store и lifecycle принадлежат
 host; provider не устанавливает другой браузер и не копирует host implementation.
@@ -23,11 +23,11 @@ UUID аккаунта, его имя и company binding различаются. 
 запрошенной страницы. Preparing/manual/error status сохраняется без нового входа;
 saved_unverified/ready разрешают восстановление, но не доказывают авторизацию VK.
 
-После выбора вызови `guides`, прочитай обе части целиком, затем `commands`.
+После выбора вызови `guides`, прочитай все части целиком, затем `commands`.
 Они доступны до credential/browser IO. Основные команды: `doctor`, `setup`,
 `show-login`, `status`, `wait`, `ready`, `read-text`, `screenshot`, `navigate`,
 `click`, `scroll`, `type-text`, `key`, `submit-search`, `search-ready`,
-`download-attachment`, `close`, `disconnect`. Аргументы бери из `commands`,
+`download-attachment`, `upload-files`, `close`, `disconnect`. Аргументы бери из `commands`,
 не выдумывай aliases, selectors, executable/path или account flags provider-а.
 Host выбирает аккаунт до его запуска.
 
@@ -115,13 +115,13 @@ Enter может сразу отправить сообщение; submit-search
 
 Публикация, редактирование/удаление, комментарий, сообщение, реакция, репост,
 заявка/подписка и изменение сообщества имеют самостоятельное основание. Вход,
-чтение, подготовка текста и company binding его не заменяют. Этот interface
-не умеет загружать исходящие файлы; не подставляй browser file dialog, clipboard,
-HTTP upload или другой transport. Это отсутствие команды загрузки, а не запрет
-на изображения или целый раздел VK.
+чтение, подготовка текста и company binding его не заменяют. Исходящие файлы
+прикрепляй через `upload-files`: [обязательный контракт](uploads.md).
+Он поддерживает один или несколько originals любых форматов через кнопку
+вложения; допустимость конкретного типа определяет VK.
 
 Разделы VK выбираются по задаче пользователя, без запретов по названию.
-Проверь нужный control; отсутствие команды загрузки, камеры или микрофона
+Проверь нужный control; отсутствие камеры, микрофона или нужного UI
 сообщай как конкретную техническую границу. Повторное подтверждение уже
 разрешённого действия из-за раздела не нужно. Рекламный API доступен в vk-ads.
 
