@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "max-web",
-    "version": "2.10.2",
-    "summary": "Подписанный task-профиль MAX отделяет переписку от login/assist/admin и запрещает task-переопределения browser executable, режима окна и времени."
+    "version": "2.11.0",
+    "summary": "MAX использует прежний браузер для native sender identity и отдельного exact read ACK: полный unread interval, one-use frame и native read-back без replay."
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,7 +17,7 @@
     ]
   },
   "runtime": {
-    "version": "2.10.2",
+    "version": "2.11.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "trelio-max.mjs",
@@ -44,6 +44,11 @@
         "source": "scripts/trelio-max.mjs",
         "path": "trelio-max.mjs",
         "mode": 493
+      },
+      {
+        "source": "scripts/max-native-protocol.mjs",
+        "path": "max-native-protocol.mjs",
+        "mode": 420
       },
       {
         "source": "scripts/instruction-guides.mjs",

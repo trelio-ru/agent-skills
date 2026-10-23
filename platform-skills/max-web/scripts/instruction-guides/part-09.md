@@ -56,3 +56,67 @@ failure сохраняет только numeric status и allowed origin; ник
 DOM, login details или имен кандидатов. Source fixtures и green CI не доказывают
 совместимость текущего MAX кабинета: перед включением нужен отдельный live read
 в разрешённом профиле с проверкой guard, overlap и фактического следующего poll.
+
+
+## Native source references и отдельный ACK (source 2.11.0)
+
+Новый fixed source profile использует `monitor --chat CANONICAL_NUMERIC_URL
+--conversation-references` и только при первой позиции `--unread-backfill`.
+Старый monitor/read-reference без этих возможностей сохраняет прежний v1 ABI.
+Новый cursor v2 принадлежит другому scope; перенос/reset старого cursor запрещён.
+Первый unread interval читается полностью из одного native history response:
+настоящий viewer read mark, native unread count и все строки этого интервала.
+При неполном окне возвращается gap; unread badge этого не заменяет. После первого
+commit сообщения отслеживаются независимо от последующего чтения на другом
+устройстве. Из пустого baseline можно продолжить только когда native total count
+подтверждает весь текущий timeline, иначе нужен прежний explicit history review.
+
+В том же protected browser до навигации установлен bounded observer официального
+`wss://api.oneme.ru/websocket`: v10 header, LZ4 и MessagePack. Он не создаёт socket
+или запросы, не читает auth storage и не сохраняет packets. Только native history
+response, связанный с browser request по socket/sequence/chat ID, может дать
+положительный native sender ID. Он связывается с exact DOM message ID и полным
+native text. Display name, href автора, цитата и forward не дают identity.
+Неизвестный protocol/недостающая history не разрешают fallback к guessed sender.
+
+Новые refs имеют `message:CHAT_ID:MESSAGE_ID`, non-authorizing
+`max-conversation/v1.<scope-bound hash>`, `senderNamespace=max_user_id` либо null,
+а также native outgoing/forwarded flags. Поле автора исходного forward не
+подменяет фактического отправителя. Native capability не разрешает новое
+поручение: отдельно нужны fresh linked owner identity, native source opt-in,
+прямая команда владельца и обычные company/project/task ACL. Текущий host может
+оставлять intake закрытым даже при доступном native sender.
+
+Exact `read-reference --chat URL --message-id ID --expected-revision SHA256
+--expected-conversation-key KEY` проверяет native content revision и возвращает
+полный native text и quote text только выбранного сообщения. Attachment content
+не прочитан, соседние сообщения не выдаются, receipt не отправляется. Метаданные
+вложений и links входят в revision; реакционные/просмотровые counters не становятся
+изменением текста. Неизвестный или усечённый native body не получает read proof.
+
+`ack-reference` является ОТДЕЛЬНЫМ source действием, не task command. Нужны
+точный native source/key/revision и `--covered-reference ID:REV` для каждого
+действительно прочитанного и committed сообщения; `--confirm` либо `--verify-only`.
+Ни успешный model turn, ни чтение/queue/delivery сами по себе не разрешают ACK.
+Host отдельно получает native committed receipt admission и пишет durable attempt
+fence перед единственным provider child. Этот provider его не заменяет.
+
+MAX read mark покрывает временной интервал. Runtime не считает больший ID более
+поздним: native latest time выбирается только ВНУТРИ exact committed set. До
+отправки доказывается весь unread interval из одного native response; каждый
+ещё непрочитанный ID до выбранного времени, включая equal-time соседей, обязан
+иметь exact covered revision. Пропущенное сообщение запрещает range ACK.
+Затем один browser reload получает свежую native history. Guard разрешает ровно
+один уже созданный MAX frame `READ_MESSAGE` с exact chat/message/time, расходуя
+grant ДО forward. `READ_REACTION`, broad folder mark, другой чат/mark, изменённые
+bytes и второй frame остаются заблокированы. Новых ручных protocol requests нет.
+
+Успех требует native response с теми же socket/sequence/opcode и положительным
+mark/unread read-back либо свежего native history, уже подтверждающего весь
+covered interval прочитанным. Потерянный ответ/ошибка после forward остаются
+unknown. Ни reload, ни новая lease не разрешают повтор записи; только последующий
+`--verify-only` без frame forwarding может reconcile исходный committed set.
+При неполных counters или отсутствии подходящего browser-emitted frame ACK
+не считается успешным. Source/тесты не доказывают live compatibility или готовность
+Windows: до активации нужен разрешённый read-only native smoke, затем отдельный
+полный business E2E с committed processing и точным ACK read-back.

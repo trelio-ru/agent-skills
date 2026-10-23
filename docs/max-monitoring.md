@@ -89,3 +89,40 @@ Source-режим общего DOM reader не скрывает duplicate ID и 
 сохраняется; чтение не разрешает intake новых задач. Host отдельно проверяет
 task mapping/аудиторию и committed processing перед независимым ACK. Синтетические
 pure/DOM regressions и source merge не активируют source, службу или live MAX.
+
+
+## Native history и committed ACK в 2.11.0
+
+Новый opt-in source protocol и точный ACK описаны в обязательной части09.
+Legacy v1 остаётся пассивным и без native owner identity. Новый v2 checkpoint
+имеет отдельный scope, exact numeric chat selection и native unread bootstrap;
+ни reset, ни перенос legacy position не допускаются. Публичный первичный source
+`https://web.max.ru/_app/immutable/chunks/C018QTHD.js` (web 26.10.6, изучен23.10.2026)
+определяет native history49, read-state50 и sender; текущий public asset URL может
+измениться. Исходники сайта не копируются в package или fixtures.
+
+SAME browser observer читает bounded v10/LZ4/MessagePack ответы только с fixed
+vendor websocket. Header неизвестной версии не подтверждает identity; opcode50
+остаётся blocked даже при неизвестном/compressed payload. Ни auth envelope,
+ни message body/packet archive не сохраняются. Положительный native user ID
+сопоставляется exact selected chat/message/полной text projection. Sender namespace
+`max_user_id` не является username или owner consent. Новые задачи остаются
+независимым server-owned intake gate.
+
+Queued revision берётся из native content fields, включая body/link/attachment
+metadata; views/reactions не превращаются в body edit. Полный invocation-only
+native equality hash дополнительно защищает reload перед ACK. Общий SQLite
+журнал по-прежнему должен хранить только refs/positions/read slots/receipts.
+Source emits и signed native child tests не объявляются live end-to-end.
+
+ACK проверяет весь native unread interval и exact committed covered prefix;
+все equal-time rows также должны быть covered. IDs не считаются time ordering.
+Grant расходуется перед единственным browser-emitted frame; только native
+correlated response или independent native history дают positive read-back.
+Unknown допускает только verify-only, не replay. Read-only source/task admission
+не открывает этот отдельный native committed-receipt путь.
+
+Release blockers: фактический native history/DOM join и guard в настроенном
+аккаунте, source registration с exact selector, общий host/body/processing/ACK
+composition, а затем настоящий Windows business E2E. Отсутствующий login
+требует штатного owner handoff, не создания/импорта human session.

@@ -23,7 +23,7 @@ test('MAX signed task policy classifies the real parser and keeps setup/admin pr
     assert.equal(parsed.command,prefix[0]);
     if(prefix[0]==='policy')assert.equal(parsed.policyCommand,'show');
   }
-  for(const denied of [['login'],['bootstrap'],['policy','set'],['monitor'],['watch'],
+  for(const denied of [['login'],['bootstrap'],['policy','set'],['monitor'],['watch'],['ack-reference'],
     ['assist-start'],['assist-click'],['edit'],['delete'],['forward'],['create-group'],['member-add'],['chat-update']])
     assert.equal(policy.taskCommands.some(prefix=>prefix.every((token,index)=>denied[index]===token)),false);
   // This override is intentionally valid for a human CLI. A task descriptor
