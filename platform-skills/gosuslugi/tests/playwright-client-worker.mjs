@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import crypto from 'node:crypto';
 import http from 'node:http';
 import readline from 'node:readline';
@@ -32,6 +33,13 @@ async function markStage(value) {
     diagnostic: 'synthetic_worker_interrupted' }), { mode: 0o600 });
 }
 try {
+  // Run the documented caller download recipe against a real browser stream,
+  // rather than maintaining a second, potentially unsafe test-only pattern.
+  const guide = (await fs.readFile(new URL('../references/playwright-client.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const downloadRecipe = [...guide.matchAll(/```js\n([\s\S]*?)\n```/g)]
+    .map(match => match[1]).find(code => code.startsWith('async function saveCurrentPageDownload'));
+  assert.ok(downloadRecipe);
+  const saveCurrentPageDownload = new Function(downloadRecipe + '\nreturn saveCurrentPageDownload;')();
   await markStage('launch');
   const helper = await nativeHelper(config.root);
   const playwright = await loadPlaywright(config.root);
@@ -80,7 +88,7 @@ try {
       state: 'synthetic-post-state', client_id: 'SYNTHETIC_POST', response_type: 'code' });
     let loginPosts = 0, personalRoleReturns = 0, consentPosts = 0;
     const withConsent = index === 0 || index === 9;
-    const workingForm = '<form id="work"><input name="arbitrary"><input type="file"><input type="checkbox" name="consent"><button>Сохранить</button></form><a href="/download" download>Скачать</a><script>document.querySelector("#work").onsubmit=e=>{e.preventDefault();document.body.dataset.saved=document.querySelector("input").value}</script>';
+    const workingForm = '<form id="work"><input name="arbitrary"><input type="file"><input type="checkbox" name="consent"><button>Сохранить</button></form><a href="/download" role="button" download>Скачать всё</a><script>document.querySelector("#work").onsubmit=e=>{e.preventDefault();document.body.dataset.saved=document.querySelector("input").value}</script>';
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       let body, headers = {}, status = 200;
@@ -327,13 +335,19 @@ try {
     // Chromium cancels some route.fulfill attachment navigations. A Blob
     // exercises the real download/save stream without a synthetic HTTP redirect
     // pretending to be a provider's file endpoint.
-    await page.getByRole('link', { name: 'Скачать' }).evaluate(link => {
+    // An anchor with an explicit button role must not be located as a link.
+    // Inspect fresh semantics before clicking; no retry of the business form.
+    assert.equal(await page.getByRole('link', { name: 'Скачать всё', exact: true }).count(), 0);
+    const trigger = page.getByRole('button', { name: 'Скачать всё', exact: true });
+    assert.equal(await trigger.count(), 1); assert.equal(await trigger.isEnabled(), true);
+    assert.equal(await page.getByText('Скачать всё', { exact: true }).count(), 1);
+    await trigger.evaluate(link => {
       link.href = URL.createObjectURL(new Blob(['synthetic-download'], { type: 'text/plain' })); link.download = 'proof.txt';
     });
-    const downloading = page.waitForEvent('download'); await page.getByRole('link', { name: 'Скачать' }).click();
-    const download = await downloading; const chunks = [];
-    for await (const chunk of await download.createReadStream()) chunks.push(chunk);
-    assert.equal(Buffer.concat(chunks).toString(), 'synthetic-download'); await download.delete();
+    const downloadPath = path.join(config.root, `download-proof-${index}.txt`);
+    await saveCurrentPageDownload(page, trigger, downloadPath);
+    assert.equal(await fs.readFile(downloadPath, 'utf8'), 'synthetic-download');
+    await fs.rm(downloadPath);
     assert.equal((await context.cookies()).some(cookie => cookie.name === 'synthetic_session'), true);
     await page.goto('https://another-workflow.example.org');
     assert.match(await page.locator('h1').innerText(), /Следующий шаг/);

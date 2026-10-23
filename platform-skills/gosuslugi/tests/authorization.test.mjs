@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { parseArguments as gosArguments, run as gosRun } from '../scripts/trelio-gosuslugi.mjs';
 import { atomicWrite, nativeHelper, ensurePrivateDirectory } from '../scripts/native.mjs';
@@ -210,8 +211,10 @@ test('observer failures are safe and sticky while verified return survives late 
 async function guideCaller({ failCreation } = {}) {
   const guide = await fs.readFile(new URL('../references/playwright-client.md', import.meta.url), 'utf8').then(value => value.replace(/\r\n/g, '\n'));
   const code = guide.match(/```js\n([\s\S]*?)\n```/)[1];
-  const body = code.slice(code.indexOf('let login,'), code.indexOf('const lines = readline'));
+  const body = code.slice(code.indexOf('let login,'));
   const helpers = [], events = [], clicks = [];
+  const lines = new EventEmitter();
+  lines.close = () => { if (!lines.closed) { lines.closed = true; lines.emit('close'); } };
   const context = { closed: false, close() { this.closed = true; } };
   const page = { url: () => 'https://service.example.org', context: () => context,
     draft: 'prepared', files: ['attachment.txt'], consent: true,
@@ -228,12 +231,14 @@ async function guideCaller({ failCreation } = {}) {
     return helper;
   };
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const handle = await new AsyncFunction('page', 'context', 'browser', 'client',
+  const caller = await new AsyncFunction('page', 'context', 'browser', 'client',
     'createEsiaAuthorization', 'observeEsiaAuthorization', 'safeAuthorizationFailure',
-    'emit', 'lines', 'origin', body + '\nreturn handle;')(page, context, browser,
+    'emit', 'readline', 'origin', body + '\nreturn { handle, idle: () => queue };')(page, context, browser,
       { options: {}, configHome: '/synthetic' }, create, observeEsiaAuthorization,
-      safeAuthorizationFailure, value => events.push(value), { close() {} }, 'https://service.example.org');
-  return { handle, helpers, page, context, browser, events, clicks };
+      safeAuthorizationFailure, value => events.push(value), { createInterface: () => lines }, 'https://service.example.org');
+  return { handle: caller.handle, helpers, page, context, browser, events, clicks,
+    dispatch(line) { lines.emit('line', line); return caller.idle(); },
+    end() { lines.close(); return caller.idle(); } };
 }
 
 test('published caller continues a distinct authorized procedure without replacing its prepared Page', async () => {
@@ -291,6 +296,107 @@ test('published caller preserves a failed helper creation instead of minting ano
   await assert.rejects(caller.handle({ action: 'authorize_next_step', step: 'another_application',
     previousOutcome: 'completed', selector: '#form-login' }), /previous_authorization_unresolved/);
   assert.equal(caller.helpers.length, 2); assert.equal(caller.context.closed, false);
+});
+
+// Drive the actual line queue as well as handle(): a generic exception must
+// leave later state/finish commands usable and retain independent ESIA proof.
+test('published caller isolates locator and command failures from the authorization result', async () => {
+  const caller = await guideCaller();
+  const privateError = new Error('https://private.example.org/application?token=synthetic-secret');
+  caller.page.locator = () => ({ click: async () => { throw privateError; } });
+  await caller.dispatch(JSON.stringify({ action: 'authorize', step: 'application', selector: '#missing' }));
+  assert.deepEqual(caller.events.at(-1), { phase: 'caller_action_failed',
+    authorization: { phase: 'esia_request_pending' }, step: 'application' });
+  assert.equal(caller.context.closed, false); assert.equal(caller.browser.closed, false);
+  caller.helpers[0].returnedResolve({ page: caller.page, context: caller.context });
+  await Promise.resolve();
+  await caller.dispatch('invalid JSON with synthetic-secret');
+  assert.deepEqual(caller.events.at(-1), { phase: 'caller_action_failed',
+    authorization: { phase: 'esia_callback_verified' }, step: 'application' });
+  await caller.dispatch(JSON.stringify({ action: 'state' }));
+  assert.deepEqual(caller.events.at(-1), { phase: 'esia_callback_verified', step: 'application' });
+  assert.doesNotMatch(JSON.stringify(caller.events), /private\.example|synthetic-secret|authorization_result_unknown/);
+  await caller.dispatch(JSON.stringify({ action: 'finish' }));
+  assert.equal(caller.events.at(-1).phase, 'caller_closed');
+  assert.equal(caller.context.closed, true); assert.equal(caller.browser.closed, true);
+});
+
+test('published caller attempts every owned close on failure and cleans up on EOF', async () => {
+  for (const failure of ['helper', 'context', 'browser', 'none']) {
+    const caller = await guideCaller(), closed = [];
+    await caller.handle({ action: 'authorize', step: 'application', selector: '#login' });
+    for (const [name, resource] of [['helper', caller.helpers[0].helper], ['context', caller.context], ['browser', caller.browser]]) {
+      resource.close = async () => {
+        closed.push(name);
+        if (name === failure) throw new Error('private cleanup error');
+      };
+    }
+    await caller.end();
+    assert.deepEqual(closed, ['helper', 'context', 'browser']);
+    assert.deepEqual(caller.events.at(-1), { phase: failure === 'none' ? 'caller_closed' : 'caller_cleanup_failed' });
+    await caller.handle({ action: 'finish' });
+    assert.deepEqual(closed, ['helper', 'context', 'browser'], 'cleanup must not repeat');
+    assert.doesNotMatch(JSON.stringify(caller.events), /private cleanup/);
+  }
+});
+
+async function guideDownload() {
+  const guide = (await fs.readFile(new URL('../references/playwright-client.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const code = [...guide.matchAll(/```js\n([\s\S]*?)\n```/g)]
+    .map(match => match[1]).find(value => value.startsWith('async function saveCurrentPageDownload'));
+  assert.ok(code, 'exercise the actual documented download implementation');
+  return new Function(code + '\nreturn saveCurrentPageDownload;')();
+}
+
+test('published download observes an early waiter rejection and waits for the outstanding click', async () => {
+  const save = await guideDownload();
+  let rejectDownload, finishClick, clickStarted;
+  const started = new Promise(resolve => { clickStarted = resolve; });
+  const waiting = new Promise((_resolve, reject) => { rejectDownload = reject; });
+  const clicking = new Promise(resolve => { finishClick = resolve; });
+  const timeout = new Error('synthetic download timeout');
+  let settled = false;
+  const result = save({ waitForEvent: () => waiting }, { click: () => { clickStarted(); return clicking; } }, '/synthetic/file');
+  // Observe our own test promise immediately too. An unhandled rejection from
+  // a detached waiter would fail node:test independently at the next turn.
+  const checked = assert.rejects(result, error => error === timeout).then(() => { settled = true; });
+  await started;
+  rejectDownload(timeout);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, 'a timed-out waiter must not race a still-running click');
+  finishClick();
+  await checked;
+});
+
+test('published download handles click rejection and awaits saveAs success or failure', async () => {
+  const save = await guideDownload();
+  const clickError = new Error('synthetic locator failure'), saveError = new Error('synthetic disk failure');
+  let rejectDownload;
+  const waiting = new Promise((_resolve, reject) => { rejectDownload = reject; });
+  const failedClick = save({ waitForEvent: () => waiting }, { click: async () => { throw clickError; } }, '/synthetic/file');
+  const checked = assert.rejects(failedClick, error => error === clickError);
+  await new Promise(resolve => setImmediate(resolve));
+  rejectDownload(new Error('later download timeout'));
+  await checked;
+  for (const failSave of [false, true]) {
+    let finishSave, saveStarted, settled = false;
+    const started = new Promise(resolve => { saveStarted = resolve; });
+    const saving = new Promise(resolve => { finishSave = resolve; });
+    const calls = [];
+    const download = { async saveAs(filePath) {
+      calls.push(filePath); saveStarted(); await saving;
+      if (failSave) throw saveError;
+    } };
+    const result = save({ waitForEvent: (event, options) => {
+      assert.equal(event, 'download'); assert.equal(options.timeout, 20000);
+      return Promise.resolve(download);
+    } }, { click: async options => { assert.equal(options.timeout, 20000); } }, '/synthetic/file');
+    const observed = (failSave ? assert.rejects(result, error => error === saveError) : result)
+      .then(() => { settled = true; });
+    await started; assert.equal(settled, false);
+    finishSave(); await observed;
+    assert.deepEqual(calls, ['/synthetic/file']);
+  }
 });
 
 test('permission is required before host identity, local setup or native unlock', async () => {

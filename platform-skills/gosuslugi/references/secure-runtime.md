@@ -368,6 +368,13 @@ manual challenge. Поздний request той же попытки приним
 а late cleanup rejection не заменяет verified callback. Пример долгоживущего
 caller в playwright-client.md возвращается после click и выдаёт результаты
 promises независимыми событиями; await внутри command queue запрещён.
+Ошибки locator/click/download/save и command queue имеют отдельную фазу
+`caller_action_failed` с независимым snapshot авторизации; `safeAuthorizationFailure`
+применяется только к отказам helper-а. Verified callback не заменяется
+`authorization_result_unknown` из-за дальнейшего действия сайта. Download waiter
+и click сразу получают обработчики отказа; очередь ждёт обе операции, сохранение
+файла завершается до cleanup. EOF/finish закрывают все собственные ресурсы,
+даже если один close отказал; чужой browser не закрывается.
 
 Клиент наблюдает main-frame запросы/ответы и document commit в исходной странице
 либо в новом direct popup с exact исходной Page как opener в том же context.
