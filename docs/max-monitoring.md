@@ -126,3 +126,41 @@ Release blockers: фактический native history/DOM join и guard в н�
 аккаунте, source registration с exact selector, общий host/body/processing/ACK
 composition, а затем настоящий Windows business E2E. Отсутствующий login
 требует штатного owner handoff, не создания/импорта human session.
+
+
+## Account-wide discovery и независимые переписки (source 2.12.0)
+
+`monitor --account-discovery --conversation-references [--cursor POSITION]`
+читает весь выбранный managed аккаунт через ТОТ ЖЕ браузер и passive guard.
+Только наблюдённая browser full-sync19 с `chatsSync=0`, native viewer ID/server
+time и связанная socket/sequence цепочка страниц53 до `marker=0` подтверждают
+полноту. Runtime не создаёт protocol requests, не сбрасывает cache/session и не
+использует список unread, имя или URL из DOM как полный account checkpoint.
+В памяти остаётся не более 1000 native signed-64-bit conversation IDs с native
+временем последнего события и nullable unread count; token/body/названия не
+копируются. Unknown/partial/scope/time/overflow сохраняют прежнюю позицию.
+
+Результат содержит только `conversationsToSync` (строки native ID), отдельный
+account cursor v3 и `initialAccountCursor` — ОРИГИНАЛЬНУЮ позицию предыдущего
+полного inventory. Повторный полный scan продвигает native server time; он
+сигналит изменившиеся native last-event времена независимо от read flag. Первый
+scan также сигналит непрочитанные либо неизвестные counters. Нет обещания
+атомарного unread snapshot между чатами. Нативный ID не является sender/owner
+proof, task route или разрешением ACK.
+
+Host атомарно сохраняет сигналы в прежние source streams и account cursor.
+Каждая переписка использует прежний v2 native anchor; существующая позиция и её
+original seed не перезаписываются при следующем inventory/restart. Первый
+`monitor --chat CANONICAL_URL --conversation-references --initial-account-cursor
+ORIGINAL_POSITION` включает native unread interval И сообщения после original
+account time, даже если их прочитали на другом устройстве. Для этого нужны
+latest history, полный unread interval и покрытие окна до original time либо
+полная native история; все нужные native rows должны присутствовать в DOM join.
+Gap/hidden rows не становятся успешным пустым baseline. После первого commit
+переписка продолжает обычный v2 cursor, а не новый account seed.
+
+Это metadata discovery, не чтение содержимого задачи или доставка результата.
+Exact body, known route/verified-owner intake, accepted material, explicit slots
+и отдельный native ACK сохраняют прежние независимые проверки. Старые exact-chat
+registrations/CLI продолжают работать; они не получают новую account authority.
+Hosted/signed child tests не заменяют реальный Windows business E2E.

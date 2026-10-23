@@ -270,3 +270,72 @@ test('MAX outgoing hint reads the SAME browser-observed native chat without anot
   assert.deepEqual(await outgoingMaxConversationReference(page,options,{url:'https://web.max.ru/88'}),
     {available:false,code:'MAX_CONVERSATION_REFERENCE_UNAVAILABLE'});
 });
+
+test('MAX account discovery observes only the native full-sync marker chain and projects no chat content',async()=>{
+  const {projectMaxAccountSnapshot,parseMaxAccountCursor}=await import('../scripts/trelio-max.mjs');
+  const selected={companyId:'11111111-1111-4111-8111-111111111111',memberId:'22222222-2222-4222-8222-222222222222',connectionId:'44444444-4444-4444-8444-444444444444',
+    account:{id:'33333333-3333-4333-8333-333333333333',companyBinding:'a'.repeat(64)}};
+  const value=createMaxNativeObserver();
+  // A partial cache sync, an arbitrary UI list and a naked response cannot
+  // supply an account inventory. The observer never retains the token/body.
+  value.observeInbound(frame(19,{profile:{contact:{id:111n}},chats:[{id:77n}],time:1000,chatMarker:0}),1);
+  assert.equal(value.accountSnapshot(),null);
+  value.observeOutbound(frame(19,{token:'SYNTHETIC_SECRET',chatsSync:0},{cmd:0,seq:3}),1);
+  value.observeInbound(frame(19,{profile:{contact:{id:111n}},chats:[{id:77n,lastEventTime:800,newMessages:1,title:'PRIVATE_TITLE',lastMessage:{text:'PRIVATE_BODY'}}],time:1000,chatMarker:900},{seq:3}),1);
+  assert.equal(value.accountSnapshot().complete,false);
+  assert.throws(()=>projectMaxAccountSnapshot(value.accountSnapshot(),selected),/MAX monitor|MAX dialog/iu);
+  value.observeOutbound(frame(53,{marker:900},{cmd:0,seq:4}),1);
+  value.observeInbound(frame(53,{chats:[{id:-88n,lastEventTime:850,newMessages:1},{id:0n,lastEventTime:0,newMessages:0}],marker:0},{seq:4,compressed:true}),2);
+  assert.equal(value.accountSnapshot().complete,false,'another socket cannot finish the chain');
+  value.observeInbound(frame(53,{chats:[{id:-88n,lastEventTime:850,newMessages:1},{id:0n,lastEventTime:0,newMessages:0}],marker:0},{seq:4,compressed:true}),1);
+  const snapshot=value.accountSnapshot();assert.equal(snapshot.complete,true);assert.deepEqual(snapshot.chats.map(row=>row.chatId),['-88','77']);
+  const page=projectMaxAccountSnapshot(snapshot,selected);
+  assert.deepEqual(page.conversationsToSync,['-88','77']);assert.deepEqual(page.events,[]);assert.equal(page.coverage.unreadOnly,false);
+  assert.equal(parseMaxAccountCursor(page.nextCursor).startedAt,1000);
+  assert.doesNotMatch(JSON.stringify(page),/PRIVATE_|SYNTHETIC_|111|viewerId|token|title|text/);
+  const later=projectMaxAccountSnapshot({...snapshot,time:2000},{...selected,cursor:page.nextCursor});assert.equal(later.initialAccountCursor,page.nextCursor);assert.equal(parseMaxAccountCursor(later.nextCursor).startedAt,2000);assert.deepEqual(later.conversationsToSync,[]);
+  assert.throws(()=>projectMaxAccountSnapshot({...snapshot,viewerId:'222'}, {...selected,cursor:page.nextCursor}),/baseline changed/);
+  const stale=createMaxNativeObserver();stale.observeOutbound(frame(19,{chatsSync:100},{cmd:0}),1);
+  stale.observeInbound(frame(19,{profile:{contact:{id:111n}},chats:[],time:1000,chatMarker:0}),1);assert.equal(stale.accountSnapshot(),null);
+});
+
+test('MAX newly discovered history includes already-read messages after the ORIGINAL account baseline',async()=>{
+  const {projectMaxAccountSnapshot}=await import('../scripts/trelio-max.mjs');
+  const selected={companyId:'11111111-1111-4111-8111-111111111111',memberId:'22222222-2222-4222-8222-222222222222',connectionId:'44444444-4444-4444-8444-444444444444',
+    account:{id:'33333333-3333-4333-8333-333333333333',companyBinding:'a'.repeat(64)},chat:'https://web.max.ru/77',conversationReferences:true,limit:1};
+  const initial=projectMaxAccountSnapshot({viewerId:'111',time:150,complete:true,chats:[{chatId:'77',lastEventTime:100,unread:1}]},selected).nextCursor;
+  const value=observer();history(value,{mark:300,unread:0});
+  const joined=joinMaxNativeSnapshot({chatReference:{url:selected.chat,stableId:'77'},messages:messages.map(row=>({providerMessageId:row.id.toString(),text:row.text,replyText:null,attachments:[]}))},value);
+  const first=projectMaxMonitorSnapshot(joined,{...selected,initialAccountCursor:initial});
+  assert.deepEqual(first.events.map(row=>row.messageId),['11']);assert.equal(first.hasMore,true);
+  const second=projectMaxMonitorSnapshot(joined,{...selected,cursor:first.nextCursor});assert.deepEqual(second.events.map(row=>row.messageId),['12']);
+  assert.equal(projectMaxMonitorSnapshot(joined,{...selected,cursor:second.nextCursor}).events.length,0);
+  const missing={...joined,messages:joined.messages.filter(row=>row.providerMessageId!=='12')};
+  assert.throws(()=>projectMaxMonitorSnapshot(missing,{...selected,initialAccountCursor:initial}),/fully rendered/);
+  assert.throws(()=>projectMaxMonitorSnapshot({...joined,nativeWindowStart:200,nativeFullTimelineVerified:false},{...selected,initialAccountCursor:initial}),/original account baseline/);
+  for(const argv of [['monitor','--account-discovery','--conversation-references'],['monitor','--chat',selected.chat,'--conversation-references','--initial-account-cursor',initial]])
+    validateCommandOptions(parseArguments(argv,{TRELIO_SKILL_ID:'max-web',TRELIO_SKILL_RUNTIME_VERSION:'2.12.0',TRELIO_SKILL_COMPANY_ID:selected.companyId,TRELIO_SKILL_MEMBER_ID:selected.memberId,TRELIO_SKILL_CONNECTION_ID:selected.connectionId}));
+  for(const argv of [['monitor','--account-discovery','--chat',selected.chat,'--conversation-references'],['read','--account-discovery'],['monitor','--account-discovery']])
+    assert.throws(()=>validateCommandOptions(parseArguments(argv,{TRELIO_SKILL_ID:'max-web',TRELIO_SKILL_RUNTIME_VERSION:'2.12.0',TRELIO_SKILL_COMPANY_ID:selected.companyId,TRELIO_SKILL_MEMBER_ID:selected.memberId,TRELIO_SKILL_CONNECTION_ID:selected.connectionId})));
+});
+
+
+test('MAX account monitor navigates the SAME guarded browser and uses only browser-emitted full inventory',async()=>{
+  const {readMaxAccountMonitor}=await import('../scripts/trelio-max.mjs');
+  let route,inbound,outbound,navigations=0;const sent=[];
+  const context={routeWebSocket:async(_pattern,callback)=>{route=callback;}};await installPassiveReadGuard(context);
+  route({url:()=> 'wss://api.oneme.ru/websocket',send:()=>{},onMessage:callback=>{outbound=callback;},
+    connectToServer:()=>({onMessage:callback=>{inbound=callback;},send:value=>sent.push(value)})});
+  const options={companyId:'11111111-1111-4111-8111-111111111111',memberId:'22222222-2222-4222-8222-222222222222',
+    connectionId:'44444444-4444-4444-8444-444444444444',account:{id:'33333333-3333-4333-8333-333333333333',companyBinding:'a'.repeat(64)},timeoutMs:500};
+  const page={context:()=>context,goto:async(url)=>{assert.equal(url,'https://web.max.ru/');navigations++;
+    // The ordinary browser navigation, not the monitor, emits protocol frames.
+    outbound(frame(19,{token:'SYNTHETIC_PRIVATE_TOKEN',chatsSync:0},{cmd:0,seq:1}));
+    inbound(frame(19,{profile:{contact:{id:111n}},time:1000,chats:[{id:77n,lastEventTime:800,newMessages:0}],chatMarker:900},{seq:1}));
+    outbound(frame(53,{marker:900},{cmd:0,seq:2}));
+    inbound(frame(53,{chats:[{id:88n,lastEventTime:850}],marker:0},{seq:2}));},
+    waitForFunction:async()=>{},evaluate:async()=>({authenticatedReady:true,loginReady:false}),waitForTimeout:async()=>assert.fail('complete inventory is already observed')};
+  const result=await readMaxAccountMonitor(page,options);assert.equal(navigations,1);assert.deepEqual(result.conversationsToSync,['88']);
+  assert.equal(sent.length,2);assert.deepEqual(sent.map(value=>inspectMaxFrameHeader(value).opcode),[19,53]);
+  assert.doesNotMatch(JSON.stringify(result),/PRIVATE|token|viewerId|profile/);
+});
