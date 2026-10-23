@@ -8,7 +8,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 import { parseHTML } from 'linkedom';
 import { projectMaxMonitorSnapshot, parseMaxMonitorCursor, readMaxMonitor,
-  parseArguments, validateCommandOptions, runtimeErrorPayload, installDocumentHttpObserver,
+  parseArguments, validateCommandOptions, runtimeErrorPayload, installDocumentHttpObserver, maxConversationReference, outgoingMaxConversationReference,
 } from '../scripts/trelio-max.mjs';
 
 // Fixed synthetic identities only. Production obtains these from the signed
@@ -197,4 +197,25 @@ test('MAX monitor exercises the ordinary DOM reader without returning bodies or 
     else process.env.TRELIO_CONFIG_HOME = previousHome;
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+
+test('MAX first-send hint and future native monitor event reuse one scope without granting identity or replay',async()=>{
+  const native=rows=>({...snapshot(rows),nativeIdentityVerified:true});
+  const row=(id)=>message(id,'synthetic',{senderUserId:'9',nativeRevision:'a'.repeat(64),nativeOutgoing:false,nativeForwarded:false});
+  const selected={...options,conversationReferences:true};
+  const outgoing=maxConversationReference(snapshot([]).chatReference,selected,true);
+  const baseline=projectMaxMonitorSnapshot(native([row('1')]),selected);
+  assert.equal(parseMaxMonitorCursor(baseline.nextCursor).scope,outgoing.scope);
+  const reply=projectMaxMonitorSnapshot(native([row('1'),row('2')]),{...selected,cursor:baseline.nextCursor});
+  assert.equal(reply.events[0].conversationKey,outgoing.conversationKey);
+  assert.deepEqual(reply.readState,{readReceiptsSent:false});
+  assert.notEqual(maxConversationReference(snapshot([]).chatReference,{...selected,account:{...selected.account,companyBinding:'b'.repeat(64)}},true).conversationKey,outgoing.conversationKey);
+  assert.throws(()=>maxConversationReference({...snapshot([]).chatReference,stableId:'456'},selected,true));
+  const page={url:()=>options.chat,evaluate:async()=>({ready:true,title:'PRIVATE_TITLE'}),context:()=>({})};
+  assert.deepEqual(await outgoingMaxConversationReference(page,selected,{url:options.chat}),
+    {available:false,code:'MAX_CONVERSATION_REFERENCE_UNAVAILABLE'},'no native observation is not a successful routing hint');
+  const parsed=parseArguments(['send','--chat',options.chat,'--message','synthetic','--confirm','--conversation-reference'],environment);
+  assert.equal(parsed.conversationReference,true);validateCommandOptions(parsed);
+  assert.throws(()=>validateCommandOptions({...parsed,command:'read'}));
 });

@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.7.3",
-    "summary": "Подписанное объявление существующей защищённой формы настройки отдельного локального почтового аккаунта цифрового ассистента."
+    "version": "2.7.4",
+    "summary": "Непрозрачная native ссылка первой отправки для привязки будущего ответа к существующей задаче без повторной отправки."
   },
   "connection": null,
   "runtime": {
-    "version": "2.7.3",
+    "version": "2.7.4",
     "minimumHostVersion": "3.18.0",
     "entrypoint": {
       "path": "trelio-email.py",

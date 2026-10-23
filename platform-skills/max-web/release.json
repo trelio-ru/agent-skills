@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "max-web",
-    "version": "2.11.1",
-    "summary": "Подписанное объявление существующего ручного входа MAX в отдельном локальном профиле цифрового ассистента с обязательным probe после закрытия окна."
+    "version": "2.11.2",
+    "summary": "Непрозрачная native ссылка первой отправки для привязки будущего ответа к существующей задаче без повторной отправки."
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,7 +17,7 @@
     ]
   },
   "runtime": {
-    "version": "2.11.1",
+    "version": "2.11.2",
     "minimumHostVersion": "3.18.0",
     "entrypoint": {
       "path": "trelio-max.mjs",

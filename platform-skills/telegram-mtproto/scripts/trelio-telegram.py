@@ -5660,10 +5660,14 @@ async def command_send_async(args: argparse.Namespace, identity: Identity) -> di
     try:
         await ensure_authorized(client)
         entity = await resolve_entity(client, args.chat)
+        # Correlation is prepared before the single send. Failure to obtain a
+        # hint is not sending failure and must never invite a repeated send.
+        conversation = await outgoing_conversation_reference(client, identity, entity) if getattr(args, "conversation_reference", False) else None
         if selected_author:
             _f, _t, utils, _events, markdown = import_telethon_workflows()
-            return await import_interaction_tools().explicit_send(client, entity, None, args, identity,
+            result = await import_interaction_tools().explicit_send(client, entity, None, args, identity,
                        await client.get_me(), sys.modules[__name__], utils, markdown)
+            return {**result, **({"conversationReference": conversation} if conversation is not None else {})}
         send_options: dict[str, Any] = {
             "file": args.file,
             "parse_mode": TELEGRAM_TEXT_PARSE_MODE,
@@ -5682,6 +5686,7 @@ async def command_send_async(args: argparse.Namespace, identity: Identity) -> di
             "sent": schedule_at is None,
             "scheduled": schedule_at is not None,
             "chat": public_entity(entity),
+            **({"conversationReference": conversation} if conversation is not None else {}),
             "messageId": sent.id,
             "parseMode": TELEGRAM_TEXT_PARSE_MODE_NAME,
             "policyMode": mode,
@@ -6296,6 +6301,21 @@ def monitor_conversation_key(identity: Identity, account_binding: str, peer_id: 
     body = json.dumps([account_binding, str(peer_id)], separators=(",", ":")).encode("ascii")
     digest = hmac.new(overview_cursor_key(identity), b"trelio-telegram-conversation/v1\x00" + body, hashlib.sha256).hexdigest()
     return "telegram-conversation/v1." + digest
+
+
+async def outgoing_conversation_reference(client: Any, identity: Identity, entity: Any) -> dict:
+    """SAME account-cloud HMAC, not a model hash or permission to read/ACK.
+
+    Marked peer identity comes from the resolved native entity, never the input
+    username or a display name. No monitor cursor/history/body is read or saved.
+    Only this optional metadata failure is swallowed; send failures stay intact.
+    """
+    try:
+        _functions, _types, utils, _events, _markdown = import_telethon_workflows()
+        binding = await overview_binding(client, identity, "monitor/v1", monitor_account_scope(identity), version="monitor-checkpoint/v1")
+        return {"available": True, "conversationKey": monitor_conversation_key(identity, binding, utils.get_peer_id(entity))}
+    except Exception:
+        return {"available": False, "code": "TELEGRAM_CONVERSATION_REFERENCE_UNAVAILABLE"}
 
 
 async def reference_conversation_key(client: Any, identity: Identity, args: argparse.Namespace) -> str:
@@ -7028,6 +7048,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Future RFC 3339 timestamp with seconds and an explicit UTC offset or Z",
     )
     send.add_argument("--confirm", action="store_true")
+    send.add_argument("--conversation-reference", action="store_true", help="Return an opaque account-bound routing hint; no task/read authority")
     import_authoring_tools().delivery_parsers(send)
     import_interaction_tools().sender_parser(send, simple=True)
     edit = commands.add_parser(

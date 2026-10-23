@@ -34,3 +34,16 @@
   подтверждают. При неизвестной разметке сохраняется `MAX_UI_UNSUPPORTED`.
 
 ## Операции и подтверждение
+
+
+## Первая исходящая переписка
+
+`send --conversation-reference` дополнительно возвращает native opaque
+`conversationReference`. Это account-scoped correlation hint, не owner identity,
+read/processing proof либо разрешение отправки. Dedicated host добавляет только
+current native source candidates; ключ/источник не вычисляй и не угадывай.
+Свяжи exact возвращённые координаты с существующей задачей через обычный bind.
+`available=false` не отменяет успешную отправку и никогда не разрешает повторить
+send ради hint. Наличие source не включает монитор или Windows business readiness.
+MAX требует тот же canonical chat URL и browser-observed native history;
+имя чата или display author не заменяют native reference.

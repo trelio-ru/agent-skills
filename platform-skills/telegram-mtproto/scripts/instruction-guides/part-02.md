@@ -45,3 +45,15 @@ sandbox и approval mode клиента не заменяют, не выдают
 заменяет прежний; попытка mutation погашает approval до provider request.
 
 ## Сообщение по ссылке, ветка и reply
+
+
+## Первая исходящая переписка
+
+`send --conversation-reference` дополнительно возвращает native opaque
+`conversationReference`. Это account-scoped correlation hint, не owner identity,
+read/processing proof либо разрешение отправки. Dedicated host добавляет только
+current native source candidates; ключ/источник не вычисляй и не угадывай.
+Свяжи exact возвращённые координаты с существующей задачей через обычный bind.
+`available=false` не отменяет успешную отправку и никогда не разрешает повторить
+send ради hint. Наличие source не включает монитор или Windows business readiness.
+Telegram использует прежний account-cloud monitor HMAC и native marked peer.

@@ -40,6 +40,19 @@ class ConversationReferences(unittest.TestCase):
         with mock.patch.object(M, 'imap_connection', return_value=contextlib.nullcontext(client)):
             return M.command_monitor(args)
 
+    def test_outgoing_hint_matches_future_inbox_reply_and_never_uses_sent_uid_or_body(self):
+        message = email.message_from_bytes(b'Message-ID: <new-root@example.test>\r\n\r\n', policy=M.default)
+        client = ScriptedImap(examine(1, next_uid=12) + examine(2, next_uid=13))
+        with mock.patch.object(M, 'imap_connection', return_value=contextlib.nullcontext(client)):
+            result = M.outgoing_email_conversation_reference(ACCOUNT, message)
+        reply = email.message_from_bytes(b'Message-ID: <reply@example.test>\r\nReferences: <new-root@example.test>\r\n\r\n', policy=M.default)
+        self.assertEqual(result, {'available': True, 'conversationKey': M.email_conversation_key(self.scope, 17, 999, reply)})
+        self.assertEqual(client.sent, [b'TEST1 EXAMINE "INBOX"\r\n', b'TEST2 EXAMINE "INBOX"\r\n'])
+        for responses in [examine(1, next_uid=12) + examine(2, next_uid=13, validity=18), b'TEST1 NO PRIVATE_IMAP_ERROR\r\n']:
+            with mock.patch.object(M, 'imap_connection', return_value=contextlib.nullcontext(ScriptedImap(responses))):
+                self.assertEqual(M.outgoing_email_conversation_reference(ACCOUNT, message),
+                                 {'available': False, 'code': 'EMAIL_CONVERSATION_REFERENCE_UNAVAILABLE'})
+
     def test_monitor_reads_only_exact_identity_headers_then_rechecks_native_namespace(self):
         client = ScriptedImap(examine(1, next_uid=12) + b'* SEARCH 11\r\nTEST2 OK searched\r\n'
                               + header_fetch() + examine(4, next_uid=12))

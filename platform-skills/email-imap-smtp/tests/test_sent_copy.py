@@ -65,6 +65,14 @@ class SentCopyTests(unittest.TestCase):
         self.stack.enter_context(mock.patch.object(MODULE, "imap_connection", return_value=contextlib.nullcontext(client)))
         return client
 
+    def test_optional_hint_failure_preserves_one_positive_smtp_send(self):
+        with mock.patch.object(MODULE, 'outgoing_email_conversation_reference', return_value={'available': False, 'code': 'EMAIL_CONVERSATION_REFERENCE_UNAVAILABLE'}), \
+             mock.patch.object(MODULE, 'save_sent_copy', return_value={'saved': False, 'verified': False, 'status': 'unavailable'}):
+            result = self.send(['--conversation-reference'])
+        self.assertTrue(result['sent'])
+        self.smtp.sendmail.assert_called_once()
+        self.assertEqual(result['conversationReference']['available'], False)
+
     def test_sent_copy_contains_exact_smtp_mime_bytes_and_is_read_back(self):
         client = self.use_imap(
             LIST_AND_SELECT + b'* SEARCH\r\nTEST3 OK searched\r\n'

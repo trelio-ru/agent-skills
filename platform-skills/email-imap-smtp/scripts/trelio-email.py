@@ -2404,6 +2404,27 @@ def email_conversation_key(scope: str, validity: int, uid: int, message: Message
     return "email-conversation/v1." + hashlib.sha256(encoded).hexdigest()
 
 
+def outgoing_email_conversation_reference(account: Account, message: Message) -> dict[str, Any]:
+    """Exact monitor/reply parser with incoming INBOX scope, never Sent UID.
+
+    Thread headers are untrusted correlation metadata, not sender/owner proof.
+    SMTP-only stays intentionally unavailable without opening IMAP. Network or
+    cleanup failure returns a closed hint and never masks/repeats SMTP sending.
+    """
+    try:
+        require_imap(account)
+        with imap_connection(account) as client:
+            folder = select_folder(client, "INBOX", special_use=None)
+            validity, _next_uid = email_monitor_position(client)
+            key = email_conversation_key(email_monitor_scope(account, folder), validity, 1, message)
+            select_folder(client, "INBOX", special_use=None)
+            if email_monitor_position(client)[0] != validity:
+                raise MailboxError("email_conversation_scope_changed")
+        return {"available": True, "conversationKey": key}
+    except Exception:
+        return {"available": False, "code": "EMAIL_CONVERSATION_REFERENCE_UNAVAILABLE"}
+
+
 def email_conversation_key_argument(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"email-conversation/v1\.[a-f0-9]{64}", value):
         raise argparse.ArgumentTypeError("EMAIL_REFERENCE_INPUT_INVALID")
@@ -2985,14 +3006,15 @@ def command_send(args: argparse.Namespace) -> dict[str, Any]:
         body = Path(args.body_file).expanduser().read_text(encoding="utf-8")
     body = body_with_signature(body, signature)
     return send_message(account, to_addresses, cc_addresses, bcc_addresses, args.subject,
-                        body, outgoing_attachments(args.attach), policy_mode=policy_mode)
+                        body, outgoing_attachments(args.attach), policy_mode=policy_mode,
+                        conversation_reference=getattr(args, "conversation_reference", False))
 
 
 def send_message(account: Account, to_addresses: list[str], cc_addresses: list[str],
                  bcc_addresses: list[str], subject: str, body: str,
                  attachments: list[tuple[str, str, bytes]], *,
                  reply_headers: dict[str, str] | None = None,
-                 policy_mode: str = "confirm") -> dict[str, Any]:
+                 policy_mode: str = "confirm", conversation_reference: bool = False) -> dict[str, Any]:
     """One SMTP/Sent-copy path for new messages and already reviewed replies.
 
     Callers own policy and authorization. Reply construction owns the only two
@@ -3014,6 +3036,10 @@ def send_message(account: Account, to_addresses: list[str], cc_addresses: list[s
     # for server-copy detection and the caller's later verification.
     message_id = make_msgid(domain=account.email_address.rsplit("@", 1)[-1].encode("idna").decode("ascii"))
     message["Message-ID"] = message_id
+    # The future reply arrives in INBOX, not Sent. Capture only readonly
+    # incoming-folder identity before SMTP; do not fetch mail or create a
+    # cursor. A failed hint cannot turn positive SMTP acceptance into replay.
+    conversation = outgoing_email_conversation_reference(account, message) if conversation_reference else None
     message.set_content(body)
     for filename, mime_type, payload in attachments:
         major_type, minor_type = mime_type.split("/", 1)
@@ -3079,6 +3105,7 @@ def send_message(account: Account, to_addresses: list[str], cc_addresses: list[s
     return {
         "sent": not bool(refused),
         "smtpStatus": "accepted" if not refused else "partially_accepted" if accepted_recipients else "not_sent",
+        **({"conversationReference": conversation} if conversation is not None else {}),
         "smtpCleanupWarning": smtp_cleanup_warning,
         "wireBytes": len(wire_message),
         "attachmentCount": len(attachments),
@@ -3513,6 +3540,7 @@ def build_parser() -> argparse.ArgumentParser:
     save_parser.set_defaults(handler=command_save_attachment)
     send_parser = subparsers.add_parser("send", help="Send one explicitly confirmed message")
     send_parser.add_argument("--account", required=True)
+    send_parser.add_argument("--conversation-reference", action="store_true", help="Return an incoming INBOX-scoped thread hint; no task/read authority")
     send_parser.add_argument("--to", action="append", default=[])
     send_parser.add_argument("--cc", action="append", default=[])
     send_parser.add_argument("--bcc", action="append", default=[])

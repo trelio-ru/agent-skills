@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "originalSha256": "01ad5a914f46c4b752ea97b613388e4079c6340cccee2081382a7f3af3abc4e8",
+  "originalSha256": "10e1ed1f27730fc27d4e6f154fa268f406e4cce9a25cc24a72bf02b596ae5bd0",
   "sections": [
     {
       "file": "part-01.md",
@@ -23,8 +23,8 @@
     },
     {
       "file": "part-03.md",
-      "bytes": 8085,
-      "sha256": "7497d3414a770e4842c0520a18c67385c7702a8e2089fa0e511d1ae0c5ee5a88",
+      "bytes": 9144,
+      "sha256": "dcb9bf138a32b9f1216611ad3a53c82186b72bed19b701d7323cf21625838da6",
       "relocatedLinks": [
         {
           "from": "../../docs/email-send-diagnostics.md",

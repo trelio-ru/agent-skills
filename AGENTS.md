@@ -32,6 +32,8 @@ Never use it to reset an existing cursor or claim historical edit recovery.
 `ack-reference` uses native range coverage, one non-retried write and read-back;
 only committed exact refs may cover unread history. Verify-only reconciles an
 unknown result without writing; generic task/source read admission never grants ACK.
+First-send `--conversation-reference` uses the SAME provider monitor scope;
+no hint failure may replay a positive send. [Contract](docs/agent-skill-connections.md#first-outgoing-routing).
 Opaque conversation keys reuse the private cursor HMAC in a separate domain;
 mapped reference reads/ACK verify the original key before body/native effects.
 Keys correlate account-bound peers, never sender identity or processing authority.

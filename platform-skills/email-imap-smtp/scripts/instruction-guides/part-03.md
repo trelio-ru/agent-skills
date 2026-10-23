@@ -75,3 +75,16 @@ EML прикладывается как файл `application/octet-stream` с �
 Подробный [контракт диагностики](../../../../docs/email-send-diagnostics.md).
 
 ## Согласование отправки
+
+
+## Первая исходящая переписка
+
+`send --conversation-reference` дополнительно возвращает native opaque
+`conversationReference`. Это account-scoped correlation hint, не owner identity,
+read/processing proof либо разрешение отправки. Dedicated host добавляет только
+current native source candidates; ключ/источник не вычисляй и не угадывай.
+Свяжи exact возвращённые координаты с существующей задачей через обычный bind.
+`available=false` не отменяет успешную отправку и никогда не разрешает повторить
+send ради hint. Наличие source не включает монитор или Windows business readiness.
+Почта использует входящий INBOX UIDVALIDITY и generated Message-ID; Sent copy
+не задаёт этот scope. SMTP-only возвращает unavailable без доступа к IMAP.

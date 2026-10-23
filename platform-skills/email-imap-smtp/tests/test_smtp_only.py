@@ -129,6 +129,19 @@ class SmtpOnlyTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.MailboxError, "signature_review_required"):
             MODULE.command_send(MODULE.build_parser().parse_args([*argv, "--confirm"]))
 
+    def test_smtp_only_outgoing_hint_is_unavailable_without_imap_or_another_send(self):
+        account = self.configure_sender()
+        smtp = mock.MagicMock()
+        smtp.__enter__.return_value = smtp
+        smtp.__exit__.return_value = False
+        smtp.sendmail.return_value = {}
+        with mock.patch.object(MODULE, "smtp_connection", return_value=smtp), \
+             mock.patch.object(MODULE, "imap_connection", side_effect=AssertionError("SMTP-only cannot open IMAP")):
+            result = MODULE.send_message(account, ["recipient@example.com"], [], [], "synthetic", "body", [], conversation_reference=True)
+        self.assertTrue(result["sent"])
+        self.assertEqual(result["conversationReference"], {"available": False, "code": "EMAIL_CONVERSATION_REFERENCE_UNAVAILABLE"})
+        smtp.sendmail.assert_called_once()
+
     def test_unknown_smtp_result_never_retries_or_attempts_imap(self):
         account = self.configure_sender()
         smtp = mock.MagicMock()
