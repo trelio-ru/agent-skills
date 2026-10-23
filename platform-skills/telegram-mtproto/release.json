@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.13.1",
-    "summary": "Непрозрачные ссылки на переписку для маршрутизации цифрового ассистента и проверка исходного аккаунта перед точным чтением и отметкой «прочитано»."
+    "version": "2.13.2",
+    "summary": "Подписанное объявление существующего ручного QR-входа в отдельный локальный аккаунт цифрового ассистента без переноса чужой сессии."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,8 +18,8 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.13.1",
-    "minimumHostVersion": "3.7.0",
+    "version": "2.13.2",
+    "minimumHostVersion": "3.18.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
       "interpreter": "python"
@@ -30,6 +30,11 @@
       "local-accounts-v1"
     ],
     "files": [
+      {
+        "source": "scripts/trelio-secret-setup.json",
+        "path": "trelio-secret-setup.json",
+        "mode": 420
+      },
       {
         "source": "scripts/trelio-assistant-execution.json",
         "path": "trelio-assistant-execution.json",

@@ -22,6 +22,26 @@ SPEC.loader.exec_module(MODULE)
 
 
 class TrelioEmailTests(unittest.TestCase):
+    def test_signed_human_input_configure_uses_host_selected_new_account_and_protected_browser(self):
+        declaration = json.loads((SCRIPT_PATH.parent / "trelio-secret-setup.json").read_text(encoding="utf-8"))
+        command = declaration["humanInputCommands"][0]
+        binding = {"id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "providerRef": None,
+                   "name": "Managed mailbox", "comment": "", "companyBinding": "a" * 64}
+        self.assertEqual(command["arguments"], ["configure"])
+        # The actual CLI injects only its trusted host mailbox locator before
+        # argparse. No account/endpoint/password value is added to the signed
+        # command, and no legacy human providerRef is adopted by this fixture.
+        with mock.patch.dict(os.environ, {"TRELIO_SKILL_ACCOUNT_JSON": json.dumps(binding)}), \
+                mock.patch.object(sys, "argv", ["trelio-email.py", *command["arguments"]]), \
+                mock.patch.object(MODULE, "command_configure", return_value={"configured": True}) as configure, \
+                mock.patch("builtins.print"):
+            self.assertEqual(MODULE.main(_owned=True), 0)
+        args = configure.call_args.args[0]
+        self.assertEqual(args.account, binding["id"])
+        self.assertEqual(args.password_input, "browser")
+        self.assertFalse(args.terminal_prompts)
+        self.assertFalse(args.from_agent_secret)
+
     def test_personal_catalogue_import_preserves_names_comments_without_credentials(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(MODULE, "CONFIG_PATH", pathlib.Path(directory) / "accounts.toml"), \
                 mock.patch.object(MODULE, "load_raw_config", return_value={"accounts": {"work": {"description": "Клиенты\nи счета"}}}):

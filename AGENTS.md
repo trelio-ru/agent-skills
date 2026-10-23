@@ -4,6 +4,10 @@ Task execution цифрового ассистента требует подпи
 `trelio-assistant-execution.json`; общий host проверяет его до account/provider
 I/O. Наличие setup/ACK CLI или account binding не открывает эти команды task-у.
 Контракт – [личные подключения](docs/agent-skill-connections.md#assistant-command-policy).
+Signed human-input setup uses the existing protected provider login only:
+`trelio-secret-setup.json` v2, host >=3.18.0, literal argv and SAME account selector.
+It never adds login to taskCommands, imports a human session or supplies secrets.
+See [setup contract](docs/agent-skill-connections.md#signed-human-input-setup).
 
 Этот репозиторий содержит только общие provider-инструкции, runtime-код,
 синтетические тесты и безопасные инструменты разработки. Корпоративные навыки,
