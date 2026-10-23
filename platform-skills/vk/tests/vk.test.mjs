@@ -90,6 +90,12 @@ test('packaged first-install CLI preserves existing sessions and delivers comple
     const bytes = await fs.readFile(guide.path);
     assert.equal(bytes.length, guide.sizeBytes);
     assert.ok(bytes.length <= 16384, `${name}: preserve bounded complete delivery`);
+    // Git's native Windows checkout uses CRLF. Budget the actual delivered
+    // bytes for both checkout formats so a document cannot pass locally and
+    // exceed the complete-guide limit only on Windows.
+    const lf = bytes.toString('utf8').replace(/\r\n/g, '\n');
+    assert.ok(Buffer.byteLength(lf.replace(/\n/g, '\r\n')) <= 16384,
+      `${name}: complete delivery must fit with Windows line endings`);
     assert.equal(createHash('sha256').update(bytes).digest('hex'), guide.sha256);
     assert.equal(bytes.toString('utf8').replace(/\r\n/g, '\n'),
       (await fs.readFile(path.join(source, 'references', name), 'utf8')).replace(/\r\n/g, '\n'));
@@ -115,16 +121,29 @@ test('signed host dispatch fixes VK scope, text mode, attachments and search pac
   const setup = await runVk(['setup'], env);
   assert.equal(setup.observationMode, 'text');
   assert.equal(setup.attachmentDownloads, true);
-  assert.deepEqual(setup.domains, []);
+  assert.deepEqual(setup.domains, ['vk.ru', 'vk.com']);
   assert.deepEqual(setup.origins, [
     'https://vk.ru', 'https://www.vk.ru', 'https://m.vk.ru',
     'https://vk.com', 'https://www.vk.com', 'https://m.vk.com',
     'https://id.vk.ru', 'https://id.vk.com', 'https://login.vk.ru', 'https://login.vk.com',
     'https://connect.vk.com',
+    'https://vk.me',
   ]);
   assert.deepEqual(setup.args, { url: 'https://vk.ru/' });
   for (const origin of setup.origins) {
     assert.equal((await runVk(['navigate', '--url', `${origin}/`], env)).args.url, `${origin}/`);
+  }
+  // Product sections are user-selected, not an exclusion list in the skill.
+  // These calls exercise provider validation and the exact signed host policy;
+  // they do not claim that a fixture rendered the real payment/call interface.
+  for (const url of ['https://vk.ru/calls', 'https://vk.com/video',
+    'https://ads.vk.com/', 'https://pay.vk.com/', 'https://api.vk.com/',
+    'https://login.id.vk.ru/', 'https://vk.me/']) {
+    const section = await runVk(['navigate', '--url', url], env);
+    assert.equal(section.operation, 'navigate');
+    assert.equal(section.args.url, url);
+    assert.deepEqual(section.domains, setup.domains);
+    assert.deepEqual(section.origins, setup.origins);
   }
   const enter = await runVk(['submit-search', '--frameId', 'fresh'], env);
   assert.equal(enter.operation, 'submit');
@@ -175,11 +194,13 @@ test('first navigation enters manual login; restored session and pending failure
   }
 });
 
-test('unrelated domains, VK ads/API, credentials in URLs and unsafe schemes fail before host import', async () => {
+test('VK hostname scope rejects lookalikes, credentials, ports and unsafe schemes before host import', async () => {
   const env = { TRELIO_SKILL_ID: 'vk', TRELIO_VISUAL_SESSION_MODULE_URL: 'file:///must-not-load.mjs' };
   for (const url of ['https://other.test/', 'https://vk.ru.other.test/', 'https://other-vk.ru/',
-    'https://ads.vk.com/', 'https://api.vk.com/', 'https://pay.vk.com/', 'https://vk.me/',
+    'https://pay.vk.com.other.test/', 'https://other-vk.com/', 'https://vk.me.other.test/',
+    'https://other.vk.me/', 'https://www.vk.ru.other.test/',
     'https://vk.ru:444/', 'https://user:password@vk.ru/', 'http://vk.ru/', 'file:///private',
+    'http://pay.vk.com/', 'https://pay.vk.com:444/', 'https://user:password@pay.vk.com/',
     'javascript:alert(1)', 'not a url']) {
     await assert.rejects(runVk(['navigate', '--url', url], env), /VK_NAVIGATION_BLOCKED/);
   }

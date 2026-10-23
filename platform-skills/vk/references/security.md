@@ -11,9 +11,11 @@ clipboard, selectors, evaluate или произвольного результ�
 
 Signed implementation закрепляет observationMode=text, attachment opt-in,
 HTTPS origins и начальную страницу VK. Caller не меняет их аргументом или env.
-Навигация ограничена exact origins vk.ru/vk.com, их www/m, id/login и
-connect.vk.com. Wildcard domains нет: API, ads, pay, чужие Mini Apps, vk.me,
-медиа-CDN и URL с userinfo не становятся допустимыми по общему бренду VK.
+Навигация разрешает HTTPS на vk.ru/vk.com с поддоменами и exact vk.me.
+Проверка DNS label исключает чужие suffix/prefix lookalikes; userinfo,
+нестандартные порты, другие схемы и сторонние сайты не входят в scope.
+У provider нет запрета на разделы VK по их названию. Отсутствие команды
+загрузки, камеры или микрофона является технической границей конкретного действия.
 Host применяет origin/document/MIME policy также к redirects и clicks.
 
 Host запускает отдельный managed headed Chromium без remote-debugging
@@ -101,7 +103,9 @@ attachment_link_required/unsupported/too_large/limit_reached не сбрасыв
 свои просроченные regular files, не свежие originals или неизвестные entries.
 Это не антивирусная проверка и не обещание шифрования всего диска. Чтение и
 разрешённое сохранение сохраняют обычные ACL/provenance; ZIP/macros/executable
-не запускаются. Получение не разрешает исходящие файлы, upload или публикацию.
+не запускаются. Получение само по себе не даёт поручения на пересылку или
+публикацию. Команды исходящей загрузки в этом API пока нет; это capability gap,
+а не запрет на фото.
 
 Чтение может менять native unread state VK; browser interface не предоставляет
 passive PEEK, source intake или ACK. Сообщения, посты, комментарии, реакции,

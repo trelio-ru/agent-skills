@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk",
-    "version": "0.1.0",
-    "summary": "ВКонтакте через отрисованный текст и изображения: поиск, страницы, сообщества и диалоги с защищённым ручным входом"
+    "version": "0.1.1",
+    "summary": "Убраны запреты на разделы ВКонтакте; браузерная навигация поддерживает поддомены VK и vk.me"
   },
   "connection": {
     "schemaVersion": 1,
@@ -15,7 +15,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.1.0",
+    "version": "0.1.1",
     "minimumHostVersion": "3.11.0",
     "entrypoint": { "path": "trelio-vk.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],

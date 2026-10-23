@@ -4,15 +4,19 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const MINIMUM_HOST_VERSION = '3.11.0';
-// A VK ID login is shared by many products. Allow only the social website and
-// its login surfaces, not every vk.com subdomain (ads/API/payments are separate
-// workflows). The host applies this same signed list to redirects and clicks.
+// The user chooses the VK workflow. A section moving onto a VK subdomain must
+// not become a provider-authored product ban. Keep the network boundary at the
+// actual VK hostnames, with label-aware matching, HTTPS and no userinfo/ports.
+// The host applies the same signed scope to clicks, redirects and snapshots;
+// its HTML-only observation and separate mutation authority still apply.
+const DOMAINS = Object.freeze(['vk.ru', 'vk.com']);
 const ORIGINS = Object.freeze([
   'https://vk.ru', 'https://www.vk.ru', 'https://m.vk.ru',
   'https://vk.com', 'https://www.vk.com', 'https://m.vk.com',
   'https://id.vk.ru', 'https://id.vk.com',
   'https://login.vk.ru', 'https://login.vk.com',
   'https://connect.vk.com',
+  'https://vk.me',
 ]);
 const commands = {
   doctor: {}, setup: {}, 'show-login': {}, status: {}, wait: {}, ready: {},
@@ -52,12 +56,14 @@ export function parseVkCommand(argv) {
 }
 
 function validateNavigation(raw) {
-  // Reject an unrelated product before loading the host. This is provider
+  // Reject an unrelated website before loading the host. This is provider
   // scope validation; the host still owns document/MIME/frame and redirect
   // checks, including clicks that do not pass through this CLI URL argument.
   try {
     const url = new URL(raw);
-    if (!ORIGINS.includes(url.origin) || url.username || url.password) throw new Error();
+    const inScope = ORIGINS.includes(url.origin)
+      || DOMAINS.some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`));
+    if (!inScope || url.protocol !== 'https:' || url.port || url.username || url.password) throw new Error();
   } catch { throw new Error('VK_NAVIGATION_BLOCKED'); }
 }
 
@@ -117,7 +123,7 @@ export async function runVk(argv, env = process.env) {
   // or caller-selected browser implementation is available here.
   const policy = {
     observationMode: 'text', attachmentDownloads: true,
-    origins: [...ORIGINS], domains: [], env,
+    origins: [...ORIGINS], domains: [...DOMAINS], env,
   };
   if (operation === 'navigate') {
     // Unlike Avito, VK has no guest work mode. A first navigation without a

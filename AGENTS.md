@@ -200,7 +200,10 @@ text-first, pacing и лимит пяти вкладок;
 ВКонтакте следует отдельным [workflow](platform-skills/vk/references/workflow.md)
 и [security](platform-skills/vk/references/security.md) на том же visual host API.
 Проверенный вход обязателен до рабочих действий; гостевой режим не поддерживается.
-Exact social/login origins не расширяются wildcard ради VK ID, CDN или отказа;
+Scope включает HTTPS vk.ru/vk.com с поддоменами и exact vk.me; разделы VK
+не запрещаются по названию. Hostname проверяется по DNS label, чужие lookalikes,
+userinfo и нестандартные порты закрыты. Технический отказ конкретного control
+не становится запретом раздела; capabilities и live готовность не выдумываются.
 vk-ads и его credentials остаются отдельно. Перед записью сверяются account,
 автор (профиль/сообщество), получатель и текст. Чтение диалога не обещает passive
 PEEK, а synthetic dispatch не доказывает live VK compatibility.
