@@ -83,7 +83,10 @@ Linux credential flow в этой версии fail-closed. Полный кон�
 skill `vk`; общий VK ID не переносит авторизацию из `vk-ads` и не даёт доступ
 к рекламным credentials. Вход ВКонтакте обязателен до рабочих действий;
 проверяется после восстановления соцсети,
-не по записи account или странице VK ID. Контракты:
+не по записи account или странице VK ID. Разделы внутри HTTPS vk.ru/vk.com
+с поддоменами и exact vk.me выбираются по поручению пользователя, без
+provider-запретов по названию. Недостающая команда/неподдержанный control
+сообщаются отдельно от наличия сессии. Контракты:
 [VK workflow](../platform-skills/vk/references/workflow.md),
 [VK security](../platform-skills/vk/references/security.md).
 
