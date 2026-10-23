@@ -319,6 +319,10 @@ browser-команд. Первый click может открыть только 
 доступность state и следующего разрешённого click в той же Page/helper.
 Advisory wait без запроса требует осмотра промежуточного экрана, а не повторного
 входа, нового helper или выдуманного ручного challenge.
+Ошибки caller/download не проходят через `safeAuthorizationFailure` и не меняют
+verified callback. Оба concurrent promise сразу наблюдаются; `saveAs` завершается
+до cleanup всех собственных ресурсов даже при отказе одного close. Проверяй
+исполняемый пример из playwright-client.md, включая timeout раньше click и EOF.
 Завершённый ESIA helper не владеет жизненным циклом browser. Следующая отдельно
 разрешённая процедура может подключить новый helper к той же подготовленной Page
 после verified callback и оценки прежнего бизнес-результата. Pending/failure либо

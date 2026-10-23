@@ -121,16 +121,27 @@ await page.goto(origin);
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
 let login, observer, step, stopped = false, transitionFailed = false;
 const usedSteps = new Set();
+function reportCallerFailure() {
+  // A locator, download or command error is not an ESIA rejection. Keep the
+  // helper's independent proof, and never publish raw Playwright exceptions:
+  // their messages/stacks can contain private URLs, selectors and form data.
+  emit({ phase: 'caller_action_failed',
+    ...(observer ? { authorization: observer.snapshot(), step } : {}) });
+}
 async function handle(command) {
   if (stopped) return;
   if (command.action === 'state') return emit(observer ? { ...observer.snapshot(), step } : { phase: 'caller_ready' });
   if (command.action === 'finish') {
     stopped = true;
-    await login?.close();
-    await context.close();
-    await browser.close();
+    // Attempt every owned resource even if an earlier close rejects. This
+    // example created the browser; a caller attached to somebody else's
+    // browser must close only its own helper/context, never that browser.
+    let cleanupFailed = false;
+    for (const close of [() => login?.close(), () => context.close(), () => browser.close()]) {
+      try { await close(); } catch { cleanupFailed = true; }
+    }
     lines.close();
-    return emit({ phase: 'caller_closed' });
+    return emit({ phase: cleanupFailed ? 'caller_cleanup_failed' : 'caller_closed' });
   }
   // Only inspected, authorized login controls on the public source page.
   // Do not use this command to inspect/click auth fields or accept consent.
@@ -179,8 +190,12 @@ async function handle(command) {
 const lines = readline.createInterface({ input: process.stdin });
 let queue = Promise.resolve();
 lines.on('line', line => {
-  queue = queue.then(() => handle(JSON.parse(line))).catch(error =>
-    emit({ phase: 'caller_action_failed', ...safeAuthorizationFailure(error) }));
+  queue = queue.then(() => handle(JSON.parse(line))).catch(reportCallerFailure);
+});
+// EOF also ends this caller's ownership. A command failure above keeps the
+// queue and session alive so state/finish remain available for recovery.
+lines.on('close', () => {
+  queue = queue.then(() => handle({ action: 'finish' })).catch(reportCallerFailure);
 });
 emit({ phase: 'caller_ready' });
 // After verified callback, add the site's business steps to handle() and check
@@ -218,6 +233,48 @@ Context; `authorization_failed` сохраняет точный безопасн
 evidence. Verified callback проверяется ещё на сайте. Состояние копируется,
 его изменение не меняет handoff. Terminal failure сохраняется; поздний cleanup
 не отменяет verified callback. Observer не повторяет и не закрывает helper.
+
+## Скачивание в caller-owned context
+
+Селектор выбирается по свежей странице: HTML-тег `a` с `role="button"`
+совпадает с ролью `button`, а не `link`. Для «Скачать всё» сначала проверь
+фактическую роль либо уникальный точный текстовый locator и его доступность.
+Не закрепляй selector по одному внешнему виду и не увеличивай timeout вместо
+проверки элемента.
+
+Для загрузки в текущей Page можно использовать такой helper. Он получает уже
+проверенный locator и явный путь задачи; загрузка завершается только после
+успешного `saveAs`, а не по одному событию `download`.
+
+```js
+async function saveCurrentPageDownload(page, trigger, filePath) {
+  // Attach rejection handlers to BOTH operations before the click starts.
+  // A missing locator may still be waiting when the download times out.
+  // Wait for both to settle so the command queue cannot race a late click.
+  const [downloaded, clicked] = await Promise.allSettled([
+    page.waitForEvent('download', { timeout: 20000 }),
+    Promise.resolve().then(() => trigger.click({ timeout: 20000 })),
+  ]);
+  if (clicked.status === 'rejected') throw clicked.reason;
+  if (downloaded.status === 'rejected') throw downloaded.reason;
+  await downloaded.value.saveAs(filePath);
+}
+```
+
+Не создавай `waitForEvent('download')` с отложенным `await` без немедленного
+обработчика отказа: timeout может завершить Node caller, пока click ещё ждёт.
+Если сайт открывает новую страницу, до клика подпишись на `context.on('page')`
+и `page.on('download')` существующих и новых страниц. У каждого запущенного
+`saveAs` сразу должны быть success/error handlers; перед `finish` дождись всех
+сохранений. Пример выше рассчитан только на текущую Page и один download.
+
+Ошибка click/download/save не отменяет verified callback, не доказывает отказ
+ЕСИА и не разрешает новый вход, повтор заявки или подписи. Сохраняй её как
+`caller_action_failed` отдельно от `observer.snapshot()`, не пропускай через
+`safeAuthorizationFailure`. Проверь текущий бизнес-результат в той же сессии.
+После окончания либо невосстановимого сбоя выполни `finish`; cleanup закрывает
+только ресурсы этого caller. Наличие ZIP/PDF/SIG ещё не доказывает валидность
+подписи: проверка комплекта следует [сценарию Госключа](goskey-signing.md).
 
 ## Границы и ошибки
 
