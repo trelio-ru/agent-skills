@@ -141,14 +141,11 @@ HTML/JS/JSON/XML/SVG и executable не экспортируются. Один o
 Разрешённое долговременное сохранение сделай обычным Workspace flow до expiry,
 с источником и SHA-256. Получение не разрешает пересылку/новую аудиторию.
 
-Origin policy подписана: HTTPS на vk.ru/vk.com с поддоменами и exact vk.me.
-Граница hostname проверяется по DNS label: vk.ru.other.test и other-vk.ru
-не относятся к VK. Userinfo, нестандартные порты и другие схемы закрыты.
-Имя раздела внутри этого scope не ограничивает навигацию. Сторонний сайт или CDN
-за его пределами требует отдельной поддержки; сохраняй конкретный отказ, без
-обхода через прямой HTTP или другую реализацию. HTML/MIME guards продолжают
-отличать страницу от raw API response. Поддержка download не доказывает
-совместимость всех живых attachment flows VK.
+Подписанный scope: HTTPS vk.ru/vk.com с поддоменами и exact vk.me, без запрета
+разделов. DNS label исключает vk.ru.other.test и other-vk.ru; userinfo, порты
+и другие схемы закрыты. Внешний сайт/CDN требует отдельной поддержки: сохраняй
+конкретный отказ без другого transport. HTML/MIME guards отличают страницу от
+raw API response. Download API не доказывает все живые attachment flows VK.
 
 Обычные target-blank anchors host направляет в той же вкладке без активации окна;
 произвольные popup/iframe этим не проверены. Максимум пять вкладок за lifetime

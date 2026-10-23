@@ -90,6 +90,12 @@ test('packaged first-install CLI preserves existing sessions and delivers comple
     const bytes = await fs.readFile(guide.path);
     assert.equal(bytes.length, guide.sizeBytes);
     assert.ok(bytes.length <= 16384, `${name}: preserve bounded complete delivery`);
+    // Git's native Windows checkout uses CRLF. Budget the actual delivered
+    // bytes for both checkout formats so a document cannot pass locally and
+    // exceed the complete-guide limit only on Windows.
+    const lf = bytes.toString('utf8').replace(/\r\n/g, '\n');
+    assert.ok(Buffer.byteLength(lf.replace(/\n/g, '\r\n')) <= 16384,
+      `${name}: complete delivery must fit with Windows line endings`);
     assert.equal(createHash('sha256').update(bytes).digest('hex'), guide.sha256);
     assert.equal(bytes.toString('utf8').replace(/\r\n/g, '\n'),
       (await fs.readFile(path.join(source, 'references', name), 'utf8')).replace(/\r\n/g, '\n'));
