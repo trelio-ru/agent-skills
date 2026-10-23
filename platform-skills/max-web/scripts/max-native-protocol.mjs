@@ -176,10 +176,44 @@ export const decodeMaxNativeFrame = frame => {
 export const createMaxNativeObserver = () => {
   let viewerId = null, available = false, failed = false;
   const pending = new Map(), histories = new Map();
-  const reset = () => { pending.clear(); histories.clear(); viewerId = null; available = false; };
+  let account = null;
+  const accountChat = row => {
+    const chatId = nativeId(row?.id);
+    if (!chatId || BigInt(chatId) < -(1n<<63n) || BigInt(chatId) >= (1n<<63n)) failure();
+    return chatId;
+  };
+  const appendAccountChats = rows => {
+    if (!Array.isArray(rows) || rows.length > MAX_ROWS || !account) failure();
+    for (const row of rows) {
+      const chatId=accountChat(row),lastEventTime=nativeTime(row.lastEventTime);
+      if(lastEventTime===null)failure();
+      const unread=Number.isSafeInteger(row.newMessages)&&row.newMessages>=0?row.newMessages:null;
+      if(chatId!=='0'){
+        const previous=account.chats.get(chatId);
+        if(!previous||previous.lastEventTime<=lastEventTime)account.chats.set(chatId,{chatId,lastEventTime,unread});
+      }
+    }
+    if(account.chats.size>MAX_ROWS) failure();
+  };
+  const reset = () => { pending.clear(); histories.clear(); viewerId = null; available = false; account=null; };
   const observeOutbound = (frame, socket) => {
     const header = inspectMaxFrameHeader(frame);
-    if (!header || header.cmd !== 0 || header.opcode !== 49) return;
+    if (!header || header.cmd !== 0 || ![19,49,53].includes(header.opcode)) return;
+    if(header.opcode===19||header.opcode===53){
+      try{
+        const {payload}=decodeMaxNativeFrame(frame);
+        // Observe the public browser's own full sync/list chain. Never retain
+        // token/userAgent/config or synthesize a request to reset its cache.
+        if(header.opcode===19){
+          if(pending.size>=100)failure();
+          if(ownObject(payload)&&nativeTime(payload.chatsSync)===0)pending.set(`account:${socket}:${header.seq}`,{kind:'sync'});
+        }else if(account&&account.socket===socket&&nativeTime(payload?.marker)===account.marker
+          &&account.marker>0&&!payload.filterUnanswered&&!payload.chatTypes){
+          if(pending.size>=100)failure();
+          pending.set(`account:${socket}:${header.seq}`,{kind:'page',marker:account.marker});
+        }
+      }catch{failed=true;}return;
+    }
     try {
       const { payload } = decodeMaxNativeFrame(frame), chatId = nativeId(payload?.chatId);
       if (!chatId || !Number.isInteger(payload.backward) || payload.backward < 1 || payload.backward > MAX_ROWS
@@ -189,14 +223,28 @@ export const createMaxNativeObserver = () => {
   };
   const observeInbound = (frame, socket) => {
     const header = inspectMaxFrameHeader(frame);
-    if (!header || ![19, 49].includes(header.opcode) || header.cmd !== 1) return;
+    if (!header || ![19, 49,53].includes(header.opcode) || header.cmd !== 1) return;
     try {
       const { payload } = decodeMaxNativeFrame(frame);
       if (header.opcode === 19) {
         const next = nativeId(payload?.profile?.contact?.id);
         if (!next || next.startsWith('-') || next === '0') return;
         if (viewerId !== null && viewerId !== next) { reset(); failed = true; return; }
-        viewerId = next; return;
+        viewerId = next;
+        const request=pending.get(`account:${socket}:${header.seq}`);pending.delete(`account:${socket}:${header.seq}`);
+        if(request?.kind==='sync'){
+          const time=nativeTime(payload.time),marker=payload.chatMarker===undefined?0:nativeTime(payload.chatMarker);
+          if(time===null||time===0||marker===null)failure();
+          account={viewerId:next,time,marker,socket,chats:new Map()};appendAccountChats(payload.chats);
+        }
+        return;
+      }
+      if(header.opcode===53){
+        const request=pending.get(`account:${socket}:${header.seq}`);pending.delete(`account:${socket}:${header.seq}`);
+        if(!request||request.kind!=='page'||!account||account.socket!==socket||request.marker!==account.marker)return;
+        const marker=nativeTime(payload?.marker);
+        if(marker===null||marker>=account.marker)failure();
+        appendAccountChats(payload.chats);account.marker=marker;return;
       }
       const request = pending.get(`${socket}:${header.seq}`);
       pending.delete(`${socket}:${header.seq}`);
@@ -240,6 +288,8 @@ export const createMaxNativeObserver = () => {
   };
   return Object.freeze({ observeOutbound, observeInbound,
     snapshot: chatId => available && !failed ? histories.get(chatId) ?? null : null,
+    accountSnapshot:()=>!failed&&account?{viewerId:account.viewerId,time:account.time,complete:account.marker===0,
+      chats:[...account.chats.values()].map(row=>({...row})).sort((a,b)=>BigInt(a.chatId)<BigInt(b.chatId)?-1:BigInt(a.chatId)>BigInt(b.chatId)?1:0)}:null,
     state: () => ({ available: available && !failed, failed }), reset });
 };
 

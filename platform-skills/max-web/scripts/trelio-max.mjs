@@ -308,6 +308,8 @@ const parseArguments = (argv, environment = process.env) => {
     conversationReferences: false,
     conversationReference: false,
     unreadBackfill: false,
+    accountDiscovery:false,
+    initialAccountCursor:"",
     coveredReferences: [],
     verifyOnly: false,
     contact: "",
@@ -373,6 +375,8 @@ const parseArguments = (argv, environment = process.env) => {
     else if (argument === '--conversation-references') options.conversationReferences = true;
     else if (argument === '--conversation-reference') options.conversationReference = true;
     else if (argument === '--unread-backfill') options.unreadBackfill = true;
+    else if (argument === '--account-discovery') options.accountDiscovery = true;
+    else if (argument === '--initial-account-cursor') options.initialAccountCursor = value();
     else if (argument === "--covered-reference") options.coveredReferences.push(value());
     else if (argument === "--verify-only") options.verifyOnly = true;
     else if (argument === "--context-ref") options.contextRef = normalizeChatContextRef(value());
@@ -518,6 +522,8 @@ Usage:
   trelio-max.mjs profile --chat "Точное название или URL" [--context-ref TASK_URL]
   trelio-max.mjs read --chat "Название или URL" --limit 20 --pages 2 [--context-ref TASK_URL]
   trelio-max.mjs monitor --chat "https://web.max.ru/123" [--cursor POSITION] [--limit 20] [--pages 2]
+  trelio-max.mjs monitor --account-discovery --conversation-references [--cursor POSITION]
+  trelio-max.mjs monitor --chat "https://web.max.ru/123" --conversation-references --initial-account-cursor POSITION
   trelio-max.mjs ack-reference --chat URL --message-id ID --expected-revision SHA256 --expected-conversation-key KEY --covered-reference ID:SHA256 [--verify-only | --confirm]
   trelio-max.mjs read-reference --chat "https://web.max.ru/123" --message-id ID --expected-revision SHA256 --expected-scope SHA256
   trelio-max.mjs unread --limit 10 --pages 1
@@ -1316,6 +1322,9 @@ const validateCommandOptions = (options) => {
     || options.expectedConversationKey && !['read-reference', 'ack-reference'].includes(options.command)) {
     throw new MaxRuntimeError('MAX_REFERENCE_INPUT_INVALID', 'Conversation references require an exact passive source operation.');
   }
+  if((options.accountDiscovery||options.initialAccountCursor)&&(options.command!=='monitor'||!options.conversationReferences
+    ||options.accountDiscovery&&(options.chat||options.initialAccountCursor||options.unreadBackfill)
+    ||options.initialAccountCursor&&(options.cursor||options.unreadBackfill||!options.chat)))throw new MaxRuntimeError('MAX_MONITOR_SCOPE_REQUIRED','Account discovery and initial history use separate passive positions.');
   if (options.unreadBackfill && (options.command !== 'monitor' || !options.conversationReferences || options.cursor)) {
     throw new MaxRuntimeError('MAX_MONITOR_SCOPE_REQUIRED', 'Initial unread capture needs a new native MAX source.');
   }
@@ -1340,16 +1349,17 @@ const validateCommandOptions = (options) => {
     throw new MaxRuntimeError("MAX_MONITOR_INVALID_CURSOR", "--cursor belongs only to the passive monitor command.");
   }
   if (options.command === "monitor") {
-    if (!options.chat || normalizeChatUrl(options.chat) !== options.chat
+    if ((!options.accountDiscovery&&(!options.chat || normalizeChatUrl(options.chat) !== options.chat))
       || options.confirm || options.dryRun || options.query || options.targetText || options.targetAuthor || options.messageId
       || options.contact || options.title || options.members.length || options.reaction || options.toChat
       || options.approvalHash || options.fallbackFor || options.assistSession || options.assistSnapshot
       || options.assistRef || options.assistText || options.assistKey || options.assistDeltaY
       || options.assistX !== null || options.assistY !== null || options.holdMsExplicit
       || options.iterations !== 1 || options.intervalMs !== 15_000) {
-      throw new MaxRuntimeError("MAX_MONITOR_SCOPE_REQUIRED", "Monitor needs one exact canonical chat URL and no mutation/discovery arguments.");
+      throw new MaxRuntimeError("MAX_MONITOR_SCOPE_REQUIRED", "Monitor needs a native account root or one exact canonical chat URL and no mutation arguments.");
     }
-    if (options.cursor) parseMaxMonitorCursor(options.cursor);
+    if (options.cursor) (options.accountDiscovery?parseMaxAccountCursor:parseMaxMonitorCursor)(options.cursor);
+    if(options.initialAccountCursor)parseMaxAccountCursor(options.initialAccountCursor);
   }
   if (options.contextRef && !["dialogs", "read", "profile"].includes(options.command)) {
     throw new Error(`${options.command} does not accept --context-ref. Task bindings are read-only and never select a mutation recipient.`);
@@ -4849,6 +4859,54 @@ const maxConversationReference = (reference, options, nativeReferences) => {
   return { scope, conversationKey };
 };
 
+/** One immutable native server-time baseline for this managed account.
+ * Discovery is repeated independently of unread flags; it is not a global
+ * message cursor. Every conversation has its OWN existing native anchor. */
+const maxAccountScope=(options,viewerId)=>{
+  if(!hasChatReferenceIdentity(options)||!UUID_PATTERN.test(options.account?.id??'')
+    ||!monitorDigest(options.account?.companyBinding)||!/^\d{1,38}$/u.test(viewerId??''))throw new MaxRuntimeError('MAX_MONITOR_SCOPE_CHANGED','The native managed account changed.');
+  return sha256(JSON.stringify(['max-account-discovery/v1',options.companyId,options.memberId,options.connectionId,
+    options.account.id,options.account.companyBinding,viewerId]));
+};
+const parseMaxAccountCursor=value=>{
+  try{
+    if(typeof value!=='string'||value.length>2048||!/^[A-Za-z0-9_-]+$/u.test(value))throw new Error();
+    const row=JSON.parse(Buffer.from(value,'base64url').toString('utf8'));
+    if(!row||Object.keys(row).sort().join(',')!=='scope,startedAt,v'||row.v!==3||!monitorDigest(row.scope)
+      ||!Number.isSafeInteger(row.startedAt)||row.startedAt<=0)throw new Error();
+    return row;
+  }catch{throw new MaxRuntimeError('MAX_MONITOR_INVALID_CURSOR','The original MAX account position is required.');}
+};
+const projectMaxAccountSnapshot=(snapshot,options)=>{
+  if(!snapshot||snapshot.complete!==true||!Number.isSafeInteger(snapshot.time)||snapshot.time<=0
+    ||!Array.isArray(snapshot.chats)||snapshot.chats.length>1000||new Set(snapshot.chats.map(row=>row.chatId)).size!==snapshot.chats.length
+    ||snapshot.chats.some(row=>typeof row.chatId!=='string'||!/^-[1-9]\d{0,18}$|^[1-9]\d{0,18}$/u.test(row.chatId)
+      ||BigInt(row.chatId)<-(1n<<63n)||BigInt(row.chatId)>=(1n<<63n)||!Number.isSafeInteger(row.lastEventTime)||row.lastEventTime<0
+      ||row.unread!==null&&(!Number.isSafeInteger(row.unread)||row.unread<0)))throw new MaxRuntimeError('MAX_MONITOR_GAP','The full native MAX dialog chain is not available.');
+  const scope=maxAccountScope(options,snapshot.viewerId),previous=options.cursor?parseMaxAccountCursor(options.cursor):null;
+  if(previous&&(previous.scope!==scope||previous.startedAt>snapshot.time))throw new MaxRuntimeError('MAX_MONITOR_SCOPE_CHANGED','MAX account baseline changed.');
+  const nextCursor=Buffer.from(JSON.stringify({v:3,scope,startedAt:snapshot.time})).toString('base64url');
+  // Rescan every native conversation, but schedule history only when its native
+  // event time changed, or when the first inventory has unread/unknown rows.
+  // The ORIGINAL previous full scan seeds each newly signalled child stream;
+  // a message read on another device cannot disappear behind an unread filter.
+  const conversationsToSync=snapshot.chats.filter(row=>previous?row.lastEventTime>=previous.startedAt:row.unread!==0)
+    .map(row=>row.chatId);
+  return {schemaVersion:1,baselineOnly:true,events:[],nextCursor,hasMore:false,conversationsToSync,
+    initialAccountCursor:options.cursor||nextCursor,
+    coverage:{accountDiscovery:true,nativeDialogIds:true,complete:true,snapshotAtomic:false,unreadOnly:false},readState:{readReceiptsSent:false}};
+};
+const readMaxAccountMonitor=async(page,options)=>{
+  await openHome(page,options);
+  const observer=readGuards.get(page.context?.())?.native,deadline=Date.now()+Math.min(options.timeoutMs,45_000);
+  while(Date.now()<deadline){
+    const snapshot=observer?.accountSnapshot?.();
+    if(snapshot?.complete)return projectMaxAccountSnapshot(snapshot,options);
+    await page.waitForTimeout(100);
+  }
+  throw new MaxRuntimeError('MAX_MONITOR_GAP','The bounded native account inventory did not complete; preserve its previous position.');
+};
+
 const projectMaxNativeReferences = (snapshot, options) => {
   const reference = snapshot?.chatReference;
   const nativeReferences = options.conversationReferences === true || Boolean(options.expectedConversationKey);
@@ -4911,13 +4969,16 @@ const joinMaxNativeSnapshot = (snapshot, observer) => {
     if (!matching || normalizedText && !row.text.includes(normalizedText)) return snapshot;
     messages.push({ ...row, senderUserId: matching.senderUserId,
       nativeText: matching.nativeText, nativeReplyText: matching.nativeReplyText, nativeRevision: matching.revision,
-      nativeOutgoing: matching.outgoing, nativeForwarded: matching.forwarded });
+      nativeOutgoing: matching.outgoing, nativeForwarded: matching.forwarded,nativeTime:matching.time });
   }
   const unread = native.readMark === null ? null : native.messages.filter(row => row.time > native.readMark);
   const unreadComplete = unread !== null && native.unread !== null && native.unread === unread.length
     && native.request.from === -1 && native.request.backward >= unread.length;
   return { ...snapshot, messages, nativeIdentityVerified: true, nativeFullTimelineVerified: fullTimeline,
-    nativeUnreadMessageIds: unreadComplete ? unread.map(row => row.messageId) : null };
+    nativeUnreadMessageIds: unreadComplete ? unread.map(row => row.messageId) : null,
+    nativeAccountViewerId:native.viewerId,nativeWindowLatest:native.request.from===-1,
+    nativeWindowStart:native.messages.length?Math.min(...native.messages.map(row=>row.time)):null,
+    nativeWindowMessages:native.messages.map(row=>({messageId:row.messageId,time:row.time})) };
 };
 
 const projectMaxMonitorSnapshot = (snapshot, options) => {
@@ -4936,7 +4997,17 @@ const projectMaxMonitorSnapshot = (snapshot, options) => {
   }
   let selected = [], hasMore = false, anchor;
   if (!previous) {
-    if (initialUnread) {
+    if(options.initialAccountCursor){
+      const account=parseMaxAccountCursor(options.initialAccountCursor);
+      if(account.scope!==maxAccountScope(options,snapshot.nativeAccountViewerId))throw new MaxRuntimeError('MAX_MONITOR_SCOPE_CHANGED','The original MAX account baseline differs.');
+      if(!nativeReferences||!Array.isArray(snapshot.nativeUnreadMessageIds)||snapshot.nativeWindowLatest!==true
+        ||!(snapshot.nativeFullTimelineVerified===true||snapshot.nativeWindowStart!==null&&snapshot.nativeWindowStart<=account.startedAt))throw new MaxRuntimeError('MAX_MONITOR_GAP','MAX history does not cover the original account baseline.');
+      const present=new Set(messages.map(row=>row.messageId));
+      if(snapshot.nativeUnreadMessageIds.some(id=>!present.has(id))||!Array.isArray(snapshot.nativeWindowMessages)
+        ||snapshot.nativeWindowMessages.some(row=>row.time>=account.startedAt&&!present.has(row.messageId)))throw new MaxRuntimeError('MAX_MONITOR_GAP','The initial native MAX window is not fully rendered.');
+      const initial=messages.filter((row,index)=>snapshot.nativeUnreadMessageIds.includes(row.messageId)||snapshot.messages[index].nativeTime>=account.startedAt);
+      selected=initial.slice(0,options.limit);hasMore=initial.length>selected.length;anchor=selected.at(-1)??messages.at(-1)??null;
+    }else if (initialUnread) {
       if (!nativeReferences || !Array.isArray(snapshot.nativeUnreadMessageIds)) {
         throw new MaxRuntimeError('MAX_MONITOR_GAP', 'The initial native MAX unread interval is not fully available.');
       }
@@ -4967,9 +5038,10 @@ const projectMaxMonitorSnapshot = (snapshot, options) => {
   }
   const nextCursor = Buffer.from(JSON.stringify({v:nativeReferences ? 2 : 1,scope,anchorId:anchor?.messageId ?? null,
     anchorRevision:anchor?.revision ?? null})).toString("base64url");
-  return {schemaVersion:1,baselineOnly:previous===null && (!initialUnread || selected.length === 0),events:selected,nextCursor,hasMore,
-    coverage:{historicalBackfill:initialUnread && selected.length > 0,earlierEditsIncluded:false,otherChatsIncluded:false,ownerIdentityAvailable,
+  return {schemaVersion:1,baselineOnly:previous===null && ((!initialUnread&&!options.initialAccountCursor) || selected.length === 0),events:selected,nextCursor,hasMore,
+    coverage:{historicalBackfill:(initialUnread||Boolean(options.initialAccountCursor)) && selected.length > 0,earlierEditsIncluded:false,otherChatsIncluded:false,ownerIdentityAvailable,
       ...(initialUnread ? { initialUnreadOnly: true, snapshotAtomic: false } : {}),
+      ...(options.initialAccountCursor?{initialAccountInterval:true,snapshotAtomic:false}:{}),
       ...(nativeReferences ? { nativeMessageVerified: true } : {})},
     readState:{readReceiptsSent:false}};
 };
@@ -4992,6 +5064,7 @@ const outgoingMaxConversationReference = async (page, options, opened) => {
 
 const readMaxMonitor = async (page, options) => {
   try {
+    if(options.accountDiscovery)return await readMaxAccountMonitor(page,options);
     const snapshot = await readChatMessages(page,{...options,limit:MAX_MONITOR_WINDOW});
     return projectMaxMonitorSnapshot(options.conversationReferences
       ? joinMaxNativeSnapshot(snapshot, readGuards.get(page.context?.())?.native) : snapshot,options);
@@ -6641,6 +6714,7 @@ export {
   withBrowser,
   readUnreadDialogs,
   projectMaxMonitorSnapshot,
+  projectMaxAccountSnapshot,parseMaxAccountCursor,readMaxAccountMonitor,
   parseMaxMonitorCursor,
   readMaxMonitor,
   projectMaxMessageReference,

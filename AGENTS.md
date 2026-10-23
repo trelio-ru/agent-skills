@@ -255,6 +255,7 @@ bounded v10/LZ4/MessagePack sender join and one-use browser-emitted read-state50
 Committed ACK needs full native unread coverage, including equal-time rows;
 unknown outcomes are verify-only. Legacy v1 does not acquire owner identity.
 No vendor source/real packet fixture, direct socket request or human session import.
+MAX account discovery requires the browser's native full-sync19 + complete53 marker chain; each conversation retains its OWN cursor and original seed. Partial/unread/DOM lists never advance an account checkpoint. See [monitoring](docs/max-monitoring.md).
 MAX task policy v2 additionally denies model browser executable/window/budget
 overrides. Legacy host refusal is preserved until common enforcement is verified;
 the descriptor alone does not prove readiness or native owner identity.
