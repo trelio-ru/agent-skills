@@ -23,6 +23,21 @@ SPEC.loader.exec_module(MODULE)
 
 
 class TrelioTelegramTests(unittest.TestCase):
+    def test_signed_human_input_uses_existing_qr_login_without_terminal_or_model_values(self):
+        declaration = json.loads((SCRIPT_PATH.parent / "trelio-secret-setup.json").read_text(encoding="utf-8"))
+        command = declaration["humanInputCommands"][0]
+        args = MODULE.build_parser().parse_args(command["arguments"])
+        self.assertEqual(command["id"], "login")
+        self.assertEqual(command["purpose"], "authenticate_existing")
+        self.assertEqual(args.command, "login")
+        self.assertTrue(args.qr)
+        self.assertFalse(args.terminal_prompts)
+        # The fixed QR branch uses the existing tokenized loopback page/2FA
+        # input. It cannot ask the model to choose or supply a login factor.
+        with mock.patch.object(MODULE, "prompt_choice", side_effect=AssertionError("Unexpected model/terminal choice")):
+            self.assertEqual(MODULE.login_method_for_args(args), MODULE.LOGIN_METHOD_QR)
+        self.assertLessEqual(args.qr_timeout * 1000, command["maximumDurationMs"])
+
     def test_personal_account_keeps_storage_but_scopes_approval(self):
         original = self.identity()
         account = {"id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "companyBinding": "a" * 64,

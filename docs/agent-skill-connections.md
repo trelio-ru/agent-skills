@@ -171,6 +171,45 @@ abbreviations: host не угадывает их по имени флага. For
 runtime и exact provider/native tests должны быть проверены до task rollout;
 сам файл не включает автономную работу или source intake.
 
+<a id="signed-human-input-setup"></a>
+
+## Подписанное объявление ручного входа
+
+Новые packages Telegram MTProto 2.13.2, почты 2.7.3 и MAX 2.11.1 включают
+`trelio-secret-setup.json` v2 и требуют host >=3.18.0. Старые immutable artifacts
+не получают эту capability задним числом. До подписанного выпуска provider/host
+наличие source JSON не подтверждает доступность managed setup.
+
+`commands` остаётся обязательным массивом Secret-backed команд с прежним
+`secret-checkout`. Здесь он пуст: отдельный непустой `humanInputCommands` требует
+`local-session`, не разрешает Secret delivery. Каждая запись содержит только
+уникальные `id`, `purpose=authenticate_existing`, literal `arguments` (до восьми
+токенов) и optional `maximumDurationMs` от 60 000 до 600 000. IDs и полные argv
+уникальны среди обоих массивов. Unknown поля/версии закрыты у общего host parser;
+пустые оба массива не объявляют setup. Provider не вводит второй parser/исполнитель.
+
+| Provider | commandId | Подписанный argv | Проверка результата |
+| --- | --- | --- | --- |
+| Telegram MTProto | `login` | `login --qr` | Existing runtime подтверждает native authorization; QR/2FA остаются в одноразовой локальной странице |
+| Почта | `configure` | `configure` | После protected submit выполняется отдельный `doctor`; сохранение не доказывает вход или доставку |
+| MAX | `login` | `login --headed` | Человек сам выбирает фоновое окно и закрывает его после входа; затем обязателен один свежий `probe` |
+
+Host выбирает точный account UUID в прежнем изолированном managed каталоге и
+передаёт `--local-account UUID` только своему селектору, вне immutable provider
+argv. Почтовый CLI сам получает внутренний mailbox locator из native host
+binding; модель не добавляет `--account`, endpoint, пароль или другие значения.
+Новый пустой локальный slot нужен для авторизации уже существующего внешнего
+аккаунта; это не signup, импорт human credentials/session или копирование source
+account. Полномочия на owner setup, company binding и работу task проверяются
+независимо. Обычный `taskCommands` по-прежнему не включает login/configure.
+
+Человек вводит все факторы в прежнюю protected form/окно. Нет нового provider,
+vault, UI, terminal prompts или автоматизации входа; факторы не доставляются
+через env, Secret checkout или model values. Native host identity/account binding сохраняются.
+Лимит команды не продлевает исходную lease. Cancel, expiry и неизвестный outcome
+сохраняют прежний запрет blind retry; сначала exact readiness/read-back. Setup
+не разрешает sending, ACK или другие внешние mutations.
+
 <a id="human-input-completion"></a>
 
 ## Продолжение после ввода

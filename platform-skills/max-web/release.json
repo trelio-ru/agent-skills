@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "max-web",
-    "version": "2.11.0",
-    "summary": "MAX использует прежний браузер для native sender identity и отдельного exact read ACK: полный unread interval, one-use frame и native read-back без replay."
+    "version": "2.11.1",
+    "summary": "Подписанное объявление существующего ручного входа MAX в отдельном локальном профиле цифрового ассистента с обязательным probe после закрытия окна."
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,8 +17,8 @@
     ]
   },
   "runtime": {
-    "version": "2.11.0",
-    "minimumHostVersion": "3.7.0",
+    "version": "2.11.1",
+    "minimumHostVersion": "3.18.0",
     "entrypoint": {
       "path": "trelio-max.mjs",
       "interpreter": "node"
@@ -35,6 +35,11 @@
       "manualAssist": true
     },
     "files": [
+      {
+        "source": "scripts/trelio-secret-setup.json",
+        "path": "trelio-secret-setup.json",
+        "mode": 420
+      },
       {
         "source": "scripts/trelio-assistant-execution.json",
         "path": "trelio-assistant-execution.json",

@@ -193,14 +193,23 @@ test("MAX worker closure receipt is private, credential-free and cannot replace 
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.11.0");
-  assert.equal(release.runtime.version, "2.11.0");
-  assert.equal(release.runtime.minimumHostVersion, "3.7.0");
+  assert.equal(release.release.version, "2.11.1");
+  assert.equal(release.runtime.version, "2.11.1");
+  assert.equal(release.runtime.minimumHostVersion, "3.18.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: "messenger-profile",
     manualAssist: true,
   });
+});
+
+test("MAX signed human-input command selects the existing headed login and its bounded handoff", () => {
+  const descriptor = JSON.parse(fs.readFileSync(new URL("../scripts/trelio-secret-setup.json", import.meta.url), "utf8"));
+  const command = descriptor.humanInputCommands[0], parsed = parseRuntimeArguments(command.arguments);
+  assert.equal(command.id, "login");assert.equal(command.purpose, "authenticate_existing");
+  assert.equal(parsed.command, "login");assert.equal(parsed.headed, true);
+  assert.equal(parsed.holdMs, command.maximumDurationMs);
+  assert.equal(parsed.chromeExecutable, "", "the existing host discovery selects the browser executable");
 });
 
 test("MAX requests background launch for headed login and ordinary browser work", async () => {
