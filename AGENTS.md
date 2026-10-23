@@ -207,6 +207,9 @@ userinfo и нестандартные порты закрыты. Техниче
 vk-ads и его credentials остаются отдельно. Перед записью сверяются account,
 автор (профиль/сообщество), получатель и текст. Чтение диалога не обещает passive
 PEEK, а synthetic dispatch не доказывает live VK compatibility.
+Исходящие файлы VK требуют host >=3.17.0: signed `fileUploads`, native chooser
+и frozen originals по [контракту](platform-skills/vk/references/uploads.md).
+Форматы не запрещаются; source/его ACL не меняются, input не повторяется.
 Изменение поведения одновременно обновляет контракт и содержательные тесты.
 Google AI Search следует полному [контракту](platform-skills/google-ai-search/SKILL.md):
 instruction-only browser tool, скрытая вкладка без изменения host launch policy,

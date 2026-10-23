@@ -26,6 +26,10 @@ test('closed coordinate interface rejects executable, script, selector and attac
     ['click', '--frameId', 'frame', '--x', '9007199254740992', '--y', '1'],
     ['read-text', '--includeControls', 'sometimes'], ['navigate', '--url'],
     ['submit-search', '--frameId', 'f', '--x', '1'],
+    ['upload-files', '--frameId', 'f', '--x', '1', '--y', '2', '--files', 'not json'],
+    ['upload-files', '--frameId', 'f', '--x', '1', '--y', '2', '--files', '[]'],
+    ['upload-files', '--frameId', 'f', '--x', '1', '--y', '2', '--files', '[null]'],
+    ['upload-files', '--frameId', 'f', '--x', '1', '--y', '2', '--files', '["relative"]'],
   ]) assert.throws(() => parseVkCommand(args), /VK_COMMAND_INVALID/);
 });
 
@@ -35,7 +39,7 @@ test('first discovery and metadata need no account, environment, browser or secu
   const commands = await runVk(['commands'], noEnvironmentAccess);
   assert.equal(commands.schemaVersion, 1);
   assert.deepEqual(commands.commands['download-attachment'], { frameId: 'string', x: 'number', y: 'number' });
-  assert.equal((await runVk(['guides'], noEnvironmentAccess)).guides.length, 2);
+  assert.equal((await runVk(['guides'], noEnvironmentAccess)).guides.length, 3);
   for (const command of ['commands', 'guides', '__trelio_accounts_import']) {
     await assert.rejects(runVk([command, '--path', '/private'], noEnvironmentAccess), /VK_COMMAND_INVALID/);
   }
@@ -83,9 +87,9 @@ test('packaged first-install CLI preserves existing sessions and delivers comple
   assert.equal(result.stderr, '');
   const metadata = JSON.parse(result.stdout);
   assert.equal(metadata.requiredBeforeWork, 'all_in_order');
-  assert.equal(metadata.guides.length, 2);
+  assert.equal(metadata.guides.length, 3);
   for (const [index, guide] of metadata.guides.entries()) {
-    const name = ['workflow.md', 'security.md'][index];
+    const name = ['workflow.md', 'security.md', 'uploads.md'][index];
     assert.equal(await fs.realpath(guide.path), await fs.realpath(path.join(temporary, 'references', name)));
     const bytes = await fs.readFile(guide.path);
     assert.equal(bytes.length, guide.sizeBytes);
@@ -112,7 +116,8 @@ test('signed host dispatch fixes VK scope, text mode, attachments and search pac
   const temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-vk-api-')));
   t.after(() => fs.rm(temporary, { recursive: true, force: true }));
   const host = path.join(temporary, 'host.mjs');
-  await fs.writeFile(host, `export function runVisualSession({env,...input}) {
+  await fs.writeFile(host, `export const VISUAL_FILE_UPLOAD_API = 'trelio.visual-file-upload/v1';
+  export function runVisualSession({env,...input}) {
     return input.operation === 'status' ? { state: 'saved_unverified' } : input;
   }`);
   const env = { TRELIO_SKILL_ID: 'vk', TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(host).href,
@@ -121,6 +126,7 @@ test('signed host dispatch fixes VK scope, text mode, attachments and search pac
   const setup = await runVk(['setup'], env);
   assert.equal(setup.observationMode, 'text');
   assert.equal(setup.attachmentDownloads, true);
+  assert.equal(setup.fileUploads, true);
   assert.deepEqual(setup.domains, ['vk.ru', 'vk.com']);
   assert.deepEqual(setup.origins, [
     'https://vk.ru', 'https://www.vk.ru', 'https://m.vk.ru',
@@ -156,6 +162,12 @@ test('signed host dispatch fixes VK scope, text mode, attachments and search pac
   const file = await runVk(['download-attachment', '--frameId', 'fresh', '--x', '10', '--y', '20'], env);
   assert.equal(file.operation, 'download-attachment');
   assert.deepEqual(file.args, { frameId: 'fresh', x: 10, y: 20 });
+  const files = [path.join(temporary, 'original.docx'), path.join(temporary, 'original.zip')];
+  const upload = await runVk(['upload-files', '--frameId', 'fresh', '--x', '10', '--y', '20',
+    '--files', JSON.stringify(files)], env);
+  assert.equal(upload.operation, 'upload-files');
+  assert.equal(upload.fileUploads, true);
+  assert.deepEqual(upload.args, { frameId: 'fresh', x: 10, y: 20, files });
   assert.deepEqual(await runVk(['status'], env), { state: 'saved_unverified' });
   for (const operation of ['show-login', 'wait', 'ready', 'screenshot', 'close', 'disconnect']) {
     assert.equal((await runVk([operation], env)).operation, operation);
@@ -192,6 +204,16 @@ test('first navigation enters manual login; restored session and pending failure
     assert.deepEqual(await navigate(status), status);
     assert.deepEqual(calls.map(call => call.operation), ['status']);
   }
+});
+
+test('outgoing file selection requires the actual additive host API before dispatch', async t => {
+  const temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-vk-old-upload-host-')));
+  t.after(() => fs.rm(temporary, { recursive: true, force: true }));
+  const host = path.join(temporary, 'host.mjs');
+  await fs.writeFile(host, 'export function runVisualSession() { throw new Error("MUST_NOT_DISPATCH"); }');
+  await assert.rejects(runVk(['upload-files', '--frameId', 'fresh', '--x', '1', '--y', '2',
+    '--files', JSON.stringify([path.join(temporary, 'original.bin')])],
+  { TRELIO_SKILL_ID: 'vk', TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(host).href }), /VK_HOST_UPGRADE_REQUIRED/);
 });
 
 test('VK hostname scope rejects lookalikes, credentials, ports and unsafe schemes before host import', async () => {

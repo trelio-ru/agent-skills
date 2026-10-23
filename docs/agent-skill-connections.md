@@ -78,8 +78,8 @@ macOS использует Keychain + AES-GCM, Windows – DPAPI CurrentUser;
 Linux credential flow в этой версии fail-closed. Полный контракт – в
 [security.md](../platform-skills/vk-ads/references/security.md).
 
-Браузерные Авито и ВКонтакте используют тот же каталог с minimum host 3.11.0,
-собственным `protected-snapshot` и ручным входом. Snapshot ВКонтакте принадлежит
+Браузерные Авито (minimum host 3.11.0) и ВКонтакте (3.17.0) используют тот же
+каталог, собственный `protected-snapshot` и ручной вход. Snapshot VK принадлежит
 skill `vk`; общий VK ID не переносит авторизацию из `vk-ads` и не даёт доступ
 к рекламным credentials. Вход ВКонтакте обязателен до рабочих действий;
 проверяется после восстановления соцсети,
@@ -88,7 +88,8 @@ skill `vk`; общий VK ID не переносит авторизацию из
 provider-запретов по названию. Недостающая команда/неподдержанный control
 сообщаются отдельно от наличия сессии. Контракты:
 [VK workflow](../platform-skills/vk/references/workflow.md),
-[VK security](../platform-skills/vk/references/security.md).
+[VK security](../platform-skills/vk/references/security.md),
+[исходящие файлы](../platform-skills/vk/references/uploads.md).
 
 В пределах одного origin Trelio и OS user `account list` показывает accounts
 этого навыка, включая ещё не включённые в текущей компании. Агент предлагает
