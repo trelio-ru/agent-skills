@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.13.2",
-    "summary": "Подписанное объявление существующего ручного QR-входа в отдельный локальный аккаунт цифрового ассистента без переноса чужой сессии."
+    "version": "2.13.3",
+    "summary": "Непрозрачная native ссылка первой отправки для привязки будущего ответа к существующей задаче без повторной отправки."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.13.2",
+    "version": "2.13.3",
     "minimumHostVersion": "3.18.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

@@ -306,6 +306,24 @@ class AuthoringTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(M.TelegramRuntimeError):
                 self.cli("edit-media", "--chat", "@group", "--message-id", "42", "--file", path, "--dry-run")
 
+    def test_outgoing_conversation_uses_native_marked_peer_and_monitor_hmac_without_replaying_send(self):
+        args = M.build_parser().parse_args(["send", "--chat", "@group", "--message", "Ответ", "--confirm", "--conversation-reference"])
+        self.client.send_message.return_value = self.message()
+        with mock.patch.object(M, "overview_binding", new=mock.AsyncMock(return_value="a" * 64)), \
+             mock.patch.object(M, "overview_cursor_key", return_value=b"synthetic-monitor-private-key"):
+            result = asyncio.run(M.command_send_async(args, self.identity))
+            expected = M.monitor_conversation_key(self.identity, "a" * 64, base.peer_id(self.group))
+        self.assertTrue(result["sent"])
+        self.assertEqual(result["conversationReference"], {"available": True, "conversationKey": expected})
+        self.client.send_message.assert_awaited_once()
+        self.client.send_message.reset_mock()
+        with mock.patch.object(M, "overview_binding", new=mock.AsyncMock(side_effect=RuntimeError("PRIVATE_HINT_ERROR"))):
+            result = asyncio.run(M.command_send_async(args, self.identity))
+        self.assertTrue(result["sent"])
+        self.assertEqual(result["conversationReference"], {"available": False, "code": "TELEGRAM_CONVERSATION_REFERENCE_UNAVAILABLE"})
+        self.client.send_message.assert_awaited_once()
+        self.assertNotIn("PRIVATE_HINT_ERROR", str(result))
+
     def test_delivery_flags_reach_send_and_failed_confirmation_is_ambiguous(self):
         args = M.build_parser().parse_args(["send", "--chat", "@group", "--message", "Ответ", "--confirm", "--silent", "--no-link-preview"])
         sent = self.message(silent=True)

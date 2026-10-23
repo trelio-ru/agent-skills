@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createMaxNativeObserver, createMaxExactReadGate, decodeMaxNativeFrame,
   inspectMaxFrameHeader, inspectMaxReadCoverage } from '../scripts/max-native-protocol.mjs';
 import { installPassiveReadGuard, joinMaxNativeSnapshot, projectMaxMonitorSnapshot,
-  parseArguments, validateCommandOptions } from '../scripts/trelio-max.mjs';
+  parseArguments, validateCommandOptions, outgoingMaxConversationReference, maxConversationReference } from '../scripts/trelio-max.mjs';
 
 // Independent synthetic encoder: fixtures describe the public protocol, never
 // capture an account, authentication response, body or real network packet.
@@ -248,4 +248,25 @@ test('MAX MessagePack uint64 timestamps remain exact and unsafe times never auth
   gate.observeInbound(frame(50,{mark:base+1000n,unread:0},{seq:8}),1);assert.equal(gate.status().acknowledged,true);
   history(value,{seq:5,rows:[{id:13n,sender:222n,time:9007199254740992n,text:'Unsafe'}],mark:0,unread:1});
   assert.equal(value.snapshot('77'),null);
+});
+
+
+test('MAX outgoing hint reads the SAME browser-observed native chat without another socket or send',async()=>{
+  let route,inbound,outbound;const traffic=[];
+  const context={routeWebSocket:async(_pattern,callback)=>{route=callback;}};
+  await installPassiveReadGuard(context);
+  route({url:()=> 'wss://api.oneme.ru/websocket',send:()=>{},onMessage:callback=>{outbound=callback;},
+    connectToServer:()=>({onMessage:callback=>{inbound=callback;},send:value=>traffic.push(value)})});
+  inbound(frame(19,{profile:{contact:{id:111n}}}));
+  outbound(frame(49,{chatId:77n,backward:100,from:-1},{cmd:0,seq:2}));
+  inbound(frame(49,{chat:{id:77n,participants:{111:100},newMessages:2},messages},{seq:2}));
+  const options={companyId:'11111111-1111-4111-8111-111111111111',memberId:'22222222-2222-4222-8222-222222222222',
+    connectionId:'33333333-3333-4333-8333-333333333333',chat:'https://web.max.ru/77',
+    account:{id:'44444444-4444-4444-8444-444444444444',companyBinding:'a'.repeat(64)}};
+  const page={context:()=>context,url:()=>options.chat,evaluate:async()=>({ready:true,title:'PRIVATE_TITLE'})};
+  const expected=maxConversationReference({url:options.chat,stableId:'77'},options,true).conversationKey;
+  assert.deepEqual(await outgoingMaxConversationReference(page,options,{url:options.chat}),{available:true,conversationKey:expected});
+  assert.equal(traffic.length,1,'hint emits neither native history nor mutation/ACK');
+  assert.deepEqual(await outgoingMaxConversationReference(page,options,{url:'https://web.max.ru/88'}),
+    {available:false,code:'MAX_CONVERSATION_REFERENCE_UNAVAILABLE'});
 });

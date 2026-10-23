@@ -229,3 +229,40 @@ Configured требует отдельной provider readiness/business про�
 наблюдение обозначается явно; chat acknowledgement может возобновить ход, но успех
 устанавливает safe read-back. Авторы приватных навыков получают правило и behavioral
 checklist через backend-managed MCP authoring contract.
+
+
+<a id="first-outgoing-routing"></a>
+
+## Первая исходящая переписка
+
+В новых source packages Telegram MTProto 2.13.3, почты 2.7.4 и MAX 2.11.2
+`send --conversation-reference` дополнительно возвращает
+`conversationReference:{available:true,conversationKey}` либо закрытый
+`available:false/code`. Это явный opt-in того же авторизованного send; host
+не дописывает argv и не меняет согласованную отправку. Прежний CLI без flag
+сохраняет прежние provider calls/output. Новые версии требуют host >=3.18.0;
+immutable ранее выпущенные artifacts не переиздаются.
+
+Telegram использует существующий account-cloud monitor binding, marked peer
+из native resolved entity и прежний private cursor HMAC с отдельным purpose.
+MAX использует тот же native monitor scope для фактически открытого canonical
+chat и требует наблюдённую native history этого чата. Нет hash по имени/тексту,
+второго SDK/browser/HTTP executor, прямого socket запроса либо нового хранилища.
+Email до SMTP делает только два readonly EXAMINE входящего INBOX, сверяет его
+UIDVALIDITY и использует свой generated Message-ID через прежний thread parser.
+Sent UID/folder не заменяют incoming scope. IMAP error/cleanup/смена UIDVALIDITY
+дают unavailable; SMTP-only не открывает IMAP и возвращает unavailable явно.
+
+Будущий native monitor event вычисляет тот же key в том же selected account и
+company binding. Hint не является доказательством sender/owner, чтения,
+processing, delivery/business success или разрешением новой задачи/ACK.
+Dedicated host после captured signed provider output получает только current
+owner-selected native source candidates exact account/company/device/project;
+обычный native bind отдельно проверяет task/source/assignment generations,
+свежий task snapshot и конфликт маршрута. Источник/провайдер/ключ не угадываются.
+
+Hint failure не отменяет положительный send result, не повторяет отправку и
+не вызывает fallback/login. Если key/source/context unavailable, привязка
+ответа остаётся незавершённой; отправлять сообщение ещё раз ради hint запрещено.
+Отсутствующие References у ответа и смена INBOX UIDVALIDITY не обещают match.
+Source merge и синтетические fixtures не доказывают live Windows business E2E.

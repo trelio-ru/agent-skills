@@ -306,6 +306,7 @@ const parseArguments = (argv, environment = process.env) => {
     expectedScope: "",
     expectedConversationKey: '',
     conversationReferences: false,
+    conversationReference: false,
     unreadBackfill: false,
     coveredReferences: [],
     verifyOnly: false,
@@ -370,6 +371,7 @@ const parseArguments = (argv, environment = process.env) => {
     else if (argument === "--expected-scope") options.expectedScope = value();
     else if (argument === '--expected-conversation-key') options.expectedConversationKey = value();
     else if (argument === '--conversation-references') options.conversationReferences = true;
+    else if (argument === '--conversation-reference') options.conversationReference = true;
     else if (argument === '--unread-backfill') options.unreadBackfill = true;
     else if (argument === "--covered-reference") options.coveredReferences.push(value());
     else if (argument === "--verify-only") options.verifyOnly = true;
@@ -1309,6 +1311,7 @@ const validateCommandOptions = (options) => {
   } else if (options.verifyOnly || coveredReferences.length) {
     throw new MaxRuntimeError('MAX_ACK_INPUT_INVALID', 'ACK coverage belongs only to ack-reference.');
   }
+  if (options.conversationReference && options.command !== 'send') throw new MaxRuntimeError('MAX_REFERENCE_INPUT_INVALID', 'Outgoing correlation requires send.');
   if (options.conversationReferences && options.command !== 'monitor'
     || options.expectedConversationKey && !['read-reference', 'ack-reference'].includes(options.command)) {
     throw new MaxRuntimeError('MAX_REFERENCE_INPUT_INVALID', 'Conversation references require an exact passive source operation.');
@@ -4826,8 +4829,7 @@ const parseMaxMonitorCursor = value => {
   }
 };
 
-const projectMaxNativeReferences = (snapshot, options) => {
-  const reference = snapshot?.chatReference;
+const maxConversationReference = (reference, options, nativeReferences) => {
   let expectedReference = null;
   try {
     if (reference && typeof reference.url === "string" && normalizeChatUrl(reference.url) === reference.url) {
@@ -4841,13 +4843,19 @@ const projectMaxNativeReferences = (snapshot, options) => {
       || !monitorDigest(options.account.companyBinding))) {
     throw new MaxRuntimeError("MAX_MONITOR_SCOPE_CHANGED", "The actual MAX chat does not match the registered source.");
   }
-  const nativeReferences = options.conversationReferences === true || Boolean(options.expectedConversationKey);
   const scope = sha256(JSON.stringify([nativeReferences ? 'trelio-max-native-monitor/v1' : "trelio-max-monitor/v1",options.companyId,options.memberId,
     options.connectionId,options.account?.id ?? null,options.account?.companyBinding ?? null,reference.url,reference.stableId]));
+  const conversationKey = `max-conversation/v1.${sha256(JSON.stringify(['max-conversation/v1', scope, reference.stableId]))}`;
+  return { scope, conversationKey };
+};
+
+const projectMaxNativeReferences = (snapshot, options) => {
+  const reference = snapshot?.chatReference;
+  const nativeReferences = options.conversationReferences === true || Boolean(options.expectedConversationKey);
+  const { scope, conversationKey } = maxConversationReference(snapshot?.chatReference, options, nativeReferences);
   if (nativeReferences && snapshot.nativeIdentityVerified !== true) {
     throw new MaxRuntimeError('MAX_REFERENCE_NATIVE_UNAVAILABLE', 'Native MAX message identity is unavailable for this source.');
   }
-  const conversationKey = `max-conversation/v1.${sha256(JSON.stringify(['max-conversation/v1', scope, reference.stableId]))}`;
   if (!Array.isArray(snapshot.messages) || snapshot.messages.length > MAX_MONITOR_WINDOW) {
     throw new MaxRuntimeError("MAX_MONITOR_GAP", "MAX monitor history exceeds its bounded window; review backfill.");
   }
@@ -4964,6 +4972,22 @@ const projectMaxMonitorSnapshot = (snapshot, options) => {
       ...(initialUnread ? { initialUnreadOnly: true, snapshotAtomic: false } : {}),
       ...(nativeReferences ? { nativeMessageVerified: true } : {})},
     readState:{readReceiptsSent:false}};
+};
+
+/** Correlation reuses the SAME native monitor scope. A recognized opened
+ * canonical chat plus its browser-observed native history is required; display
+ * names never select a key. Failure is optional metadata, not a send failure.
+ * No second browser request, history read, socket request or local store exists. */
+const outgoingMaxConversationReference = async (page, options, opened) => {
+  try {
+    const selected = await inspectOpenedChatReference(page);
+    if (!selected || normalizeChatUrl(opened.url) !== selected.url) throw new Error();
+    const reference = chatReferenceValue({url:selected.url,titles:[],contextRefs:[]});
+    if (!readGuards.get(page.context?.())?.native?.snapshot(reference.stableId)) throw new Error();
+    return {available:true,conversationKey:maxConversationReference(reference,{...options,chat:selected.url},true).conversationKey};
+  } catch {
+    return {available:false,code:'MAX_CONVERSATION_REFERENCE_UNAVAILABLE'};
+  }
 };
 
 const readMaxMonitor = async (page, options) => {
@@ -6468,11 +6492,13 @@ const executeBrowserCommand = async (page, options, readGuard) => {
   if (options.command === "send") {
     const policyMode = assertMutationAllowed(options);
     const opened = await openChat(page, options);
+    const conversation = options.conversationReference ? await outgoingMaxConversationReference(page,options,opened) : null;
     const dispatched = await sendOpenChat(page, options);
     const readMark = await markReadAfterVerifiedReply(page, options, readGuard);
     return {
       sent: true,
       opened,
+      ...(conversation ? {conversationReference:conversation} : {}),
       policyMode,
       ...dispatched,
       readMark,
@@ -6660,6 +6686,8 @@ export {
   inspectDirectChatHistorySurface,
   waitForDirectChatHistory,
   readChatMessages,
+  maxConversationReference,
+  outgoingMaxConversationReference,
   selectFavoritesHomeDialog,
   selectExactContactResult,
   collectPickerResults,
