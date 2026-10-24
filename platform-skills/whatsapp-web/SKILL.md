@@ -19,6 +19,10 @@ description: Read, search, send and manage WhatsApp messages, media, chats and g
 
 ## Полные инструкции
 
+При обрыве проверь `connectionDiagnostics` в `status`/`wait`; `doctor` сохраняет
+последнюю причину после закрытия. Учитывай код, source, stage и nextAction,
+не выводи logout или сетевую причину из общего disconnected. Формат – в `help`.
+
 Один раз перед первой командой сессии загрузи `get_agent_skill` с
 `sections=[instructions,execution]`. Используй только его exact
 `runtimeExecution.localAction` через названный server/tool, добавляя команду

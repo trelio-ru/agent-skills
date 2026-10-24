@@ -196,6 +196,21 @@ read-only допускает только snapshot/scroll/result и чтение
 
 ## Наблюдение завершения ввода
 
+`status`/`wait` возвращают `connectionDiagnostics` protocol-клиента: stage,
+attempts, reconnectAttempts/maxReconnectAttempts, pairingRestartUsed,
+everConnected/lastConnectedAt, lastFailure и последние пять recentFailures.
+Failure содержит numeric statusCode или null, reason/category, известный
+transportCode или null, source=connection/initialization/operation,
+observedAt/attempt, willRetry/retryDelayMs и nextAction.
+Код 408 означает lost либо timeout без возможности их различить. Unknown
+не доказывает logout, неисправность сети или несовместимую версию. Сырые ошибки,
+provider text/packets/URLs, credentials и идентификаторы людей не выдаются.
+`doctor` показывает последний сохранённый protocol-снимок даже после stop;
+это историческое наблюдение, а не новая проверка сети. После успешного reconnect
+stage=ready, прежние причины сохраняются. `disconnected`/`relink_required` –
+terminal receipt без continuation; одинаковые wait/start не уточняют причину.
+Следуй nextAction, не сбрасывай привязку и не меняй транспорт из-за unknown.
+
 `wait --session ID --after-phase PHASE --timeout-seconds N` (N=1..30, default 30)
 читает только штатный status exact сессии. Возвращает смену phase, terminal receipt
 либо bounded pending с continuation.arguments. Исходная lease, account/company

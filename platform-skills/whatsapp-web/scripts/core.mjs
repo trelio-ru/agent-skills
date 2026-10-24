@@ -2,11 +2,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { connectionDiagnosticsFields } from './connection-diagnostics.mjs';
 
 export const LEASE_MS = 30 * 60 * 1000;
 export const SKILL = 'whatsapp-web';
 // Active workers must implement the current command and native ownership contract.
-export const RUNTIME_VERSION = '2.2.4';
+export const RUNTIME_VERSION = '2.2.5';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // HTTP failure evidence is deliberately smaller than a browser response: a
 // status and a canonical HTTPS origin cannot contain OAuth paths, queries,
@@ -28,6 +29,7 @@ export class RuntimeError extends Error {
   constructor(code, details = {}) {
     super(code); this.code = code;
     Object.assign(this, serviceHttpFailure({ ...details, code }));
+    Object.assign(this, connectionDiagnosticsFields(details));
   }
 }
 export function requireThat(value, code = 'invalid_input') {

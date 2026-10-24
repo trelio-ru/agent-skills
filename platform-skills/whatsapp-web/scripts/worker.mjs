@@ -11,6 +11,7 @@ import { WhatsAppClient } from './client.mjs';
 import { WhatsAppBrowser } from './browser.mjs';
 import { browserProfile, browserStorage, forgetBrowserState, launchProfileBrowser, readBrowserState, writeBrowserState } from './profile.mjs';
 import { boundedJson, createHandoff } from './handoff.mjs';
+import { connectionRequiredAction, connectionDiagnosticsFields } from './connection-diagnostics.mjs';
 
 // This detached process owns either the protocol vault or the ordinary browser
 // profile. The native supervisor controls lifetime in both cases; CLI invocations
@@ -38,7 +39,7 @@ let busy = false, finalError = null, finalHttpFailure = {}, writes = Promise.res
 const token = crypto.randomBytes(32).toString('hex');
 const state = () => ({ sessionId: config.leaseId, phase, mode:config.transport||'protocol', expiresAt: config.expiresAt,
   ...(config.transport==='browser'?{headless:config.headless===true}:{}),
-  requiredAction: ({ opening_secure_store: 'Открываем сохранённое подключение.',
+  requiredAction: connectionRequiredAction(client?.diagnostics?.snapshot()) || ({ opening_secure_store: 'Открываем сохранённое подключение.',
     opening_browser_profile: 'Открываем локальный профиль браузера.',
     qr_required: 'Отсканируйте QR-код в открытом локальном окне через WhatsApp → Связанные устройства.',
     qr_refreshing: 'Запрашиваем новый QR-код в том же окне.',
@@ -47,6 +48,7 @@ const state = () => ({ sessionId: config.leaseId, phase, mode:config.transport||
     relink_required: 'WhatsApp отозвал привязку. Нужна новая явная настройка.',
     disconnected: 'Связь не восстановлена после ограниченных повторов; сессия не удалена.' })[phase] || null,
   ...(finalError ? { error: finalError, ...serviceHttpFailure({ ...finalHttpFailure, code: finalError }) } : {}),
+  ...(client?.diagnostics ? { connectionDiagnostics: client.diagnostics.snapshot() } : {}),
   ...(client?.persistenceStatus ? {browserStorage:client.persistenceStatus()} : {}) });
 async function setPhase(next) {
   phase = next;
@@ -184,7 +186,8 @@ try {
       requireThat(!busy && !stopStarted && client && (phase === 'ready' || ['policy','result','history-status'].includes(packet.command)), 'session_not_ready'); busy=true;
       try { respond(200, await client.execute(packet)); }
       finally { busy=false; }
-    } catch (error) { respond(400, { error: error instanceof RuntimeError ? error.code : 'operation_result_unknown', ...serviceHttpFailure(error) }); }
+    } catch (error) { respond(400, { error: error instanceof RuntimeError ? error.code : 'operation_result_unknown', ...serviceHttpFailure(error),
+      ...(error?.code === 'session_not_ready' ? connectionDiagnosticsFields(state()) : {}) }); }
   });
   server.requestTimeout = 5000; server.headersTimeout = 5000;
   server.on('connection', socket => socket.setTimeout(45000, () => socket.destroy()));
@@ -193,6 +196,7 @@ try {
   await atomicWrite(path.join(config.directory, 'control.json'), JSON.stringify({ leaseId: config.leaseId, port: server.address().port, token }), config.helper);
   await setPhase('starting');
   void initialize().catch(async error => {
+    client?.diagnostics?.failed(error, 'initialization');
     finalError = error instanceof RuntimeError ? error.code : 'initialization_failed';
     finalHttpFailure = serviceHttpFailure(error);
     await setPhase('failed').catch(() => {}); await stop();
