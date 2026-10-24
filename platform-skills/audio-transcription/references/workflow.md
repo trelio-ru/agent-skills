@@ -93,8 +93,9 @@ JSON содержит startSample/endSample и raw text. SRT и TXT исполь
 Не превращай ASR в проверенный протокол разговора без сверки. Для сравнения
 моделей нужен независимый ручной эталон; межмодельное расхождение не является WER.
 
-Поддерживаемые targets первого выпуска: darwin-arm64, win32-x64, linux-x64
-(glibc). Другие architectures возвращают `AUDIO_PLATFORM_UNSUPPORTED` до сети.
+Поддерживаемые targets первого выпуска: darwin-arm64 (macOS 11+), win32-x64
+(Windows 10+), linux-x64 (glibc 2.28+). Другие architectures возвращают
+`AUDIO_PLATFORM_UNSUPPORTED` до сети.
 CPU gate исполняется нативно на GitHub-hosted macOS/Windows/Linux, включая
 first setup, реальный checkpoint и длинный искусственный PCM stream.
 

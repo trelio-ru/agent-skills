@@ -102,6 +102,7 @@ test('private paths reject symlinks and CLI never accepts network inputs or hidd
   assert.equal(env.PYTHONPATH, undefined);
   assert.equal(env.IMAGEIO_FFMPEG_EXE, undefined);
   assert.equal(env.UV_INDEX_URL, undefined);
+  if (process.platform === 'win32') assert.equal(env.PROCESSOR_ARCHITECTURE, process.env.PROCESSOR_ARCHITECTURE);
   fs.rmSync(root, {recursive: true});
 });
 

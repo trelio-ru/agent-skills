@@ -40,7 +40,10 @@ export function childEnvironment(root) {
   const clean = {};
   // Never forward provider/account/Agent Secret credentials or ambient Python,
   // uv, pip and FFmpeg overrides into installers or inference processes.
-  for (const key of ['HOME', 'USERPROFILE', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL']) {
+  // CPython platform.machine() on Windows derives its result from these two
+  // non-secret OS architecture fields. Removing them makes uv reject an empty
+  // machine marker even when the exact managed x64 interpreter is installed.
+  for (const key of ['HOME', 'USERPROFILE', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432']) {
     if (process.env[key]) clean[key] = process.env[key];
   }
   Object.assign(clean, {UV_NO_CONFIG: '1', UV_CACHE_DIR: path.join(root, 'uv-cache'),
