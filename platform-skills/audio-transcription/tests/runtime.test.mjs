@@ -116,6 +116,27 @@ test('signed package binds upstream source, inference entrypoints and full guide
   for (const [name, expected] of Object.entries(upstream.files)) assert.equal(digest(fs.readFileSync(path.join(providerRoot, 'engine/vendor/gigaam', name))), expected);
 });
 
+test('materialized package CLI returns its complete guide before model/cache IO', () => {
+  const root = temporary(), directory = path.join(root, 'package');
+  const built = JSON.parse(buildRuntimePackage(providerRoot).packageBytes);
+  for (const file of built.files) {
+    const target = path.join(directory, file.path);
+    fs.mkdirSync(path.dirname(target), {recursive: true});
+    fs.writeFileSync(target, Buffer.from(file.contentBase64, 'base64'));
+  }
+  const result = spawnSync(process.execPath, [path.join(directory, 'scripts/audio-transcription.mjs'), 'guides'],
+    {shell: false, cwd: root, encoding: 'utf8', env: {SystemRoot: process.env.SystemRoot}, timeout: 15000});
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  const guide = JSON.parse(result.stdout).guides[0];
+  const expected = path.join(directory, 'references/workflow.md');
+  assert.equal(fs.realpathSync(guide.path), fs.realpathSync(expected));
+  assert.equal(guide.sha256, digest(fs.readFileSync(expected)));
+  assert.equal(guide.bytes, fs.statSync(expected).size);
+  assert.deepEqual(fs.readdirSync(root), ['package']);
+  fs.rmSync(root, {recursive: true});
+});
+
 test('prepared host actually uses a managed Python and official checksum-pinned model', {skip: !fixture && !process.env.CI}, () => {
   assert.ok(fixture, 'CI must run its provider-owned first-install preparation');
   assert.equal(ready(fixture.root), true);
