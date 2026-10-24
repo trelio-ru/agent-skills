@@ -17,6 +17,7 @@ const NETWORK_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREF
   'ERR_TLS_CERT_ALTNAME_INVALID', 'DEPTH_ZERO_SELF_SIGNED_CERT']);
 const STAGES = new Set(['connecting', 'qr_required', 'qr_refreshing', 'ready', 'reconnecting',
   'disconnected', 'relink_required', 'failed', 'closed']);
+const DNS_STATES = new Set(['not_used', 'system_resolved', 'system_failed', 'https_resolving', 'https_resolved', 'https_cache', 'https_failed']);
 const boundedInt = (value, max) => Number.isInteger(value) && value >= 0 && value <= max;
 const timestamp = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value));
 
@@ -51,6 +52,8 @@ export function connectionDiagnosticsView(value) {
   return { schemaVersion: 1, stage: value.stage, attempts: value.attempts,
     reconnectAttempts: value.reconnectAttempts, maxReconnectAttempts: 3,
     pairingRestartUsed: value.pairingRestartUsed, everConnected: value.everConnected === true,
+    ...(value.dns?.strategy === 'system_then_https' && DNS_STATES.has(value.dns.state)
+      ? { dns: { strategy:'system_then_https',state:value.dns.state } } : {}),
     lastConnectedAt: timestamp(value.lastConnectedAt) ? value.lastConnectedAt : null,
     lastFailure: failures.at(-1) ?? null, recentFailures: failures };
 }
@@ -85,6 +88,7 @@ export class ConnectionDiagnostics {
     if (STAGES.has(stage)) this.value.stage = stage;
     if (stage === 'ready') { this.value.everConnected = true; this.value.lastConnectedAt = new Date().toISOString(); }
   }
+  network(value) { this.value.dns = value; }
   disconnected(error, { willRetry, retryDelayMs, reconnectAttempts, pairingRestartUsed }, source = 'connection') {
     const evidence = { ...disconnectEvidence(error), source, observedAt: new Date().toISOString(),
       attempt: this.value.attempts, willRetry, retryDelayMs };

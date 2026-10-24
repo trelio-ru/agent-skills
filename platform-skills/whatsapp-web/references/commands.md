@@ -210,6 +210,10 @@ provider text/packets/URLs, credentials и идентификаторы люде
 stage=ready, прежние причины сохраняются. `disconnected`/`relink_required` –
 terminal receipt без continuation; одинаковые wait/start не уточняют причину.
 Следуй nextAction, не сбрасывай привязку и не меняй транспорт из-за unknown.
+`connectionDiagnostics.dns` показывает strategy=system_then_https и fixed state.
+При ENOTFOUND/EAI_AGAIN только адрес протокольного WhatsApp разрешается через
+ограниченный резервный HTTPS DNS. Системные настройки, TLS-проверка и журнал
+операций сохраняются; отказ резерва возвращает исходную ошибку без resend.
 
 `wait --session ID --after-phase PHASE --timeout-seconds N` (N=1..30, default 30)
 читает только штатный status exact сессии. Возвращает смену phase, terminal receipt

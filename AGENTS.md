@@ -86,6 +86,8 @@ Inbox reads сохраняют общий лимит и partial coverage; cloud 
 читай [контракт WhatsApp](docs/whatsapp-web-agent-skill.md#поиск-последней-переписки).
 Диагностика WhatsApp сохраняет только numeric disconnect и закрытые network enums;
 terminal wait и doctor после cleanup сохраняют причину без raw SDK error/packets.
+Protocol DNS recovery – только exact публичный endpoint, bounded DoH и обычный TLS;
+system settings, other hosts, auth/mutation retries не расширяются.
 Для VK Рекламы читай полный [workflow](platform-skills/vk-ads/references/workflow.md)
 и [security](platform-skills/vk-ads/references/security.md): paused creation,
 scoped планы, persisted receipts, read-back и запрет replay неизвестной записи.

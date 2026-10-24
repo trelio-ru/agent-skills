@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "whatsapp-web",
-    "version": "2.2.5",
-    "summary": "Диагностика подключения сохраняет код и тип разрыва WhatsApp, сетевую причину, число попыток и следующий шаг. Причина доступна после закрытия сессии; повторное событие разрыва не запускает параллельные соединения."
+    "version": "2.2.6",
+    "summary": "Подключение WhatsApp восстанавливается при ENOTFOUND/EAI_AGAIN через ограниченный резервный HTTPS DNS только для адреса протокольного сервера. Проверка TLS, сохранённая привязка и журнал операций сохраняются; диагностика показывает использованный путь DNS."
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,7 +17,7 @@
     ]
   },
   "runtime": {
-    "version": "2.2.5",
+    "version": "2.2.6",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "scripts/trelio-whatsapp.mjs",
@@ -143,6 +143,11 @@
       {
         "source": "scripts/connection-diagnostics.mjs",
         "path": "scripts/connection-diagnostics.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/protocol-network.mjs",
+        "path": "scripts/protocol-network.mjs",
         "mode": 420
       }
     ]

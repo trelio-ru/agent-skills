@@ -92,6 +92,27 @@ protocol-снимок без открытия credentials, сети или ав�
 и состояние lease оцениваются отдельно. После успешного reconnect история
 причин остаётся доступной. `session_not_ready` также переносит этот safe снимок.
 
+Protocol WebSocket сначала использует системный DNS. Только `ENOTFOUND` или
+`EAI_AGAIN` exact `web.whatsapp.com` запускают credential-free DNS-over-HTTPS
+Google, затем Cloudflare: по одному запросу, общий deadline 6 секунд внутри
+прежней native lease. Запрашивается только фиксированный публичный hostname,
+`edns_client_subnet=0.0.0.0/0`; личные данные и WhatsApp credentials не передаются.
+IPv4 A принимается только для exact Question и bounded provider CNAME chain;
+private/reserved адреса, redirect, malformed/truncated и body >16 KiB закрыты.
+Cache учитывает TTL с максимумом 60 секунд и живёт только в памяти worker.
+Concurrent lookup делит один запрос; stop отменяет запрос и уничтожает Agent.
+Явный IPv6-only lookup не использует IPv4 fallback.
+
+Меняется только DNS lookup HTTPS Agent протокольного socket: исходный WebSocket
+URL, Host, TLS SNI и обязательная проверка сертификата сохраняются. IP не
+подставляется в URL и не закрепляется в source. Системные DNS/VPN/proxy,
+browser mode и resolver других hostname не меняются. HTTP/TLS/auth отказ,
+socket timeout/reset не запускают этот fallback; при его отказе возвращается
+исходная DNS-ошибка без повторной mutation. `connectionDiagnostics.dns`
+показывает только fixed strategy/state без IP, ответов DNS или URL. Подробности
+DoH JSON: [Google](https://developers.google.com/speed/public-dns/docs/doh/json),
+[Cloudflare](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/).
+
 Чтение использует локально синхронизированное ограниченное окно, не создаёт
 свой полнотекстовый постоянный индекс и не вызывает readMessages/read receipts.
 `markOnlineOnConnect=false`. Partial coverage возвращается всегда; limit и

@@ -5,6 +5,7 @@ import { requireThat, RuntimeError, digest } from './core.mjs';
 import { prepareMedia } from './media.mjs';
 import { BROWSER_COMMANDS, validateBrowserRequest } from './browser.mjs';
 import { ConnectionDiagnostics } from './connection-diagnostics.mjs';
+import { createProtocolNetwork } from './protocol-network.mjs';
 
 const MAX_MESSAGES = 10000, MAX_CHATS = 5000;
 const MUTATIONS = new Set(['send', 'reply', 'react', 'edit', 'delete', 'forward', 'create-group', 'member-add', 'member-remove', 'member-promote', 'member-demote', 'chat-update', 'chat-settings', 'block', 'group-invite-revoke', 'group-join']);
@@ -128,6 +129,7 @@ export class WhatsAppClient {
   constructor({ sdk, pino, permit, persist, onQr, onPhase, onFatal, saved }) {
     Object.assign(this, { sdk, permit, persist, onQr, onPhase, onFatal });
     this.diagnostics = new ConnectionDiagnostics();
+    this.network = createProtocolNetwork({ permit, onDiagnostic: value => this.diagnostics.network(value) });
     this.onPhase = phase => { this.diagnostics.phase(phase); onPhase(phase); };
     this.logger = pino({ level: 'silent' });
     this.data = saved ? JSON.parse(saved, sdk.BufferJSON.reviver) : { schema: 1, creds: sdk.initAuthCreds(), keys: {}, chats: {}, contacts: {}, messages: {}, policy: 'confirm', attempts: {} };
@@ -205,7 +207,7 @@ export class WhatsAppClient {
         await this.save();
       }
     } };
-    const socket = sdk.default({ auth, logger: this.logger, browser: sdk.Browsers.macOS('Trelio'),
+    const socket = sdk.default({ auth, logger: this.logger, browser: sdk.Browsers.macOS('Trelio'), agent: this.network.agent,
       markOnlineOnConnect: false, syncFullHistory: false, emitOwnEvents: true,
       connectTimeoutMs: 30000, defaultQueryTimeoutMs: 15000,
       maxMsgRetryCount: 0, enableAutoSessionRecreation: false, enableRecentMessageCache: false,
@@ -814,5 +816,5 @@ export class WhatsAppClient {
     } catch(error) { this.data.attempts[packet.requestId]={...this.data.attempts[packet.requestId],...claim,state:'ambiguous'}; await this.save(); throw new RuntimeError('mutation_result_ambiguous'); }
     } finally { file?.fill(0); }
   }
-  close() { this.closed=true; this.generation=(this.generation||0)+1; clearTimeout(this.reconnectTimer); this.socket?.end(undefined); this.connected=false; this.wakeConfirmations(true); for(const wake of this.historyWaiters) wake(); }
+  close() { this.closed=true; this.generation=(this.generation||0)+1; clearTimeout(this.reconnectTimer); this.socket?.end(undefined); this.network.close(); this.connected=false; this.wakeConfirmations(true); for(const wake of this.historyWaiters) wake(); }
 }
