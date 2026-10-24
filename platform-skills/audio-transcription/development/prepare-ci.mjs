@@ -20,7 +20,12 @@ if (process.argv[2] === 'package') {
   // Explicit test-fixture consent exercises the same production installer.
   // It is not an agent authorization or a receipt for a person's device.
   atomicJson(path.join(root, 'download-consent.json'), {planHash: plan.planHash, testFixture: true});
-  await performSetup(plan.planHash, root);
+  await performSetup(plan.planHash, root, {installerFailure: result => {
+    // This isolated fixture has no account, recording, credential or user
+    // environment. Retain bounded public dependency diagnostics for native CI.
+    process.stderr.write(JSON.stringify({status: result.status, code: result.error?.code,
+      publicFixtureInstaller: result.stderr?.toString('utf8').slice(-16000)}) + '\n');
+  }});
   if (!ready(root)) {
     process.stderr.write(JSON.stringify(JSON.parse(fs.readFileSync(path.join(root, 'setup.json')))) + '\n');
     throw Error('audio_ci_setup_failed');

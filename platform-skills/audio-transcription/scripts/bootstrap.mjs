@@ -178,7 +178,7 @@ function isProcessAlive(pid) {
   try {process.kill(pid, 0); return true;} catch {return false;}
 }
 
-export async function performSetup(approvedHash, root) {
+export async function performSetup(approvedHash, root, {installerFailure = null} = {}) {
   const plan = installationPlan(root);
   const consent = readJson(path.join(root, 'download-consent.json'));
   if (consent?.planHash !== approvedHash || approvedHash !== plan.planHash) throw Error('AUDIO_DOWNLOAD_CONSENT_REQUIRED');
@@ -210,8 +210,13 @@ export async function performSetup(approvedHash, root) {
     state('runtime-install');
     const installed = spawnSync(executable, ['sync', '--frozen', '--no-dev', '--no-install-project', '--managed-python', '--python', artifacts.pythonVersion,
       '--project', path.join(root, 'engine')],
-      {shell: false, windowsHide: true, env: childEnvironment(root), stdio: 'ignore', timeout: 15 * 60 * 1000});
-    if (installed.error || installed.status !== 0 || !fs.existsSync(pythonPath(root))) throw Error('AUDIO_ENGINE_INSTALL_FAILED');
+      {shell: false, windowsHide: true, env: childEnvironment(root), stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 1024 * 1024, timeout: 15 * 60 * 1000});
+    if (installed.error || installed.status !== 0 || !fs.existsSync(pythonPath(root))) {
+      // Only a provider-owned synthetic CI harness can inject this callback.
+      // Production never emits installer stderr, private paths or environment.
+      installerFailure?.(installed);
+      throw Error('AUDIO_ENGINE_INSTALL_FAILED');
+    }
     state('model-download');
     for (const model of plan.models) await downloadArtifact(model, path.join(root, 'models', model.name));
     atomicJson(path.join(root, 'installed.json'), {planHash: plan.planHash, model: plan.model, installedAt: new Date().toISOString()});
