@@ -176,6 +176,14 @@ Native regression stages показывают только fixed names, не pat
 комментарий формы завершает штатным host account update с read-back, без второй
 provider-копии и без повторного сохранения PNG после catalogue conflict.
 
+Локальная расшифровка следует [контракту](platform-skills/audio-transcription/references/workflow.md):
+план установки до сети, отдельное согласие на закреплённые model/runtime bytes,
+проверка SHA-256 перед загрузкой PyTorch checkpoint, закрытое локальное хранение.
+Потоковый decoder сохраняет все samples; cursor продвигается после durable
+segment. Resume не теряет cancellation нового run и не меняет исходник.
+Обязательны нативные first-install/inference gates на всех заявленных OS;
+синтетический decoder не заменяет проверку настоящей официальной модели.
+
 Канонический main остаётся чистым. Новая работа выполняется в отдельном
 физическом worktree и ветке codex/* от свежего origin/main. Перед правкой:
 git fetch --prune origin, git status -sb, сравнение HEAD с upstream.

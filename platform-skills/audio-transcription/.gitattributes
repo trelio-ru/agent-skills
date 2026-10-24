@@ -1,0 +1,2 @@
+# Source hashes and the signed package use the same bytes on every checkout.
+* text eol=lf
