@@ -5,6 +5,36 @@ description: Prepare, send and track Russian Post electronic registered letters,
 
 # Электронные заказные письма Почты России
 
+## Completion criteria – check before leaving Post
+
+Sending is one workflow: submit → exact tracking number → rename → reload and
+verify → evidence. A successful payment, sent status or downloaded PDF does not
+finish it. Before another letter, signing/court filing, handoff or browser cleanup,
+finish the current card check or record a concrete observed blocker. Switching
+to another skill is not a reason to silently leave renaming pending.
+
+Before reporting completion, ask **yourself, not the user**:
+
+1. Are all new tracking numbers accounted for, including every part and pending
+   payment? After an ambiguous submit, establish its outcome without resending
+2. **«Все ли отправленные письма переименованы и проверены после перезагрузки карточек?»**
+   For every exact number, open its card, verify the number **before** edit,
+   use the user title or `Адресат – краткая цель – объект`, and add `N из M`
+   for parts. Save through the visible editor, reload exact card and read persisted title.
+   PDF name, input or toast alone proves nothing. A correct live title needs no write
+3. Are the official copy, receipt/available confirmation and tracking number
+   preserved? Open downloaded artifacts and verify readability, number/date/recipient
+4. Does the final result cover every number with its verified saved title or
+   exact blocker? Without title read-back, mark renaming incomplete; never omit it
+   from the result or describe the whole workflow as complete
+
+Any “no” keeps the corresponding step open. Continue the available work; a
+blocker requires the checked surface, observed cause and next step, not a guessed
+missing editor/runtime. Before waiting, handoff or compaction preserve numbers,
+expected titles, verified results and pending steps in already authorized working
+notes/checkpoint. After lost context, reload this skill and reconcile that full
+set before continuing; sent status does not clear an unresolved rename.
+
 ## Scope and safety
 
 Use official `https://zakaznoe.pochta.ru/` and `pochta.ru` tracking, exact
@@ -157,21 +187,13 @@ cost before payment. Exact approved letter includes ordinary postage up to
 store/extract card details; card input, 3-D Secure and SMS/push belong to user.
 After ambiguous response check status/number; no automatic payment/submit retry.
 
-## Tracking, names and evidence
+## Delivery status
 
 `Готово к вручению`, `Хранится`, `Ожидает в отделении` are not delivery. Confirm
 only current `Вручено` or dated delivery history. After successful submit record
-date, addressee, number, cost, part. Process one by one; before next letter verify
-current card title or record blocker.
-
-Check sent filename. Open card of exact number; verify number **before** edit.
-Use user title or `Адресат – краткая цель – объект`, with `N из M` for parts.
-Save through visible editor, reload exact card and read persisted title. PDF
-name, input or toast alone proves nothing. Repeat per number, reconcile full set.
-Download/open official artifacts: nonempty/readable, matching number/date/recipient.
-Before final answer reconcile every new number, reloaded title and verified
-evidence; report saved title or exact blocker per number. No completion claim
-before this check.
+date, addressee, number, cost, part. Check sent filename and apply the completion
+criteria above to every number. Delivery itself is a separate outcome: sending,
+renaming and preserved evidence do not prove that the addressee received it.
 
 ## Fix already sent letters
 
