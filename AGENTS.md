@@ -84,6 +84,8 @@ Inbox reads сохраняют общий лимит и partial coverage; cloud 
 Для нескольких личных аккаунтов читай [общий контракт](docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов): каталог и company bindings принадлежат host, protected storage и вход – provider-у.
 Для WhatsApp discovery, recency, date-only поиска, coverage и browser fallback
 читай [контракт WhatsApp](docs/whatsapp-web-agent-skill.md#поиск-последней-переписки).
+Диагностика WhatsApp сохраняет только numeric disconnect и закрытые network enums;
+terminal wait и doctor после cleanup сохраняют причину без raw SDK error/packets.
 Для VK Рекламы читай полный [workflow](platform-skills/vk-ads/references/workflow.md)
 и [security](platform-skills/vk-ads/references/security.md): paused creation,
 scoped планы, persisted receipts, read-back и запрет replay неизвестной записи.

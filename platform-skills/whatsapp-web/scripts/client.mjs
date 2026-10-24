@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { requireThat, RuntimeError, digest } from './core.mjs';
 import { prepareMedia } from './media.mjs';
 import { BROWSER_COMMANDS, validateBrowserRequest } from './browser.mjs';
+import { ConnectionDiagnostics } from './connection-diagnostics.mjs';
 
 const MAX_MESSAGES = 10000, MAX_CHATS = 5000;
 const MUTATIONS = new Set(['send', 'reply', 'react', 'edit', 'delete', 'forward', 'create-group', 'member-add', 'member-remove', 'member-promote', 'member-demote', 'chat-update', 'chat-settings', 'block', 'group-invite-revoke', 'group-join']);
@@ -126,6 +127,8 @@ export function messageView(raw, sdk) {
 export class WhatsAppClient {
   constructor({ sdk, pino, permit, persist, onQr, onPhase, onFatal, saved }) {
     Object.assign(this, { sdk, permit, persist, onQr, onPhase, onFatal });
+    this.diagnostics = new ConnectionDiagnostics();
+    this.onPhase = phase => { this.diagnostics.phase(phase); onPhase(phase); };
     this.logger = pino({ level: 'silent' });
     this.data = saved ? JSON.parse(saved, sdk.BufferJSON.reviver) : { schema: 1, creds: sdk.initAuthCreds(), keys: {}, chats: {}, contacts: {}, messages: {}, policy: 'confirm', attempts: {} };
     requireThat(this.data.schema === 1 && this.data.creds && this.data.keys && this.data.messages && ['confirm','read-only','autonomous'].includes(this.data.policy), 'vault_schema_invalid');
@@ -153,7 +156,12 @@ export class WhatsAppClient {
     return value;
   }
   async save() { await this.persist(this.serialize()); }
-  fail(error) { if (!this.closed) this.onFatal(error instanceof RuntimeError ? error.code : 'provider_operation_failed'); }
+  fail(error) {
+    if (!this.closed) {
+      this.diagnostics.failed(error);
+      this.onFatal(error instanceof RuntimeError ? error.code : 'provider_operation_failed');
+    }
+  }
   event(fn) { return (...args) => { Promise.resolve().then(() => { if (!this.closed) return fn(...args); }).catch(error => this.fail(error)); }; }
   upsert(collection, rows) {
     for (const row of rows) if (isChatId(row.id)) collection[row.id] = { ...collection[row.id], ...row };
@@ -176,6 +184,7 @@ export class WhatsAppClient {
     this.generation = generation;
     await this.permit(); requireThat(!this.closed, 'session_closed');
     if (generation !== this.generation) return;
+    this.diagnostics.connecting();
     const sdk = this.sdk;
     const auth = { creds: this.data.creds, keys: {
       get: async (type, ids) => {
@@ -237,13 +246,23 @@ export class WhatsAppClient {
       if (update.connection === 'close') {
         this.connected = false;
         const code = update.lastDisconnect?.error?.output?.statusCode;
-        if (code === sdk.DisconnectReason.loggedOut) { this.onPhase('relink_required'); return; }
         // Pairing has one documented socket restart. Transport recovery is
-        // bounded and never resubmits an outgoing user mutation.
-        if (code === sdk.DisconnectReason.restartRequired && !this.restartUsed) this.restartUsed = true;
-        else if (![408, 428, 503].includes(code) || ++this.retries > 3) { this.onPhase('disconnected'); return; }
+        // bounded and never resubmits an outgoing user mutation. Count actual
+        // scheduled retries, not the final failure (which used to report 4).
+        const pairingRestart = code === sdk.DisconnectReason.restartRequired && !this.restartUsed;
+        const willRetry = pairingRestart || [408, 428, 503].includes(code) && this.retries < 3;
+        if (pairingRestart) this.restartUsed = true;
+        else if (willRetry) this.retries++;
+        const retryDelayMs = willRetry ? Math.max(1000, this.retries * 1500) : 0;
+        this.diagnostics.disconnected(update.lastDisconnect?.error, { willRetry, retryDelayMs,
+          reconnectAttempts: this.retries, pairingRestartUsed: this.restartUsed });
+        // The SDK can emit a duplicate close before the scheduled reconnect.
+        // Retire this socket now, so one failure cannot schedule parallel clients.
+        this.socket = null;
+        clearTimeout(this.reconnectTimer);
+        if (!willRetry) { this.onPhase(code === sdk.DisconnectReason.loggedOut ? 'relink_required' : 'disconnected'); return; }
         this.onPhase('reconnecting');
-        this.reconnectTimer = setTimeout(() => { if (!this.closed) this.connect().catch(e => this.fail(e)); }, Math.max(1000, this.retries * 1500));
+        this.reconnectTimer = setTimeout(() => { if (!this.closed) this.connect().catch(e => this.fail(e)); }, retryDelayMs);
       }
     }));
     socket.ev.on('messaging-history.set', currentEvent(async history => {

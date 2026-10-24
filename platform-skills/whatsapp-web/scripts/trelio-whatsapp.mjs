@@ -12,6 +12,7 @@ import { atomicWrite, createPrivateFile, ensurePrivateDirectory, nativeHelper, S
 import { bootstrap as bootstrapBrowser, dependencies as loadPlaywright } from './dependencies.mjs';
 import { validateRequest } from './client.mjs';
 import { browserStorage } from './profile.mjs';
+import { connectionDiagnosticsView, connectionDiagnosticsFields } from './connection-diagnostics.mjs';
 
 const COMMANDS = ['help', 'doctor', 'bootstrap', 'start', 'wait', 'status', 'request', 'stop', 'forget'];
 export function parseArguments(args) {
@@ -61,7 +62,10 @@ export function requestControl(control, packet, timeoutMs = 30000) {
       res.on('aborted', () => reject(new RuntimeError('control_result_incomplete')));
       res.on('error', () => reject(new RuntimeError('control_result_incomplete')));
       res.on('end', () => {
-        try { const value = JSON.parse(text); if (res.statusCode === 200) resolve(value);
+        try { const value = JSON.parse(text); if (res.statusCode === 200) {
+          const { connectionDiagnostics: ignored, ...rest } = value;
+          resolve({ ...rest, ...connectionDiagnosticsFields(value) });
+        }
           else reject(new RuntimeError(/^[a-z_]+$/.test(value.error) ? value.error : 'operation_failed', value)); }
         catch (error) { reject(error instanceof RuntimeError ? error : new RuntimeError('control_result_invalid')); }
       });
@@ -99,7 +103,10 @@ async function doctor(directory, helper, root, mode = 'protocol') {
   // A regular browser profile does not need a credential-store preflight.
   // In particular, a locked/unavailable Keychain must not block browser login.
   const keychain = browser ? { status: 'not_applicable' } : await keychainStatus(helper);
+  const last = await optionalJson(path.join(directory, 'status.json'), helper);
+  const diagnostics = !browser && last?.mode === 'protocol' ? connectionDiagnosticsView(last.connectionDiagnostics) : null;
   return { platform: process.platform, mode, supported, runtimeReady, storedVault: !browser && configured,
+    ...(diagnostics ? { connectionDiagnostics: diagnostics } : {}),
     ...(browser ? { storedProfile: configured } : {}), keychain,
     encryption: browser ? 'none' : process.platform === 'win32' ? 'AES-256-GCM + DPAPI CurrentUser' : 'AES-256-GCM + login Keychain',
     runtimeOwnerConfirmation: false,
@@ -198,6 +205,7 @@ export async function run(args, statusTimeoutMs = 30000) {
     // old control bearer there, and never remove ciphertext as crash cleanup.
     const last = await optionalJson(path.join(directory, 'status.json'), helper);
     return { sessionId: lease.leaseId, phase: command === 'status' ? finishedReceiptPhase(last, lease.leaseId) : 'closed', expiresAt: lease.expiresAt, requiredAction: null,
+      ...(last?.sessionId === lease.leaseId && connectionDiagnosticsView(last.connectionDiagnostics) ? { connectionDiagnostics: connectionDiagnosticsView(last.connectionDiagnostics) } : {}),
       ...(last?.sessionId === lease.leaseId && last.error ? { error: last.error, ...serviceHttpFailure(last) } : {}) };
   }
   if (command === 'status' && (!lease || !control)) {
@@ -206,7 +214,8 @@ export async function run(args, statusTimeoutMs = 30000) {
       last?.sessionId !== lease.leaseId && await leaseAlive(lease))
       return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };
     requireThat(last && options['--session'] === last.sessionId, 'no_active_session');
-    return { ...last, phase: finishedReceiptPhase(last, last.sessionId), requiredAction: null };
+    const { connectionDiagnostics: ignored, ...rest } = last;
+    return { ...rest, ...connectionDiagnosticsFields(last), phase: finishedReceiptPhase(last, last.sessionId), requiredAction: null };
   }
   requireThat(lease && control && lease.leaseId === control.leaseId, 'no_active_session');
   requireThat(['status', 'stop'].includes(command) || lease.runtimeVersion === RUNTIME_VERSION, 'stop_previous_runtime_session_first');
@@ -242,5 +251,5 @@ export async function run(args, statusTimeoutMs = 30000) {
 // one resolved side can silently skip the CLI and return empty stdout.
 if (process.argv[1] && await fs.realpath(process.argv[1]).catch(() => '') === await fs.realpath(fileURLToPath(import.meta.url))) {
   try { process.stdout.write(`${JSON.stringify(await run(process.argv.slice(2)))}\n`); }
-  catch (error) { process.stderr.write(`${JSON.stringify({ error: error instanceof RuntimeError ? error.code : 'runtime_failed', ...serviceHttpFailure(error) })}\n`); process.exitCode = 1; }
+  catch (error) { process.stderr.write(`${JSON.stringify({ error: error instanceof RuntimeError ? error.code : 'runtime_failed', ...serviceHttpFailure(error), ...connectionDiagnosticsFields(error) })}\n`); process.exitCode = 1; }
 }

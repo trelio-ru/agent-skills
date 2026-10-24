@@ -66,6 +66,32 @@ POST проверяет Origin и текущую revision; одновремен�
 
 ## Чтение и изменения
 
+### Диагностика соединения
+
+`status`, `wait` и `doctor` возвращают `connectionDiagnostics` protocol-сессии.
+Один bounded снимок содержит stage, фактическое число socket attempts,
+reconnectAttempts/maxReconnectAttempts, отдельный pairingRestartUsed,
+everConnected/lastConnectedAt и последние пять причин разрыва. Каждая причина
+сохраняет numeric statusCode либо null, фиксированные reason/category,
+allowlisted transportCode либо null, source=connection/initialization/operation,
+время, attempt, willRetry/retryDelayMs
+и фиксированный nextAction. Для 408 SDK не различает lost/timedOut:
+`connection_lost_or_timed_out` сохраняет эту неоднозначность. Неизвестный код
+не становится logout, сетевым сбоем либо доказательством устаревшей версии.
+Известный network code внутри Boom wrapper имеет приоритет над общим 500.
+Provider message, stack, data/packet, URL, QR, credentials и account/chat ID
+не входят в диагностику; сохранённый снимок повторно проецируется на CLI boundary.
+
+До трёх фактических transport retries и одного pairing restart остаются
+в исходной lease, без resend, нового login либо сброса хранилища. Повторный
+close старого socket не создаёт параллельный reconnect и не заменяет причину.
+`disconnected`/`relink_required` завершают wait без новой continuation.
+После cleanup status сохраняет снимок exact сессии; doctor читает последний
+protocol-снимок без открытия credentials, сети или автоматического start.
+Наличие старой причины не доказывает текущий live отказ: stage/everConnected
+и состояние lease оцениваются отдельно. После успешного reconnect история
+причин остаётся доступной. `session_not_ready` также переносит этот safe снимок.
+
 Чтение использует локально синхронизированное ограниченное окно, не создаёт
 свой полнотекстовый постоянный индекс и не вызывает readMessages/read receipts.
 `markOnlineOnConnect=false`. Partial coverage возвращается всегда; limit и

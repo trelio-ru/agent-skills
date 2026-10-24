@@ -1,7 +1,9 @@
 import { performance } from 'node:perf_hooks';
 import { requireThat } from './core.mjs';
 
-const COMPLETE = new Set(['ready', 'configured', 'forgotten', 'authorized', 'closed', 'failed', 'authorization_failed']);
+// A stopped recovery loop cannot make progress through another wait. Return its
+// diagnostic receipt once, without teaching the caller an endless continuation.
+const COMPLETE = new Set(['ready', 'configured', 'forgotten', 'authorized', 'closed', 'failed', 'authorization_failed', 'disconnected', 'relink_required']);
 
 export function validateWaitOptions(options) {
   requireThat(/^[a-f0-9-]{36}$/.test(options['--session'] || ''), 'exact_session_required');
