@@ -27,7 +27,10 @@ export function privateDirectory(directory) {
     const executable = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     const helper = fileURLToPath(new URL('private-storage.ps1', import.meta.url));
     const result = spawnSync(executable, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper, '-Directory', resolved], {shell: false, windowsHide: true, encoding: 'utf8', timeout: 30000});
-    if (result.status !== 0 || !result.stdout?.includes('"privateStorage":true')) throw Error('AUDIO_PRIVATE_STORAGE_DENIED');
+    if (result.status !== 0 || !result.stdout?.includes('"privateStorage":true')) {
+      const safeCode = /^AUDIO_PRIVATE_STORAGE_DENIED_(?:IDENTITY|OWNER|ACL|VERIFY)$/u.exec(result.stderr?.trim() || '')?.[0];
+      throw Error(safeCode || 'AUDIO_PRIVATE_STORAGE_DENIED');
+    }
   } else {
     fs.mkdirSync(resolved, {recursive: true, mode: 0o700});
     const stat = fs.lstatSync(resolved);

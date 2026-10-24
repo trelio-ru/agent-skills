@@ -296,8 +296,11 @@ def process_job(directory, state_root, run_id, resume=False, model_loader=load_m
                 stderr_thread.join(timeout=5)
             if monitor:
                 monitor.join(timeout=1)
-            save()
+            # Publish the terminal job state only after every deliverable is
+            # durable. Otherwise status could expose completed while JSON
+            # still says complete=false or Windows still has a file open.
             write_outputs(directory, state)
+            save()
 
 
 def drain(stream):

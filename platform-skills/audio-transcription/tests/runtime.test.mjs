@@ -13,7 +13,7 @@ import {buildRuntimePackage} from '../../tools/build-runtime-package.mjs';
 
 const fixtureFile = path.join(providerRoot, '.ci-state.json');
 const fixture = fs.existsSync(fixtureFile) ? JSON.parse(fs.readFileSync(fixtureFile)) : null;
-const temporary = () => fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'trelio-audio-test-'));
+const temporary = () => privateDirectory(path.join(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'trelio-audio-test-')), 'private'));
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const artifact = value => ({url: 'https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/synthetic.bin', bytes: value.length, sha256: digest(value)});
 

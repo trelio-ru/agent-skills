@@ -45,6 +45,8 @@ Unix directories принадлежат текущему uid и закрыты m
 до записи выполняется fixed PowerShell helper с Process-only Bypass;
 owner/DACL/reparse checks обязательны, постоянные execution policies сохраняются.
 Unknown/denied policy останавливает работу без fallback storage.
+Windows refusal содержит только fixed stage IDENTITY/OWNER/ACL/VERIFY:
+чужой owner не присваивается автоматически, даже в тестовом elevated process.
 
 После `setup --approve HASH` возвращается `installing`, затем `doctor` показывает
 `disk`, `runtime-download`, `runtime-install`, `model-download`, `ready` либо
@@ -83,6 +85,8 @@ Network protocols и playlist demuxers запрещены. PCM обрабаты�
 audio/transcript не печатаются в runtime stdout. `completed` означает, что
 декодер дошёл до EOF без ошибки и исходник не изменился. Размеры/длительность
 записи сами по себе не доказывают качество распознавания.
+Terminal state публикуется после готовых файлов; snapshot `completed` уже
+показывает JSON с `complete=true`.
 
 JSON содержит startSample/endSample и raw text. SRT и TXT используют таймкоды
 сегментов; diarization, identification speakers и word alignment не обещаются.

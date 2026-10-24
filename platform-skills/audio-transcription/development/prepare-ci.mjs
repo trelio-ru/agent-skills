@@ -11,7 +11,11 @@ if (process.argv[2] === 'package') {
   process.stdout.write('Audio transcription package uses committed source only.\n');
 } else {
   const provider = fileURLToPath(new URL('../', import.meta.url));
-  const root = privateDirectory(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'trelio-audio-ci-')));
+  // On elevated Windows runners mkdir's default owner can be Administrators.
+  // Let the production helper create a fresh child and establish its own SID
+  // before any fixture material, instead of adopting an existing foreign owner.
+  const parent = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'trelio-audio-ci-'));
+  const root = privateDirectory(path.join(parent, 'private'));
   const plan = installationPlan(root);
   // Explicit test-fixture consent exercises the same production installer.
   // It is not an agent authorization or a receipt for a person's device.
