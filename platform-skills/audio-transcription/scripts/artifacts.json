@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "model": "v3_e2e_rnnt",
+  "upstreamRevision": "7447938d791c4f3e643386ee22c33777004293a5",
+  "uvVersion": "0.13.5",
+  "pythonVersion": "3.11.14",
+  "uv": {
+    "darwin-arm64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-aarch64-apple-darwin.tar.gz",
+      "sha256": "743f85035a1996ecb350659e01cd9faea9709829be09b1b4b03c73eaf3c9cd73",
+      "bytes": 14365303,
+      "format": "tgz"
+    },
+    "darwin-x64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-apple-darwin.tar.gz",
+      "sha256": "b0f52b0e3945b4107d89024ea38e625683011fbfc05a0d98f9fa2d6dcee28c66",
+      "bytes": 17167423,
+      "format": "tgz"
+    },
+    "linux-x64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f",
+      "bytes": 16682639,
+      "format": "tgz"
+    },
+    "win32-x64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-pc-windows-msvc.zip",
+      "sha256": "a38b8d1902b7cfbc76b423ba1bb456f623f42064cdc72628b6075b89afd1019a",
+      "bytes": 15264056,
+      "format": "zip"
+    }
+  },
+  "models": [
+    {
+      "name": "v3_e2e_rnnt.ckpt",
+      "url": "https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v3_e2e_rnnt.ckpt",
+      "sha256": "f60c62fe45902d967000770a12f260de7c5ac4d4b8e5e852f1df8c548e3958b5",
+      "bytes": 448929252
+    },
+    {
+      "name": "v3_e2e_rnnt_tokenizer.model",
+      "url": "https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v3_e2e_rnnt_tokenizer.model",
+      "sha256": "828c12c991019eef952a960661f25a92d6ad279591e2ea466b4aeddf1d20a18a",
+      "bytes": 255336
+    }
+  ]
+}

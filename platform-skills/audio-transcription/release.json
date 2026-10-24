@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "audio-transcription",
+    "version": "1.0.0",
+    "summary": "Локальная расшифровка длинных аудио официальной GigaAM v3: установка после согласия, прогресс, отмена, продолжение и TXT/SRT/JSON на macOS Apple Silicon, Windows x64 и Linux x64."
+  },
+  "connection": null,
+  "runtime": {
+    "version": "1.0.0",
+    "minimumHostVersion": "1.4.0",
+    "entrypoint": {
+      "path": "scripts/audio-transcription.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "network",
+      "local-session"
+    ],
+    "files": [
+      {
+        "source": "scripts/artifacts.json",
+        "path": "scripts/artifacts.json",
+        "mode": 420
+      },
+      {
+        "source": "scripts/audio-transcription.mjs",
+        "path": "scripts/audio-transcription.mjs",
+        "mode": 493
+      },
+      {
+        "source": "scripts/bootstrap.mjs",
+        "path": "scripts/bootstrap.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/private-storage.ps1",
+        "path": "scripts/private-storage.ps1",
+        "mode": 420
+      },
+      {
+        "source": "scripts/storage.mjs",
+        "path": "scripts/storage.mjs",
+        "mode": 420
+      },
+      {
+        "source": "engine/pyproject.toml",
+        "path": "engine/pyproject.toml",
+        "mode": 420
+      },
+      {
+        "source": "engine/uv.lock",
+        "path": "engine/uv.lock",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/GigaAM-LICENSE",
+        "path": "engine/vendor/GigaAM-LICENSE",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/__init__.py",
+        "path": "engine/vendor/gigaam/__init__.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/decoder.py",
+        "path": "engine/vendor/gigaam/decoder.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/decoding.py",
+        "path": "engine/vendor/gigaam/decoding.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/encoder.py",
+        "path": "engine/vendor/gigaam/encoder.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/model.py",
+        "path": "engine/vendor/gigaam/model.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/onnx_utils.py",
+        "path": "engine/vendor/gigaam/onnx_utils.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/preprocess.py",
+        "path": "engine/vendor/gigaam/preprocess.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/timestamps_utils.py",
+        "path": "engine/vendor/gigaam/timestamps_utils.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/types.py",
+        "path": "engine/vendor/gigaam/types.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/utils.py",
+        "path": "engine/vendor/gigaam/utils.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/gigaam/vad_utils.py",
+        "path": "engine/vendor/gigaam/vad_utils.py",
+        "mode": 420
+      },
+      {
+        "source": "engine/vendor/origin.json",
+        "path": "engine/vendor/origin.json",
+        "mode": 420
+      },
+      {
+        "source": "engine/worker.py",
+        "path": "engine/worker.py",
+        "mode": 420
+      },
+      {
+        "source": "references/workflow.md",
+        "path": "references/workflow.md",
+        "mode": 420
+      }
+    ]
+  }
+}
