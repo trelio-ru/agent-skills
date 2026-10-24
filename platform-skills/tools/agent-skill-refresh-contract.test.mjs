@@ -123,7 +123,10 @@ test("all public main instructions fit the UTF-8 publication budget", async () =
   assert.deepEqual(rows.filter(row => row.exceedsLimit || row.envelopeFixtureExceedsLimit), []);
 });
 
-test("Post keeps every irreversible-action and caller-lifecycle boundary in its compact main text", async () => {
+// This guards delivery of the completion questions, not an agent's obedience.
+// The forward scenarios separately describe the required choices when another
+// skill or compaction interrupts Post; live rename still needs card read-back.
+test("Post keeps completion questions and action boundaries in its main text", async () => {
   const text = (await readFile(new URL('russian-post-registered-mail/SKILL.md', platformSkillsDirectory), 'utf8')).replace(/\s+/gu, ' ');
   const decisions = [
     /does not replace required paper original, enclosure inventory, declared-value letter or paper delivery notice/u,
@@ -149,6 +152,11 @@ test("Post keeps every irreversible-action and caller-lifecycle boundary in its 
     /If unavailable, explain and ask how to proceed; never silently omit it/u,
     /up to \*\*300 ₽\*\*; higher price or any changed field needs new confirmation/u,
     /no automatic payment\/submit retry/u,
+    /Before another letter, signing\/court filing, handoff or browser cleanup/u,
+    /ask \*\*yourself, not the user\*\*/u,
+    /Все ли отправленные письма переименованы и проверены после перезагрузки карточек\?/u,
+    /Without title read-back, mark renaming incomplete/u,
+    /After lost context, reload this skill and reconcile that full set/u,
     /reload exact card and read persisted title/u,
     /PDF name, input or toast alone proves nothing/u,
     /old title permits retry only after establishing current state and no pending save/u,
