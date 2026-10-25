@@ -7,7 +7,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 import {artifacts, childEnvironment, installationPlan, performSetup, providerRoot, pythonPath, ready, startSetup} from './bootstrap.mjs';
 import {atomicJson, privateDirectory, readJson, stateDirectory} from './storage.mjs';
 
-export const RUNTIME_VERSION = '1.0.0';
+export const RUNTIME_VERSION = '1.1.0';
 const busy = new Set(['queued', 'validating', 'loading', 'transcribing']);
 const supported = new Set(['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.aif', '.aiff', '.mp4', '.mov', '.mkv', '.webm']);
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
@@ -32,7 +32,11 @@ function jobDirectory(options) {
 
 function launchWorker(directory, stateRoot, {resume = false} = {}) {
   const state = readJson(path.join(directory, 'job.json'));
-  if (!state || state.schemaVersion !== 1 || state.model !== artifacts.model) throw Error('AUDIO_JOB_INVALID');
+  if (!state || state.schemaVersion !== 1) throw Error('AUDIO_JOB_INVALID');
+  // Keep model identity separate from the job schema: a valid pre-upgrade job
+  // is still readable through status, but cannot receive a different decoder's
+  // words. Refuse before writing launch/cancellation receipts or spawning.
+  if (state.model !== artifacts.model) throw Error('AUDIO_JOB_MODEL_MISMATCH');
   if (state.state === 'completed') return projection(directory, state);
   const launched = readJson(path.join(directory, 'launch.json'));
   if (resume && (launchAlive(launched) || busy.has(state.state) && processAlive(state.pid))) return projection(directory, state);

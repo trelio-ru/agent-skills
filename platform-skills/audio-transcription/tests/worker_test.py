@@ -31,7 +31,7 @@ class WorkerTests(unittest.TestCase):
             stream.setparams((1, 2, worker.RATE, 0, "NONE", "not compressed"))
             stream.writeframes(self.pcm)
         stat = self.source.stat()
-        worker.atomic_json(self.job / "job.json", {"schemaVersion": 1, "model": "v3_e2e_rnnt", "state": "queued", "runId": "first",
+        worker.atomic_json(self.job / "job.json", {"schemaVersion": 1, "model": "v3_rnnt", "state": "queued", "runId": "first",
             "input": str(self.source), "originalSize": stat.st_size, "originalMtimeMs": stat.st_mtime * 1000,
             "segments": [], "processedSamples": 0})
 
@@ -112,6 +112,44 @@ class WorkerTests(unittest.TestCase):
     def test_model_integrity_is_checked_before_loading_pickle(self):
         with self.assertRaisesRegex(RuntimeError, "AUDIO_MODEL_INTEGRITY_FAILED"):
             worker.load_model(self.root, lambda: False)
+
+    def test_output_files_preserve_raw_words_numbers_and_missing_punctuation(self):
+        state = self.state()
+        raw = "он не вернул 3 000 рублей и не ответил"
+        state.update(state="completed", processedSamples=16000,
+            segments=[{"index": 0, "startSample": 0, "endSample": 16000, "text": raw}])
+        worker.write_outputs(self.job, state)
+        output = json.loads((self.job / "transcript.json").read_text(encoding="utf-8"))
+        self.assertEqual(output["segments"][0]["text"], raw)
+        self.assertEqual((self.job / "transcript.txt").read_text(encoding="utf-8").split("\n", 1)[1].strip(), raw)
+        self.assertEqual((self.job / "transcript.srt").read_text(encoding="utf-8").splitlines()[2], raw)
+
+    def test_resume_cannot_mix_old_e2e_segments_with_rnnt_or_mutate_the_job(self):
+        state = self.state()
+        state.update(model="v3_e2e_rnnt", state="cancelled", processedSamples=16000,
+            segments=[{"index": 0, "startSample": 0, "endSample": 16000, "text": "Сохранённые слова"}])
+        worker.atomic_json(self.job / "job.json", state)
+        worker.write_outputs(self.job, state)
+        originals = {name: (self.job / name).read_bytes()
+            for name in ["job.json", "transcript.json", "transcript.txt", "transcript.srt"]}
+        calls = []
+        with self.assertRaisesRegex(RuntimeError, "AUDIO_JOB_MODEL_MISMATCH"):
+            worker.process_job(self.job, self.root, "new-runtime", resume=True,
+                model_loader=lambda *_: calls.append(True), infer=lambda *_: "unexpected")
+        self.assertFalse(calls)
+        for name, content in originals.items():
+            self.assertEqual((self.job / name).read_bytes(), content)
+
+    def test_completed_old_model_is_not_reopened_or_rewritten_by_worker(self):
+        state = self.state()
+        state.update(model="v3_e2e_rnnt", state="completed")
+        worker.atomic_json(self.job / "job.json", state)
+        before = (self.job / "job.json").read_bytes()
+        calls = []
+        worker.process_job(self.job, self.root, "new-runtime", resume=True,
+            model_loader=lambda *_: calls.append(True))
+        self.assertFalse(calls)
+        self.assertEqual((self.job / "job.json").read_bytes(), before)
 
     def test_same_job_os_lock_is_exclusive_in_a_real_child(self):
         source = "import importlib.util,sys; from pathlib import Path; s=importlib.util.spec_from_file_location('w',sys.argv[1]);w=importlib.util.module_from_spec(s);s.loader.exec_module(w);\nwith w.job_lock(Path(sys.argv[2])): print('unexpected')"

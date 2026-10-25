@@ -7,7 +7,7 @@
 GigaAM inference source закреплён на commit
 `7447938d791c4f3e643386ee22c33777004293a5` официального
 `salute-developers/GigaAM`; оригинальные файлы и MIT notice входят в package.
-Свой `load_model` сначала проверяет SHA-256 checkpoint/tokenizer и только затем
+Свой `load_model` сначала проверяет SHA-256 checkpoint и только затем
 читает официальный PyTorch checkpoint. Пользовательские веса и remote code
 не принимаются. ONNX-конвертация/Type не используются.
 
@@ -20,7 +20,9 @@ uv/Python version и dependency lock. Пользователь одобряет 
 транскрипцию сам по себе его не даёт. Внутренний `__setup` – worker protocol,
 не доступная агенту альтернатива.
 
-Модель и tokenizer вместе занимают около 429 МиБ. Дополнительная среда может
+Официальный `v3_rnnt.ckpt` занимает 446 390 032 байта (около 426 МиБ).
+Отдельный файл токенизатора не требуется: алфавит хранится в конфигурации модели.
+Дополнительная среда может
 потребовать до 1,5 ГиБ загрузки; перед началом нужен запас 4 ГиБ на диске.
 uv скачивается как закреплённый binary с проверкой SHA-256. Он устанавливает
 отдельный managed CPython 3.11.14 и hash-locked CPU dependencies из `uv.lock`.
@@ -79,6 +81,14 @@ Network protocols и playlist demuxers запрещены. PCM обрабаты�
 успешным окончанием. После `failed`/`interrupted` сначала оцени errorCode:
 изменение исходника/целостности требует устранения причины, а не слепого retry.
 
+Обновление модели не меняет уже сохранённые фрагменты. Node launcher и Python
+worker отдельно отклоняют несовпадение `job.model` с моделью signed package
+до нового inference (`AUDIO_JOB_MODEL_MISMATCH`). Старые job и результаты
+сохраняются; `status` читает их с исходным именем модели. Для новой модели
+создаётся отдельная job и новая пустая папка, а не смешанный transcript.
+Изменившийся model artifact меняет download plan: прежнее согласие на E2E-веса
+не разрешает незаметно скачать RNNT. Уже загруженные файлы не удаляются.
+
 ## Результат и ограничения
 
 `status` возвращает только readiness/progress/coverage и пути результатов;
@@ -88,12 +98,17 @@ audio/transcript не печатаются в runtime stdout. `completed` озн
 Terminal state публикуется после готовых файлов; snapshot `completed` уже
 показывает JSON с `complete=true`.
 
-JSON содержит startSample/endSample и raw text. SRT и TXT используют таймкоды
+JSON содержит startSample/endSample и raw text официальной `v3_rnnt`.
+Слова выдаются без встроенной пунктуации; обязательной постобработки нет.
+Только по отдельной просьбе агент создаёт оформленную копию, сохраняя исходные
+TXT/SRT/JSON. Последовательность слов и чисел должна совпасть с raw text без
+учёта только пунктуации и регистра; форматирование не исправляет ASR-ошибки.
+SRT и TXT используют таймкоды
 сегментов; diarization, identification speakers и word alignment не обещаются.
 Не превращай ASR в проверенный протокол разговора без сверки. Для сравнения
 моделей нужен независимый ручной эталон; межмодельное расхождение не является WER.
 
-Поддерживаемые targets первого выпуска: darwin-arm64 (macOS 11+), win32-x64
+Поддерживаемые targets: darwin-arm64 (macOS 11+), win32-x64
 (Windows 10+), linux-x64 (glibc 2.28+). Другие architectures возвращают
 `AUDIO_PLATFORM_UNSUPPORTED` до сети.
 CPU gate исполняется нативно на GitHub-hosted macOS/Windows/Linux, включая

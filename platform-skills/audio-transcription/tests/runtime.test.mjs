@@ -37,6 +37,51 @@ test('unconsented internal installation cannot perform network IO', async () => 
   fs.rmSync(root, {recursive: true});
 });
 
+test('an earlier E2E installation receipt cannot approve the RNNT model download', async () => {
+  const root = temporary();
+  const current = installationPlan(root);
+  const {planHash, ...material} = current;
+  // Reconstruct a prior-model plan for this SAME device directory. Its valid
+  // digest is not consent to the different bytes in the current signed plan.
+  const previousHash = digest(JSON.stringify({...material, model: 'v3_e2e_rnnt', models: [
+    {name: 'v3_e2e_rnnt.ckpt',
+      url: 'https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v3_e2e_rnnt.ckpt',
+      sha256: 'f60c62fe45902d967000770a12f260de7c5ac4d4b8e5e852f1df8c548e3958b5', bytes: 448929252},
+    {name: 'v3_e2e_rnnt_tokenizer.model',
+      url: 'https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v3_e2e_rnnt_tokenizer.model',
+      sha256: '828c12c991019eef952a960661f25a92d6ad279591e2ea466b4aeddf1d20a18a', bytes: 255336},
+  ]}));
+  atomicJson(path.join(root, 'installed.json'), {planHash: previousHash, model: 'v3_e2e_rnnt'});
+  atomicJson(path.join(root, 'download-consent.json'), {planHash: previousHash});
+  const doctor = await run(['doctor'], {root});
+  assert.equal(doctor.ready, false);
+  assert.equal(doctor.model, 'v3_rnnt');
+  assert.equal(doctor.consentRequired, true);
+  assert.equal(doctor.downloadPlan.models.length, 1);
+  assert.equal(doctor.downloadPlan.models[0].name, 'v3_rnnt.ckpt');
+  assert.equal(doctor.downloadPlan.planHash, planHash);
+  assert.notEqual(previousHash, planHash);
+  await assert.rejects(performSetup(previousHash, root), /AUDIO_DOWNLOAD_CONSENT_REQUIRED/u);
+  assert.equal(fs.existsSync(path.join(root, 'setup.lock')), false);
+  assert.equal(fs.existsSync(path.join(root, 'downloads')), false);
+  fs.rmSync(root, {recursive: true});
+});
+
+test('completed E2E results stay readable through status without the new model installed', async () => {
+  const root = temporary();
+  const job = {schemaVersion: 1, model: 'v3_e2e_rnnt', state: 'completed',
+    segments: [{text: 'Старые слова.'}], processedSamples: 16000, totalSeconds: 1};
+  atomicJson(path.join(root, 'job.json'), job);
+  const before = fs.readFileSync(path.join(root, 'job.json'));
+  const status = await run(['status', '--job-dir', root]);
+  assert.equal(status.model, 'v3_e2e_rnnt');
+  assert.equal(status.state, 'completed');
+  assert.equal(status.files.length, 3);
+  assert.deepEqual(fs.readFileSync(path.join(root, 'job.json')), before);
+  assert.equal(fs.existsSync(path.join(root, 'launch.json')), false);
+  fs.rmSync(root, {recursive: true});
+});
+
 test('download resumes exact bytes, then verifies the entire artifact', async () => {
   const root = temporary(), target = path.join(root, 'artifact');
   const value = Buffer.from('abcdef');
@@ -154,6 +199,23 @@ test('worker subprocess covers sample preservation, cancellation/resume, corrupt
   assert.match(result.stderr, /OK/u);
 });
 
+test('native ready launcher refuses an old-model resume before creating a worker receipt', {skip: !fixture && !process.env.CI}, async () => {
+  assert.ok(fixture, 'CI must use its genuinely installed RNNT environment');
+  const directory = temporary();
+  atomicJson(path.join(directory, 'job.json'), {schemaVersion: 1, model: 'v3_e2e_rnnt',
+    state: 'cancelled', runId: 'old-run', processedSamples: 16000,
+    segments: [{index: 0, startSample: 0, endSample: 16000, text: 'Сохранённые слова.'}]});
+  const before = fs.readFileSync(path.join(directory, 'job.json'));
+  await assert.rejects(run(['resume', '--job-dir', directory], {root: fixture.root}), /AUDIO_JOB_MODEL_MISMATCH/u);
+  assert.deepEqual(fs.readFileSync(path.join(directory, 'job.json')), before);
+  assert.equal(fs.existsSync(path.join(directory, 'launch.json')), false);
+  assert.equal(fs.existsSync(path.join(directory, 'cancel.json')), false);
+  const status = await run(['status', '--job-dir', directory]);
+  assert.equal(status.model, 'v3_e2e_rnnt');
+  assert.equal(status.state, 'cancelled');
+  fs.rmSync(directory, {recursive: true});
+});
+
 test('real official GigaAM processes >25 seconds through async production CLI and creates complete UTF-8 outputs', {skip: !fixture && !process.env.CI, timeout: 180000}, async () => {
   assert.ok(fixture);
   const root = privateDirectory(temporary());
@@ -177,6 +239,7 @@ test('real official GigaAM processes >25 seconds through async production CLI an
   assert.ok(status.totalSeconds > 25);
   const output = JSON.parse(fs.readFileSync(path.join(directory, 'transcript.json'), 'utf8'));
   assert.equal(output.complete, true);
+  assert.equal(output.model, 'v3_rnnt');
   assert.ok(output.segments.length >= 2);
   assert.match(fs.readFileSync(path.join(directory, 'transcript.txt'), 'utf8'), /[А-Яа-яЁё]{3}/u);
   assert.match(fs.readFileSync(path.join(directory, 'transcript.srt'), 'utf8'), / --> /u);
