@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "audio-transcription",
-    "version": "1.0.0",
-    "summary": "Локальная расшифровка длинных аудио официальной GigaAM v3: установка после согласия, прогресс, отмена, продолжение и TXT/SRT/JSON на macOS Apple Silicon, Windows x64 и Linux x64."
+    "version": "1.1.0",
+    "summary": "Локальная расшифровка на GigaAM v3_rnnt: исходные слова без обязательного восстановления пунктуации, один файл весов 446 МБ и защита от смешивания моделей при продолжении старых записей."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.0",
+    "version": "1.1.0",
     "minimumHostVersion": "1.4.0",
     "entrypoint": {
       "path": "scripts/audio-transcription.mjs",

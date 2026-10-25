@@ -179,6 +179,10 @@ provider-копии и без повторного сохранения PNG по
 Локальная расшифровка следует [контракту](platform-skills/audio-transcription/references/workflow.md):
 план установки до сети, отдельное согласие на закреплённые model/runtime bytes,
 проверка SHA-256 перед загрузкой PyTorch checkpoint, закрытое локальное хранение.
+Основная модель – `v3_rnnt`, raw text без обязательного восстановления пунктуации.
+Отдельно запрошенное оформление сохраняет исходник и последовательность слов.
+Старые job другой модели не продолжаются новым decoder-ом; mismatch проверяют
+Node launcher и Python worker до inference, без изменения сохранённых результатов.
 Потоковый decoder сохраняет все samples; cursor продвигается после durable
 segment. Resume не теряет cancellation нового run и не меняет исходник.
 Обязательны нативные first-install/inference gates на всех заявленных OS;

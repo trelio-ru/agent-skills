@@ -23,6 +23,7 @@ import uuid
 
 RATE = 16000
 ENGINE = Path(__file__).resolve().parent
+ARTIFACTS = json.loads((ENGINE.parent / "scripts" / "artifacts.json").read_text(encoding="utf-8"))
 
 
 class Cancelled(Exception):
@@ -125,8 +126,7 @@ def ffmpeg_arguments(executable, input_path):
 def load_model(state_root, cancelled):
     # A PyTorch checkpoint contains pickle. Check the exact published bytes
     # before torch.load; never accept a user-selected checkpoint or remote code.
-    artifacts = json.loads((ENGINE.parent / "scripts" / "artifacts.json").read_text(encoding="utf-8"))
-    for item in artifacts["models"]:
+    for item in ARTIFACTS["models"]:
         file = state_root / "models" / item["name"]
         if file.is_symlink() or not file.is_file() or file.stat().st_size != item["bytes"]:
             raise RuntimeError("AUDIO_MODEL_INTEGRITY_FAILED")
@@ -142,10 +142,12 @@ def load_model(state_root, cancelled):
     import torch
     from gigaam.model import GigaAMASR
     torch.set_num_threads(4)
-    checkpoint = torch.load(state_root / "models" / "v3_e2e_rnnt.ckpt", map_location="cpu", weights_only=False)
+    checkpoint = torch.load(state_root / "models" / "v3_rnnt.ckpt", map_location="cpu", weights_only=False)
     config = checkpoint["cfg"]
     config.encoder.flash_attn = False
-    config.decoding.model_path = str(state_root / "models" / "v3_e2e_rnnt_tokenizer.model")
+    # Plain RNNT decodes the alphabet embedded in its official configuration.
+    # It has no separate SentencePiece artifact; carrying over the E2E tokenizer
+    # would change the decoder rather than merely format the recognized words.
     model = GigaAMASR(config)
     model.load_state_dict(checkpoint["state_dict"])
     return model.float().eval(), torch
@@ -190,6 +192,11 @@ def process_job(directory, state_root, run_id, resume=False, model_loader=load_m
         state = json.loads(job_file.read_text(encoding="utf-8"))
         if state["state"] == "completed":
             return
+        # A runtime upgrade must never append RNNT words to durable E2E
+        # segments. Check before changing job state, opening the source or
+        # loading weights, and preserve the old job for its original runtime.
+        if state.get("model") != ARTIFACTS["model"]:
+            raise RuntimeError("AUDIO_JOB_MODEL_MISMATCH")
         if state["segments"] and not resume:
             return
         # Cancellation is fenced by run identity. Ignore an older request on
