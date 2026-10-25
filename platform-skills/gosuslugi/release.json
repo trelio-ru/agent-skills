@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.8",
-    "summary": "Исправлен пример Playwright-сценария: сбой скачивания не подменяет результат входа через ЕСИА, ожидания загрузки обрабатываются сразу, а cleanup закрывает все собственные ресурсы."
+    "version": "4.5.9",
+    "summary": "Исправлена совместимость делегированного входа ЕСИА с ASCII-регистром response_type=code. Другие режимы OAuth, дубликаты, неподходящий callback, подмена state и повторный callback остаются запрещены."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.8",
+    "version": "3.5.9",
     "minimumHostVersion": "3.7.1",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",

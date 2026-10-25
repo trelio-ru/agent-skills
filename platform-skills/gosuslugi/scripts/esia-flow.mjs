@@ -54,9 +54,14 @@ export class ServiceFlow {
       const redirect = uniqueParameter(url, 'redirect_uri');
       const state = uniqueParameter(url, 'state');
       const client = uniqueParameter(url, 'client_id');
+      const responseType = uniqueParameter(url, 'response_type');
       requireThat(
         method === 'GET' &&
-          uniqueParameter(url, 'response_type') === 'code' &&
+          // Recognize only ASCII case variants of authorization-code mode.
+          // Do not trim, decode twice, accept token/hybrid modes or rewrite the
+          // request. Duplicate parameters and callback/state guards remain
+          // independent checks before a credential capability can be issued.
+          responseType.length === 4 && /^[cC][oO][dD][eE]$/.test(responseType) &&
           externalUrl(redirect),
         'service_redirect_rejected',
       );
