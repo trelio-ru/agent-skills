@@ -40,6 +40,53 @@ test('only the actual bound ESIA transaction unlocks credentials and a single ma
   assert.equal(flow.redact(`url ${state} synthetic-code-only`), 'url [redacted] [redacted]');
 });
 
+test('all ASCII case variants of code retain the exact callback, state and one-use boundary', () => {
+  for (let mask = 0; mask < 16; mask++) {
+    const responseType = [...'code'].map((letter, index) =>
+      mask & (1 << index) ? letter.toUpperCase() : letter).join('');
+    const request = authorization(callback, { response_type: responseType });
+    const flow = new ServiceFlow(gas);
+    flow.observeNavigation(request); flow.allowSecret();
+    assert.equal(new URL(request).searchParams.get('response_type'), responseType,
+      'recognition does not rewrite the observed request');
+    assert.equal(flow.binding.callback.href, callback);
+    assert.equal(flow.hasAuthenticatedReturn, false);
+    assert.throws(() => flow.observeNavigation(returned({ state: 'wrong' })), /service_callback_rejected_state/);
+    assert.equal(flow.callbackSeen, false);
+    flow.observeNavigation(returned());
+    assert.throws(() => flow.allowSecret(), /service_authorization_request_required/);
+    flow.observeResponse(returned(), 200);
+    assert.equal(flow.hasAuthenticatedReturn, true);
+    assert.throws(() => flow.observeNavigation(returned()), /service_callback_already_used/);
+  }
+});
+
+test('case compatibility never admits other OAuth modes, whitespace, duplicate parameters or unsafe requests', () => {
+  for (const responseType of ['token', 'TOKEN', 'id_token', 'code token', 'CODE ID_TOKEN',
+    'code ', ' code', 'code\n', 'code\r', 'code\t', 'code\u0000', '%63ode', 'cоde', 'unknown']) {
+    const flow = new ServiceFlow(gas);
+    assert.throws(() => flow.observeNavigation(authorization(callback, { response_type: responseType })),
+      /service_redirect_rejected/);
+    assert.equal(flow.binding, null);
+    assert.throws(() => flow.allowSecret(), /service_authorization_request_required/);
+  }
+  for (const mode of ['missing', 'empty', 'duplicate']) {
+    const request = new URL(authorization(callback, { response_type: 'CODE' }));
+    if (mode === 'missing') request.searchParams.delete('response_type');
+    if (mode === 'empty') request.searchParams.set('response_type', '');
+    if (mode === 'duplicate') request.searchParams.append('response_type', 'code');
+    assert.throws(() => new ServiceFlow(gas).observeNavigation(request.href), /service_oauth_parameters_invalid/);
+  }
+  assert.throws(() => new ServiceFlow(gas).observeNavigation(authorization(callback, { response_type: 'CODE' }), 'POST'),
+    /service_redirect_rejected/);
+  for (const target of ['http://first.example.org/cb', 'https://first.example.org:8443/cb',
+    'https://user:pass@first.example.org/cb', 'https://first.example.org/cb#fragment',
+    'https://first.example.org/cb?code=reserved', 'https://first.example.org/cb?state=reserved']) {
+    assert.throws(() => new ServiceFlow(gas).observeNavigation(authorization(target, { response_type: 'CODE' })),
+      /service_redirect_rejected/);
+  }
+});
+
 test('callback scope, state, fixed query, errors, duplicate parameters and transaction replacement fail closed', () => {
   for (const target of [
     'https://esia.gosuslugi.ru/cb',
@@ -175,6 +222,20 @@ function browserFixture(service = gas) {
     get binds() { return binds; } };
 }
 const eventsSettled = () => new Promise(resolve => setImmediate(resolve));
+
+test('the browser observer accepts mixed-case code only through its bound callback document', () => {
+  const b = browserFixture(), watcher = b.start();
+  b.request(b.original, authorization(callback, { response_type: 'CoDe' }));
+  assert.equal(b.binds, 1); b.flow.allowSecret();
+  const cb = b.request(b.original, returned());
+  assert.throws(() => b.flow.allowSecret(), /service_authorization_request_required/);
+  b.response(cb, 302);
+  assert.equal(watcher.returned, false, 'HTTP response alone does not prove document return');
+  const next = b.request(b.original, gas.origin + '/cabinet', { parent: cb });
+  b.response(next); b.original.commit(next.url());
+  assert.equal(watcher.returned, true); assert.deepEqual(b.errors, []);
+  assert.equal(watcher.closed, true);
+});
 
 test('routing state after an accepted callback stays in its exact HTTP return chain', () => {
   const b = browserFixture(), watcher = b.start();

@@ -327,6 +327,9 @@ trusted source и сохраняться в закрытом статусе; pro
 экрана и одноразовым dispatch, без вопроса или ручного клика пользователя.
 Неизвестные права/другие согласия сохраняют отдельное основание; generic click
 не расширяется. Контракт – secure-runtime.md навыка Госуслуг.
+Регистр `response_type=code` у Госуслуг допускает только четыре ASCII-буквы,
+без trim/повторного decode/переписывания запроса. Другие OAuth modes и все
+callback/state/method/duplicate/replay guards проверяются независимо.
 Делегированный helper реализует только ЕСИА: callback берётся из реального
 request без карты внешних сайтов. После exact callback/state и внешнего
 HTTP document commit он сразу отключает observation и возвращает те же

@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.5.8 объявляет signed host browser-session class
+Runtime 3.5.9 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -328,6 +328,12 @@ caller-supplied allowlist. Ни начало на другом broker origin, н
 OAuth/SSO не дают новой capability: допускается только один наблюдённый ESIA
 request в exact связанном окне. Credentials всё равно вводятся только на
 официальных ESIA origins под прежним native permit.
+
+В реальном ESIA request допускается только `response_type=code`, включая
+ASCII-регистр четырёх букв. Значение не обрезается, повторно не декодируется
+и не переписывается; `token`, hybrid и неизвестные режимы не принимаются.
+Параметры по-прежнему должны быть единственными; совместимость регистра не
+ослабляет HTTPS, callback, state, method или one-use guards.
 
 Callback code/state/fixed query, GET, отсутствие fragment/token payload,
 дубликатов и replay проверяются до первого return proof. Отказ возвращается
