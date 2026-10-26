@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.13.3",
-    "summary": "Непрозрачная native ссылка первой отправки для привязки будущего ответа к существующей задаче без повторной отправки."
+    "version": "2.13.4",
+    "summary": "Первый вход сам подготавливает отсутствующие локальные зависимости Telegram без отдельной команды и повторной авторизации."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.13.3",
+    "version": "2.13.4",
     "minimumHostVersion": "3.18.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

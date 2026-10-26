@@ -1341,7 +1341,17 @@ def reexec_in_runtime_if_needed(command: str) -> None:
     if current_prefix == expected_prefix:
         return
     if not python.exists():
-        raise TelegramRuntimeError("Telegram runtime is not installed. Run bootstrap first.")
+        if command != "login":
+            raise TelegramRuntimeError("Telegram runtime is not installed. Run bootstrap first.")
+        # A first explicit login includes preparation of its missing dependency
+        # environment through the SAME bootstrap. Source setup intentionally
+        # admits only the signed login command, not a second model-selected
+        # bootstrap invocation. This runs before any Telegram connection or
+        # credential input; it neither retries login nor repairs/resets an
+        # existing environment/session after an uncertain attempt.
+        command_bootstrap(argparse.Namespace())
+        if not python.is_file():
+            raise TelegramRuntimeError("Telegram runtime preparation did not complete.")
     arguments = [str(python), "-I", "-B", str(Path(__file__).resolve()), *sys.argv[1:]]
     environment = dict(os.environ)
     if sys.platform == "win32":

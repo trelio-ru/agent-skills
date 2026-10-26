@@ -7,12 +7,14 @@ fixture creates a real venv and drives that boundary through captured pipes.
 """
 
 import json
+import importlib.util
 import pathlib
 import subprocess
 import sys
 import tempfile
 import unittest
 import venv
+from unittest import mock
 
 
 SCRIPT_PATH = pathlib.Path(__file__).parents[1] / "scripts" / "trelio-telegram.py"
@@ -101,6 +103,58 @@ class TelegramRuntimeHandoffTests(unittest.TestCase):
         self.assertEqual(result["details"], {"stage": "venv_process", "exitCode": 3221225477,
                                             "windowsStatus": "0xC0000005"})
         self.assertNotIn(str(self.root), completed.stderr.decode("utf-8"))
+
+
+class TelegramFirstLoginPreparationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("telegram_first_login", SCRIPT_PATH)
+        cls.runtime = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cls.runtime
+        spec.loader.exec_module(cls.runtime)
+
+    def exercise(self, command, *, present=False, failure=False, prepared=True):
+        runtime = self.runtime
+        # Only dependency preparation is mocked. Drive the production handoff
+        # and its exact argument/startup boundary; no pip/network/account exists.
+        python = mock.Mock()
+        python.exists.return_value = present
+        python.is_file.return_value = prepared
+        python.__str__ = mock.Mock(return_value="synthetic-python.exe")
+        with tempfile.TemporaryDirectory(prefix="telegram-first-login-") as directory, \
+                mock.patch.object(runtime, "runtime_root", return_value=pathlib.Path(directory)), \
+                mock.patch.object(runtime, "runtime_python", return_value=python), \
+                mock.patch.object(runtime.sys, "platform", "win32"), \
+                mock.patch.object(runtime, "command_bootstrap") as bootstrap, \
+                mock.patch.object(runtime.subprocess, "run") as child:
+            child.return_value.returncode = 0
+            if failure:
+                bootstrap.side_effect = runtime.TelegramRuntimeError("Synthetic install failure")
+            try:
+                runtime.reexec_in_runtime_if_needed(command)
+            except SystemExit as result:
+                self.assertEqual(result.code, 0)
+            except runtime.TelegramRuntimeError:
+                pass
+            return bootstrap.call_count, child.call_count, child.call_args
+
+    def test_first_login_prepares_once_then_launches_one_isolated_child(self):
+        installs, launches, arguments = self.exercise("login")
+        self.assertEqual((installs, launches), (1, 1))
+        self.assertEqual(arguments.args[0][:3], ["synthetic-python.exe", "-I", "-B"])
+        self.assertIs(arguments.kwargs["shell"], False)
+
+    def test_existing_login_environment_is_never_reinstalled(self):
+        self.assertEqual(self.exercise("login", present=True)[:2], (0, 1))
+
+    def test_failed_or_incomplete_preparation_never_starts_authentication(self):
+        self.assertEqual(self.exercise("login", failure=True)[:2], (1, 0))
+        self.assertEqual(self.exercise("login", prepared=False)[:2], (1, 0))
+
+    def test_missing_read_monitor_ack_environment_never_installs_or_starts(self):
+        for command in ["dialogs", "read", "monitor", "ack-reference"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.exercise(command)[:2], (0, 0))
 
 
 if __name__ == "__main__":
