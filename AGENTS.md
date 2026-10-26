@@ -375,6 +375,8 @@ StringIO и UTF-8 locale не воспроизводят ошибки Windows co
 Переход в provider venv проверяется настоящими процессами на каждой OS:
 Windows не использует CRT exec overlay; argv, ожидание и результат ребёнка
 сохраняются. Для Telegram – [контракт перехода](docs/telegram-mtproto-message-workflows.md#переход-в-локальный-python).
+Первый explicit Telegram login готовит только отсутствующий venv тем же bootstrap
+до provider auth; existing sessions и read/task/ACK admission не расширяются.
 Проверки идут через GitHub-hosted CI на нужных OS. Локальные full gates и VM не
 заменяют CI без доказанного billing/quota blocker и отдельного решения о VM.
 
