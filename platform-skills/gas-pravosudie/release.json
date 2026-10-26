@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gas-pravosudie",
-    "version": "4.1.5",
-    "summary": "Исправлен вход в ГАС через выбранный локальный аккаунт Госуслуг: привязка аккаунта передаётся помощнику ЕСИА и больше не вызывает gosuslugi_client_invalid."
+    "version": "4.1.6",
+    "summary": "Проверка движения иска теперь охватывает личный кабинет и публичную картотеку суда. Если номер неизвестен, обязателен поиск по фамилии со сверкой сторон и даты; найденная карточка используется для следующих проверок."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.10",
+    "version": "1.0.11",
     "minimumHostVersion": "2.4.0",
     "entrypoint": {
       "path": "scripts/trelio-gas-pravosudie.mjs",
