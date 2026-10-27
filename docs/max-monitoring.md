@@ -162,19 +162,23 @@ time и связанная socket/sequence цепочка страниц53 до 
 Результат содержит только `conversationsToSync` (строки native ID), отдельный
 account cursor v3 и `initialAccountCursor` — ОРИГИНАЛЬНУЮ позицию предыдущего
 полного inventory. Повторный полный scan продвигает native server time; он
-сигналит изменившиеся native last-event времена независимо от read flag. Первый
-scan также сигналит непрочитанные либо неизвестные counters. Нет обещания
-атомарного unread snapshot между чатами. Нативный ID не является sender/owner
+сигналит native last-event времена строго после предыдущего server checkpoint,
+независимо от read flag. Начиная с source2.13.0 первый scan возвращает ноль
+сигналов: старые непрочитанные и неизвестные counters не запускают историю.
+Coverage явно содержит `newMessagesOnly=true`; это не атомарный unread snapshot. Нативный ID не является sender/owner
 proof, task route или разрешением ACK.
 
 Host атомарно сохраняет сигналы в прежние source streams и account cursor.
 Каждая переписка использует прежний v2 native anchor; существующая позиция и её
 original seed не перезаписываются при следующем inventory/restart. Первый
 `monitor --chat CANONICAL_URL --conversation-references --initial-account-cursor
-ORIGINAL_POSITION` включает native unread interval И сообщения после original
-account time, даже если их прочитали на другом устройстве. Для этого нужны
-latest history, полный unread interval и покрытие окна до original time либо
-полная native история; все нужные native rows должны присутствовать в DOM join.
+ORIGINAL_POSITION` включает ТОЛЬКО сообщения с native временем строго после
+original account time, даже если их прочитали на другом устройстве. Для этого
+нужны latest history и покрытие окна до original time либо полная native история;
+каждая новая native строка должна присутствовать в DOM join. Тысячи старых
+непрочитанных не входят в этот разбор и не требуют загрузки всего unread range.
+ACK по-прежнему отдельно требует полного covered unread interval: выбор только
+новых сообщений не позволяет пометить пропущенные старые сообщения прочитанными.
 Gap/hidden rows не становятся успешным пустым baseline. После первого commit
 переписка продолжает обычный v2 cursor, а не новый account seed.
 
