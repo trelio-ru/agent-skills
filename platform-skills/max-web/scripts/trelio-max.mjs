@@ -4939,7 +4939,8 @@ const projectMaxNativeReferences = (snapshot, options) => {
     return {id:nativeReferences ? `message:${reference.stableId}:${row.providerMessageId}` : `message:${row.providerMessageId}`,
       revision:digest,kind:"new",chatId:reference.stableId,
       messageId:row.providerMessageId,senderUserId,senderNamespace:senderUserId === null ? null : 'max_user_id',
-      ...(nativeReferences ? { conversationKey, outgoing: row.nativeOutgoing === true, forwarded: row.nativeForwarded === true } : {})};
+      ...(nativeReferences ? { conversationKey, outgoing: row.nativeOutgoing === true, forwarded: row.nativeForwarded === true,
+        ...(row.nativeAttention!==undefined?{attention:row.nativeAttention}:{}) } : {})};
   });
   if (!messages.length && !["favorites-empty","direct-chat-empty"].includes(snapshot.emptyState)) {
     throw new MaxRuntimeError("MAX_MONITOR_GAP", "MAX did not prove an empty timeline.");
@@ -4969,7 +4970,8 @@ const joinMaxNativeSnapshot = (snapshot, observer) => {
     if (!matching || normalizedText && !row.text.includes(normalizedText)) return snapshot;
     messages.push({ ...row, senderUserId: matching.senderUserId,
       nativeText: matching.nativeText, nativeReplyText: matching.nativeReplyText, nativeRevision: matching.revision,
-      nativeOutgoing: matching.outgoing, nativeForwarded: matching.forwarded,nativeTime:matching.time });
+      nativeOutgoing: matching.outgoing, nativeForwarded: matching.forwarded,nativeTime:matching.time,
+      ...(matching.attention!==null?{nativeAttention:matching.attention}:{}) });
   }
   const unread = native.readMark === null ? null : native.messages.filter(row => row.time > native.readMark);
   const unreadComplete = unread !== null && native.unread !== null && native.unread === unread.length

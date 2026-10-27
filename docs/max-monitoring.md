@@ -1,5 +1,24 @@
 # Пассивное чтение MAX для цифрового ассистента
 
+## Нативное обращение к аккаунту
+
+Native source events дополнительно возвращают transient `attention`:
+`direct|mention|reply|none`. Тип `DIALOG` берётся только из exact selected native
+chat, упоминание — из верхнеуровневого `USER_MENTION.entityId`, равного текущему
+viewer ID, ответ — из `REPLY` той же переписки с native sender текущего viewer.
+Имена, `@` в тексте, вложенные forwarded mentions и ответы другим участникам
+не являются обращением. Исходящие получают `none`. Неизвестный native chat type
+не становится личным диалогом; без доказанного сигнала поле отсутствует, чтобы
+host сохранил checkpoint до обновления/восстановления capability.
+
+Сигнал не меняет revision, cursor, native body/ACK proof или legacy DOM protocol.
+Host фильтрует обычный групповой поток до intake/model; история остаётся доступна
+плановому task pass через обычный signed skill. Позиция просмотра принадлежит
+каждой задаче и её принятому WORK.md, а не scanner cursor или общему unread flag.
+Публичная схема web-клиента 26.10.6 проверена по asset C018QTHD.js; vendor bytes
+не копируются в source или fixtures. Hosted regressions остаются обязательными;
+synthetic protocol tests не доказывают живой MAX business E2E.
+
 ## Отдельная поверхность task-команд
 
 Source 2.10.2 включает `trelio-assistant-execution.json` в прежний signed package.

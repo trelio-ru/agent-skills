@@ -250,6 +250,8 @@ export const createMaxNativeObserver = () => {
       pending.delete(`${socket}:${header.seq}`);
       if (!request || !viewerId || !ownObject(payload) || !Array.isArray(payload.messages)
         || payload.messages.length > request.backward || payload.messages.length > MAX_ROWS) return;
+      const chatType=ownObject(payload.chat)&&nativeId(payload.chat.id)===request.chatId
+        &&['DIALOG','CHAT','CHANNEL'].includes(payload.chat.type)?payload.chat.type:null;
       const seen = new Set(), messages = [];
       for (const message of payload.messages) {
         const messageId = nativeId(message?.id), sender = nativeId(message?.sender), time = nativeTime(message?.time);
@@ -258,12 +260,22 @@ export const createMaxNativeObserver = () => {
           || message.link?.message?.text !== undefined && (typeof message.link.message.text !== 'string' || message.link.message.text.length > 65536)
           || message.attaches !== undefined && (!Array.isArray(message.attaches) || message.attaches.length > 20)) { failed = true; return; }
         seen.add(messageId);
+        // Only native entities addressed to the current authenticated viewer
+        // count. Names and visible @ text are not identity. Read the original
+        // REPLY link's sender, never a forwarded author's nested mention.
+        const elements=message.elements??[];
+        if(!Array.isArray(elements)||elements.length>256){failed=true;return;}
+        const mentioned=elements.some(element=>element?.type==='USER_MENTION'&&nativeId(element.entityId)===viewerId);
+        const replied=message.link?.type==='REPLY'&&nativeId(message.link.chatId)===request.chatId
+          &&nativeId(message.link.message?.sender)===viewerId;
         const content = { id: messageId, sender, time, type: message.type ?? 'USER', text: message.text ?? '',
           updateTime: message.updateTime ?? null, status: message.status ?? null,
           attaches: message.attaches ?? [], link: message.link ?? null, elements: message.elements ?? [] };
         messages.push({ messageId, time, senderUserId: sender && sender !== '0' && !sender.startsWith('-')
           && (message.type === undefined || message.type === 'USER') ? sender : null,
           outgoing: sender === viewerId,
+          attention: sender===viewerId?'none':chatType==='DIALOG'?'direct'
+            :mentioned?'mention':replied?'reply':null,
           forwarded: message.link !== undefined && message.link?.type !== 'REPLY',
           textHash: createHash('sha256').update((message.text ?? '').replace(/\s+/gu, ' ').trim()).digest('hex'),
           // This invocation-only equality hash covers native attachments,
@@ -281,7 +293,10 @@ export const createMaxNativeObserver = () => {
       }
       // Replacing, not appending, preserves the single authoritative history
       // response used for range coverage. Two partial pages are not a snapshot.
-      histories.set(request.chatId, { viewerId, readMark, unread, totalMessages, messages, socket, request });
+      // Retain the native chat type separately: an unknown type must not make
+      // an ordinary group message look like a private incoming message.
+      for(const message of messages)if(message.attention===null&&chatType!==null)message.attention='none';
+      histories.set(request.chatId, { viewerId, chatType, readMark, unread, totalMessages, messages, socket, request });
       if (histories.size > 8) histories.delete(histories.keys().next().value);
       available = true;
     } catch { failed = true; }

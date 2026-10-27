@@ -936,5 +936,36 @@ class ReferenceAck(unittest.TestCase):
         policy = json.loads((PATH.parent/'trelio-assistant-execution.json').read_text())
         self.assertNotIn('ack-reference', json.dumps(policy))
 
+class Attention(unittest.TestCase):
+    def test_native_direct_mentions_and_exact_replies_without_text_inference(self):
+        async def check():
+            client = NS(get_messages=mock.AsyncMock(), get_me=mock.AsyncMock(return_value=NS(id=12345)))
+            utils = NS(get_peer_id=peer_id)
+            async def project(row):
+                return await M.monitor_addressed_message(client, row, utils, kind='new', channel_peer=None)
+            self.assertEqual((await project(message()))['attention'], 'direct')
+            group = tl('PeerChat', chat_id=55)
+            self.assertEqual((await project(message(peer=group, text='@assistant copied name')))['attention'], 'none')
+            self.assertEqual((await project(message(peer=group, mentioned=True)))['attention'], 'mention')
+            self.assertEqual((await project(message(peer=group, mentioned=True, out=True)))['attention'], 'none')
+            client.get_messages.assert_not_awaited()
+            reply = message(2, peer=group)
+            reply.reply_to = NS(reply_to_msg_id=1)
+            client.get_messages.return_value = message(1, peer=group, sender=tl('PeerUser', user_id=12345), out=True)
+            self.assertEqual((await project(reply))['attention'], 'reply')
+            client.get_messages.assert_awaited_with(group, ids=1)
+            # A reply to another participant, a deleted parent or a cross-peer
+            # quote cannot borrow the assistant's displayed name/identity.
+            client.get_messages.return_value = message(1, peer=group)
+            self.assertEqual((await project(reply))['attention'], 'none')
+            client.get_messages.return_value = None
+            self.assertEqual((await project(reply))['attention'], 'none')
+            reply.reply_to.reply_to_peer_id = tl('PeerChat', chat_id=66)
+            client.get_messages.reset_mock()
+            self.assertEqual((await project(reply))['attention'], 'none')
+            client.get_messages.assert_not_awaited()
+        asyncio.run(check())
+
+
 if __name__=='__main__':
     unittest.main()
