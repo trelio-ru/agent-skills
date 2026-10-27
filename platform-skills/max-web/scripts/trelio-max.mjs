@@ -4887,14 +4887,15 @@ const projectMaxAccountSnapshot=(snapshot,options)=>{
   if(previous&&(previous.scope!==scope||previous.startedAt>snapshot.time))throw new MaxRuntimeError('MAX_MONITOR_SCOPE_CHANGED','MAX account baseline changed.');
   const nextCursor=Buffer.from(JSON.stringify({v:3,scope,startedAt:snapshot.time})).toString('base64url');
   // Rescan every native conversation, but schedule history only when its native
-  // event time changed, or when the first inventory has unread/unknown rows.
+  // event time changed. The first complete inventory is ONLY a checkpoint;
+  // old unread/unknown counters must not schedule pre-connection history.
   // The ORIGINAL previous full scan seeds each newly signalled child stream;
   // a message read on another device cannot disappear behind an unread filter.
-  const conversationsToSync=snapshot.chats.filter(row=>previous?row.lastEventTime>=previous.startedAt:row.unread!==0)
+  const conversationsToSync=snapshot.chats.filter(row=>previous!==null&&row.lastEventTime>previous.startedAt)
     .map(row=>row.chatId);
   return {schemaVersion:1,baselineOnly:true,events:[],nextCursor,hasMore:false,conversationsToSync,
     initialAccountCursor:options.cursor||nextCursor,
-    coverage:{accountDiscovery:true,nativeDialogIds:true,complete:true,snapshotAtomic:false,unreadOnly:false},readState:{readReceiptsSent:false}};
+    coverage:{accountDiscovery:true,nativeDialogIds:true,complete:true,snapshotAtomic:false,unreadOnly:false,newMessagesOnly:true},readState:{readReceiptsSent:false}};
 };
 const readMaxAccountMonitor=async(page,options)=>{
   await openHome(page,options);
@@ -5002,12 +5003,16 @@ const projectMaxMonitorSnapshot = (snapshot, options) => {
     if(options.initialAccountCursor){
       const account=parseMaxAccountCursor(options.initialAccountCursor);
       if(account.scope!==maxAccountScope(options,snapshot.nativeAccountViewerId))throw new MaxRuntimeError('MAX_MONITOR_SCOPE_CHANGED','The original MAX account baseline differs.');
-      if(!nativeReferences||!Array.isArray(snapshot.nativeUnreadMessageIds)||snapshot.nativeWindowLatest!==true
+      if(!nativeReferences||snapshot.nativeWindowLatest!==true
         ||!(snapshot.nativeFullTimelineVerified===true||snapshot.nativeWindowStart!==null&&snapshot.nativeWindowStart<=account.startedAt))throw new MaxRuntimeError('MAX_MONITOR_GAP','MAX history does not cover the original account baseline.');
       const present=new Set(messages.map(row=>row.messageId));
-      if(snapshot.nativeUnreadMessageIds.some(id=>!present.has(id))||!Array.isArray(snapshot.nativeWindowMessages)
-        ||snapshot.nativeWindowMessages.some(row=>row.time>=account.startedAt&&!present.has(row.messageId)))throw new MaxRuntimeError('MAX_MONITOR_GAP','The initial native MAX window is not fully rendered.');
-      const initial=messages.filter((row,index)=>snapshot.nativeUnreadMessageIds.includes(row.messageId)||snapshot.messages[index].nativeTime>=account.startedAt);
+      if(!Array.isArray(snapshot.nativeWindowMessages)
+        ||snapshot.nativeWindowMessages.some(row=>row.time>account.startedAt&&!present.has(row.messageId)))throw new MaxRuntimeError('MAX_MONITOR_GAP','The initial native MAX window is not fully rendered.');
+      // The native server checkpoint is exclusive. Unread is a read-state,
+      // not an arrival boundary; thousands of older unread rows need not fit
+      // this window. Every NEW native row still needs the complete DOM join.
+      // ACK below remains independent and still requires its full unread range.
+      const initial=messages.filter((_row,index)=>snapshot.messages[index].nativeTime>account.startedAt);
       selected=initial.slice(0,options.limit);hasMore=initial.length>selected.length;anchor=selected.at(-1)??messages.at(-1)??null;
     }else if (initialUnread) {
       if (!nativeReferences || !Array.isArray(snapshot.nativeUnreadMessageIds)) {
@@ -5043,7 +5048,7 @@ const projectMaxMonitorSnapshot = (snapshot, options) => {
   return {schemaVersion:1,baselineOnly:previous===null && ((!initialUnread&&!options.initialAccountCursor) || selected.length === 0),events:selected,nextCursor,hasMore,
     coverage:{historicalBackfill:(initialUnread||Boolean(options.initialAccountCursor)) && selected.length > 0,earlierEditsIncluded:false,otherChatsIncluded:false,ownerIdentityAvailable,
       ...(initialUnread ? { initialUnreadOnly: true, snapshotAtomic: false } : {}),
-      ...(options.initialAccountCursor?{initialAccountInterval:true,snapshotAtomic:false}:{}),
+      ...(options.initialAccountCursor?{initialAccountInterval:true,snapshotAtomic:false,newMessagesOnly:true}:{}),
       ...(nativeReferences ? { nativeMessageVerified: true } : {})},
     readState:{readReceiptsSent:false}};
 };

@@ -320,10 +320,12 @@ test('MAX account discovery observes only the native full-sync marker chain and 
   value.observeInbound(frame(53,{chats:[{id:-88n,lastEventTime:850,newMessages:1},{id:0n,lastEventTime:0,newMessages:0}],marker:0},{seq:4,compressed:true}),1);
   const snapshot=value.accountSnapshot();assert.equal(snapshot.complete,true);assert.deepEqual(snapshot.chats.map(row=>row.chatId),['-88','77']);
   const page=projectMaxAccountSnapshot(snapshot,selected);
-  assert.deepEqual(page.conversationsToSync,['-88','77']);assert.deepEqual(page.events,[]);assert.equal(page.coverage.unreadOnly,false);
+  assert.deepEqual(page.conversationsToSync,[]);assert.equal(page.coverage.newMessagesOnly,true);assert.deepEqual(page.events,[]);assert.equal(page.coverage.unreadOnly,false);
   assert.equal(parseMaxAccountCursor(page.nextCursor).startedAt,1000);
   assert.doesNotMatch(JSON.stringify(page),/PRIVATE_|SYNTHETIC_|111|viewerId|token|title|text/);
   const later=projectMaxAccountSnapshot({...snapshot,time:2000},{...selected,cursor:page.nextCursor});assert.equal(later.initialAccountCursor,page.nextCursor);assert.equal(parseMaxAccountCursor(later.nextCursor).startedAt,2000);assert.deepEqual(later.conversationsToSync,[]);
+  const changed=projectMaxAccountSnapshot({...snapshot,time:2000,chats:snapshot.chats.map(row=>({...row,lastEventTime:1500,unread:0}))},{...selected,cursor:page.nextCursor});
+  assert.deepEqual(changed.conversationsToSync,['-88','77'],'read elsewhere does not suppress new native events');
   assert.throws(()=>projectMaxAccountSnapshot({...snapshot,viewerId:'222'}, {...selected,cursor:page.nextCursor}),/baseline changed/);
   const stale=createMaxNativeObserver();stale.observeOutbound(frame(19,{chatsSync:100},{cmd:0}),1);
   stale.observeInbound(frame(19,{profile:{contact:{id:111n}},chats:[],time:1000,chatMarker:0}),1);assert.equal(stale.accountSnapshot(),null);
@@ -340,6 +342,14 @@ test('MAX newly discovered history includes already-read messages after the ORIG
   assert.deepEqual(first.events.map(row=>row.messageId),['11']);assert.equal(first.hasMore,true);
   const second=projectMaxMonitorSnapshot(joined,{...selected,cursor:first.nextCursor});assert.deepEqual(second.events.map(row=>row.messageId),['12']);
   assert.equal(projectMaxMonitorSnapshot(joined,{...selected,cursor:second.nextCursor}).events.length,0);
+  // A very large old unread range may be outside the bounded window. It is
+  // irrelevant to NEW-only admission, but not to a later range ACK.
+  const oldUnread=projectMaxMonitorSnapshot({...joined,nativeUnreadMessageIds:null},{...selected,initialAccountCursor:initial});
+  assert.deepEqual(oldUnread.events,first.events);assert.equal(oldUnread.coverage.newMessagesOnly,true);
+  const oldOnly=projectMaxAccountSnapshot({viewerId:'111',time:300,complete:true,chats:[{chatId:'77',lastEventTime:300,unread:3000}]},selected).nextCursor;
+  const empty=projectMaxMonitorSnapshot({...joined,nativeUnreadMessageIds:null},{...selected,initialAccountCursor:oldOnly});
+  assert.deepEqual(empty.events,[]);assert.equal(empty.baselineOnly,true);
+  assert.equal(projectMaxMonitorSnapshot(joined,{...selected,cursor:empty.nextCursor}).events.length,0);
   const missing={...joined,messages:joined.messages.filter(row=>row.providerMessageId!=='12')};
   assert.throws(()=>projectMaxMonitorSnapshot(missing,{...selected,initialAccountCursor:initial}),/fully rendered/);
   assert.throws(()=>projectMaxMonitorSnapshot({...joined,nativeWindowStart:200,nativeFullTimelineVerified:false},{...selected,initialAccountCursor:initial}),/original account baseline/);
@@ -365,7 +375,7 @@ test('MAX account monitor navigates the SAME guarded browser and uses only brows
     outbound(frame(53,{marker:900},{cmd:0,seq:2}));
     inbound(frame(53,{chats:[{id:88n,lastEventTime:850}],marker:0},{seq:2}));},
     waitForFunction:async()=>{},evaluate:async()=>({authenticatedReady:true,loginReady:false}),waitForTimeout:async()=>assert.fail('complete inventory is already observed')};
-  const result=await readMaxAccountMonitor(page,options);assert.equal(navigations,1);assert.deepEqual(result.conversationsToSync,['88']);
+  const result=await readMaxAccountMonitor(page,options);assert.equal(navigations,1);assert.deepEqual(result.conversationsToSync,[]);assert.equal(result.coverage.newMessagesOnly,true);
   assert.equal(sent.length,2);assert.deepEqual(sent.map(value=>inspectMaxFrameHeader(value).opcode),[19,53]);
   assert.doesNotMatch(JSON.stringify(result),/PRIVATE|token|viewerId|profile/);
 });
