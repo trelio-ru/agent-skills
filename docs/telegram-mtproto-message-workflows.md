@@ -18,6 +18,27 @@ connection definition, package credential и namespace личной сессии
 sandbox и approval mode клиента его не выдают и не заменяют. Runtime
 patch не меняет backend, plugin, connection или minimum host.
 
+## Ответ владельцу без задачи
+
+Host-only `reply-reference --chat OWNER_ID --message-id ID --expected-revision SHA256
+--expected-conversation-key KEY --expected-owner-id OWNER_ID --confirm` использует
+тот же parser, account selector, send и exact read-back. Native receipt/linked
+owner проверяет dedicated host; аргументы CLI сами таких прав не дают. Команда
+не входит в task allowlist. Текст передаётся только bounded private stdin JSON
+`{"text":"…"}`, до 4096 UTF-16 units и 16 КиБ полного JSON; без файлов, format,
+schedule, send-as, секретов или текста в argv/env. Перед отправкой перечитываются
+exact User peer/original/revision/key, incoming sender ID, отсутствие forward/via-bot.
+Группа или изменённый оригинал закрывают отправку. SDK retries отключены.
+После одного send обязателен exact read-back; результат содержит только original
+reference и native outgoing ID. Неизвестный результат не разрешает повтор.
+Этот ответ не создаёт задачу/Workspace Run и сам по себе не выполняет readHistory.
+
+`monitor --online-presence` явно публикует native `UpdateStatusRequest(offline=False)`
+только после успешной авторизации, в процессе реальной проверки. Default monitor
+остаётся пассивным. Force-offline и изменение приватности не выполняются:
+видимость и срок «онлайн» определяет Telegram. Ошибка presence не отменяет чтение
+и не раскрывает provider diagnostics. При owner reply используется тот же helper.
+
 ## Task-профиль цифрового ассистента
 
 Provider включает `trelio-assistant-execution.json` в прежний signed file
