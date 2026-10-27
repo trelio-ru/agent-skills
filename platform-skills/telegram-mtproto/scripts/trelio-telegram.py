@@ -1666,9 +1666,9 @@ def build_client(args: argparse.Namespace, identity: Identity):
     }:
         request_policy = {"request_retries": 0, "flood_sleep_threshold": 0,
                           "raise_last_call_error": True}
-    if getattr(args, "command", None) == "ack-reference":
-        # A read receipt is a mutation too. Telethon must not resubmit it after
-        # a lost response, even though the selected target is monotonic.
+    if getattr(args, "command", None) in {"ack-reference", "reply-reference"}:
+        # Exact source writes are one-attempt operations. Neither an ACK nor
+        # an owner reply may be resubmitted invisibly after a lost response.
         request_policy = {"receive_updates": False, "request_retries": 0,
                           "flood_sleep_threshold": 0, "raise_last_call_error": True}
     if getattr(args, "command", None) in (import_community_tools().MUTATIONS | import_authoring_tools().MUTATIONS | import_interaction_tools().MUTATIONS | import_conversation_tools().MUTATIONS | import_inbox_tools().MUTATIONS):
@@ -4638,10 +4638,13 @@ async def command_thread_async(args: argparse.Namespace, identity: Identity) -> 
 
 
 async def command_reply_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
+    exact_reference = getattr(args, "command", None) == "reply-reference"
+    if exact_reference:
+        validate_owner_reply_input(args)
     reference = message_reference(args)
-    text = outgoing_text(args)
+    text = read_owner_reply_input() if exact_reference else outgoing_text(args)
     _functions, _types, utils, _events, markdown = import_telethon_workflows()
-    expected_text, _entities = markdown.parse(text)
+    expected_text, _entities = (text, []) if exact_reference else markdown.parse(text)
     selected_author = getattr(args, "send_as", None) is not None
     quoted = getattr(args, "quote_text", None) is not None
     if getattr(args, "quote_offset", None) is not None and not quoted:
@@ -4654,7 +4657,19 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
     started = False
     try:
         await ensure_authorized(client)
+        if exact_reference:
+            conversation_key = await reference_conversation_key(client, identity, args)
         entity, target = await resolve_message_target(client, reference)
+        if exact_reference:
+            observed = monitor_message(target, utils, kind="new", channel_peer=int(args.chat))
+            if (type(entity).__name__ != "User" or utils.get_peer_id(entity) != int(args.expected_owner_id)
+                    or observed["revision"] != args.expected_revision
+                    or observed.get("senderNamespace") != "telegram_user_id"
+                    or observed.get("senderUserId") != args.expected_owner_id
+                    or observed.get("outgoing") is not False or observed.get("forwarded") is not False
+                    or observed.get("viaBot") is not False):
+                raise TelegramRuntimeError("The exact private owner message changed or is unavailable.", code="TELEGRAM_OWNER_REPLY_UNAVAILABLE")
+            await publish_online_presence(client)
         # A reply to a channel post is a comment in its discussion group.
         # Sending to the broadcast peer would publish an unrelated channel post.
         if getattr(entity, "broadcast", False):
@@ -4666,7 +4681,7 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
         if selected_author:
             return await import_interaction_tools().explicit_send(client, entity, target, args, identity,
                        await client.get_me(), sys.modules[__name__], utils, markdown)
-        options = {"reply_to": target.id, "file": args.file, "parse_mode": TELEGRAM_TEXT_PARSE_MODE,
+        options = {"reply_to": target.id, "file": args.file, "parse_mode": None if exact_reference else TELEGRAM_TEXT_PARSE_MODE,
                    **import_authoring_tools().delivery_options(args)}
         if schedule_at is not None:
             assert_schedule_lead_time(schedule_at)
@@ -4682,6 +4697,13 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
             raise TelegramRuntimeError("The provider did not prove the exact reply thread.")
         if schedule_at is not None and normalize_schedule_datetime(sent.date) != schedule_at:
             raise TelegramRuntimeError("The provider did not prove the requested reply delivery time.")
+        if exact_reference:
+            # Only structural native evidence crosses the private host pipe.
+            # The response cannot echo the answer, original text or recipient's
+            # profile, and it grants neither processing nor read-history ACK.
+            return {"schemaVersion": 1, "protocol": "telegram-owner-reply/v1", "sent": True,
+                    "reference": {"id": observed["id"], "revision": observed["revision"], "conversationKey": conversation_key},
+                    "replyToMessageId": target.id, "messageId": sent.id, "automaticRetryAllowed": False}
         return {"sent": schedule_at is None, "scheduled": schedule_at is not None,
                 "scheduledAt": format_utc_datetime(schedule_at) if schedule_at else None,
                 "chat": public_entity(entity), "replyToMessageId": target.id,
@@ -5086,6 +5108,50 @@ def selected_search_cursor(key: str, value: str | None = None, *, states: list |
         raise
     except (ValueError, TypeError, UnicodeError, KeyError) as error:
         raise TelegramRuntimeError("Selected-chat search cursor is invalid.") from error
+
+
+def validate_owner_reply_input(args: argparse.Namespace) -> None:
+    """A single original private peer, before bootstrap/credentials/network.
+
+    The trusted host independently verifies the linked owner and durable
+    one-attempt native receipt. CLI fields alone never supply that authority.
+    Source writes deliberately do not expose files, schedules, send-as, quote,
+    formatting or arbitrary neighboring history through this narrow command.
+    """
+    validate_reference_read(args)
+    owner = getattr(args, "expected_owner_id", None)
+    if (not isinstance(owner, str) or re.fullmatch(r"[1-9]\d{0,18}", owner) is None
+            or owner != args.chat or getattr(args, "expected_conversation_key", None) is None
+            or getattr(args, "confirm", False) is not True):
+        raise TelegramRuntimeError("An exact private owner target is required.", code="TELEGRAM_OWNER_REPLY_INPUT_INVALID")
+
+
+def read_owner_reply_input() -> str:
+    """Bounded private stdin only; never argv, environment or a body file."""
+    try:
+        raw = sys.stdin.buffer.read(16_385)
+        value = json.loads(raw.decode("utf-8", errors="strict")) if len(raw) <= 16_384 else None
+        text = value.get("text") if isinstance(value, dict) and set(value) == {"text"} else None
+        if (not isinstance(text, str) or not text.strip()
+                or len(text.encode("utf-16-le", errors="strict")) // 2 > 4096):
+            raise ValueError()
+        return text
+    except (ValueError, UnicodeError, OSError, AttributeError) as error:
+        raise TelegramRuntimeError("A bounded private reply body is required.", code="TELEGRAM_OWNER_REPLY_INPUT_INVALID") from error
+
+
+async def publish_online_presence(client) -> bool:
+    """Report actual activity; Telegram owns expiration/privacy visibility.
+
+    No force-offline follows: it could hide a concurrently active human session.
+    A status failure cannot discard an otherwise valid read or repeat a send.
+    No provider exception/body is surfaced as a diagnostic.
+    """
+    try:
+        functions, _types, _utils, _events, _markdown = import_telethon_workflows()
+        return await client(functions.account.UpdateStatusRequest(offline=False)) is True
+    except Exception:
+        return False
 
 
 def describe_search_coverage(coverage: dict, *, unavailable: bool = False) -> None:
@@ -6557,6 +6623,8 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
     failure = None
     try:
         await ensure_authorized(client)
+        if getattr(args, "online_presence", False):
+            await publish_online_presence(client)
         GetState, GetDifference, GetChannelDifference, GetFullChannel, Empty, utils = import_telethon_monitor()
         channel = None
         peer_id = None
@@ -6740,6 +6808,8 @@ def run_async_command(args: argparse.Namespace) -> dict[str, Any]:
             return asyncio.run(command_monitor_async(args, identity))
         if args.command == "read-reference":
             return asyncio.run(command_message_read_async(args, identity))
+        if args.command == "reply-reference":
+            return asyncio.run(command_reply_async(args, identity))
         if args.command == "ack-reference":
             return asyncio.run(command_reference_ack_async(args, identity))
         if args.command == "dialogs":
@@ -6932,6 +7002,7 @@ def build_parser() -> argparse.ArgumentParser:
     monitor.add_argument("--cursor", help="Exact previous monitor cursor, never an unread flag")
     monitor.add_argument("--unread-backfill", action="store_true", help="Initial exact channel unread interval; no cursor/reset")
     monitor.add_argument("--initial-account-cursor", help="Initial channel history since an exact original account checkpoint; no reset")
+    monitor.add_argument("--online-presence", action="store_true", help="Report real polling activity; Telegram privacy and expiration still apply")
     monitor.add_argument("--limit", type=int, choices=range(10, 101), default=100, metavar="10..100")
     dialogs = commands.add_parser("dialogs", help="List or narrowly search dialogs")
     dialogs.add_argument("--query")
@@ -6974,6 +7045,14 @@ def build_parser() -> argparse.ArgumentParser:
     reference_read.add_argument("--message-id", type=positive_message_id, required=True)
     reference_read.add_argument("--expected-revision", required=True, help="Exact semantic SHA-256 from the observed reference")
     reference_read.add_argument("--expected-conversation-key", help="Exact opaque native conversation key from monitor; new task/source routing requires it")
+    reference_reply = commands.add_parser("reply-reference", help="One host-admitted answer to an exact private owner original; text is private stdin JSON")
+    reference_reply.add_argument("--chat", required=True)
+    reference_reply.add_argument("--message-id", type=positive_message_id, required=True)
+    reference_reply.add_argument("--expected-revision", required=True)
+    reference_reply.add_argument("--expected-conversation-key", required=True)
+    reference_reply.add_argument("--expected-owner-id", required=True)
+    reference_reply.add_argument("--confirm", action="store_true")
+    reference_reply.set_defaults(message=None, message_file=None, file=None, schedule_at=None, silent=False, no_link_preview=True)
     reference_ack = commands.add_parser("ack-reference", help="Acknowledge only a fully committed native unread range, or reconcile without writing")
     reference_ack.add_argument("--chat", required=True)
     reference_ack.add_argument("--message-id", type=positive_message_id, required=True)
@@ -7162,6 +7241,8 @@ def main() -> int:
             validate_monitor_input(args)
         if args.command == "read-reference":
             validate_reference_read(args)
+        if args.command == "reply-reference":
+            validate_owner_reply_input(args)
         if args.command == "ack-reference":
             validate_reference_ack(args)
         reexec_in_runtime_if_needed(args.command)
