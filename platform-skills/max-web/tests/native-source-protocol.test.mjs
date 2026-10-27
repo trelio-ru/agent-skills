@@ -48,6 +48,36 @@ const observer = () => {
 const receipt = (messageId = 12n, mark = 300, extra = {}) => frame(50,
   { type: 'READ_MESSAGE', chatId: 77n, messageId, mark, ...extra }, { cmd: 0, seq: 8, compressed: true });
 
+test('MAX native attention separates private traffic, addressed group messages and ordinary history',()=>{
+  const observe=(type,rows)=>{
+    const value=createMaxNativeObserver();
+    value.observeInbound(frame(19,{profile:{contact:{id:111n}}}),1);
+    value.observeOutbound(frame(49,{chatId:77n,from:-1,backward:100},{cmd:0,seq:2}),1);
+    value.observeInbound(frame(49,{chat:{id:77n,...(type?{type}:{})},messages:rows},{seq:2}),1);
+    return value;
+  };
+  const row=(id,extra={})=>({id:BigInt(id),sender:222n,time:100,text:'@name is only display text',...extra});
+  const rows=[row(1),row(2,{elements:[{type:'USER_MENTION',entityId:111n,from:0,length:5}]}),
+    row(3,{link:{type:'REPLY',chatId:77n,message:{id:9n,sender:111n}}}),
+    row(4,{link:{type:'REPLY',chatId:77n,message:{id:9n,sender:333n}}}),
+    row(5,{link:{type:'FORWARD',chatId:77n,message:{id:9n,sender:111n}}}),
+    row(6,{sender:111n,elements:[{type:'USER_MENTION',entityId:111n}]}),
+    row(7,{elements:[{type:'USER_MENTION',entityId:333n}]}),
+    row(8,{link:{type:'REPLY',chatId:88n,message:{id:9n,sender:111n}}})];
+  for(const type of ['CHAT','CHANNEL'])assert.deepEqual(observe(type,rows).snapshot('77').messages.map(row=>row.attention),
+    ['none','mention','reply','none','none','none','none','none']);
+  assert.equal(observe('DIALOG',[row(1)]).snapshot('77').messages[0].attention,'direct');
+  assert.equal(observe(null,[row(1)]).snapshot('77').messages[0].attention,null,'missing native type is unknown, never private');
+  const joined=joinMaxNativeSnapshot({chatReference:{url:'https://web.max.ru/77',stableId:'77'},
+    messages:rows.map(row=>({providerMessageId:row.id.toString(),text:row.text,replyText:null,attachments:[]}))},observe('CHAT',rows));
+  const options={companyId:'11111111-1111-4111-8111-111111111111',memberId:'22222222-2222-4222-8222-222222222222',
+    connectionId:'33333333-3333-4333-8333-333333333333',chat:'https://web.max.ru/77',limit:20,conversationReferences:true};
+  const baseline=projectMaxMonitorSnapshot({...joined,messages:joined.messages.slice(0,1)},options);
+  const page=projectMaxMonitorSnapshot(joined,{...options,cursor:baseline.nextCursor});
+  assert.deepEqual(page.events.map(row=>row.attention),['mention','reply','none','none','none','none','none']);
+  assert.doesNotMatch(JSON.stringify(page),/USER_MENTION|@name|display text/);
+});
+
 test('MAX native frame decoder bounds header, compression, maps, integer identity and UTF-8', () => {
   const decoded = decodeMaxNativeFrame(frame(49, { chatId: 77n, messages }, { compressed: true }));
   assert.equal(decoded.opcode, 49); assert.equal(decoded.payload.chatId, 77n);

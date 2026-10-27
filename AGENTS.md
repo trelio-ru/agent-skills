@@ -269,6 +269,9 @@ production алгоритмом с внедрёнными часами, без H
 внутреннего контейнера не должен скрывать загрузку внешней оболочки.
 Пассивный MAX `monitor` следует [контракту](docs/max-monitoring.md): один exact чат,
 перекрытие native message ID, явный gap; display name не доказывает владельца.
+Telegram/MAX native monitors выдают attention по аккаунту/mention/direct reply;
+групповой текст и display name не определяют wake. Scheduled review cursor —
+отдельный per-task WORK.md bookmark; source polling/ACK его не заменяют.
 MAX `read-reference` сверяет native ID/revision и source scope в том же bounded DOM; source readers отклоняют дубли IDs/скрытое усечение media, обычное чтение сохраняет прежний ABI.
 MAX source2.11 opt-in follows the SAME monitoring contract: native history49,
 bounded v10/LZ4/MessagePack sender join and one-use browser-emitted read-state50.

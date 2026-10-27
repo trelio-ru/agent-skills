@@ -641,7 +641,21 @@ API-источники: [message links](https://core.telegram.org/api/links),
 
 ## Пассивная лента native updates
 
-`monitor` – один metadata-only вызов `updates.getDifference` с сохранёнными
+Каждая new/edit reference возвращает transient `attention`:
+`direct|mention|reply|none`. Входящий native `PeerUser` — личный диалог;
+настоящее упоминание текущего аккаунта определяется native `mentioned`, включая
+ID-mention без username. Для прямого ответа без этого flag читается только exact
+parent того же peer: его Message ID, outgoing и native sender текущего аккаунта
+проверяются совместно. Cross-peer quotes, имя в тексте, forwarded author и ответ
+другому участнику не становятся обращением. Удалённый parent не даёт proof;
+ошибка его чтения сохраняет прежний checkpoint. Исходящие имеют `none`.
+
+Сигнал не меняет прежний semantic revision/cursor, не возвращает parent body и
+не отправляет read receipt. Он позволяет host фильтровать обычный групповой
+поток до intake/model. Отложенная история читается обычным task skill по своей
+per-task позиции в принятом WORK.md, независимо от polling/unread checkpoint.
+
+`monitor` – один metadata-only результат `updates.getDifference` с сохранёнными
 pts/qts/date. `monitor --chat EXACT` использует независимый channel pts через
 `updates.getChannelDifference`. Первая страница без cursor явно `baselineOnly`:
 она не загружает исторические/unread сообщения и не доказывает завершённый intake.

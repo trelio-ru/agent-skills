@@ -6406,7 +6406,43 @@ def monitor_message(message: Any, utils: Any, *, kind: str, channel_peer: int | 
             "senderUserId": str(sender_id) if sender_id is not None else None,
             "senderNamespace": "telegram_user_id" if sender_id is not None else None,
             "outgoing": outgoing, "forwarded": getattr(message, "fwd_from", None) is not None,
-            "viaBot": getattr(message, "via_bot_id", None) is not None}
+            "viaBot": getattr(message, "via_bot_id", None) is not None,
+            # This native flag refers to the authenticated account, including
+            # ID mentions without a username. Display names, quoted/forwarded
+            # text and an @ substring never establish an addressed message.
+            "attention": "none" if outgoing else "direct" if type(peer).__name__ == "PeerUser"
+            else "mention" if getattr(message, "mentioned", False) is True else "none"}
+
+
+async def monitor_addressed_message(client, message, utils, *, kind, channel_peer):
+    """Resolve a direct reply using only its exact native parent in this peer.
+
+    Native `mentioned` already covers most addressed replies. The independent
+    parent check also handles replies without that flag; no history scan,
+    username matching, model invocation or read acknowledgement is introduced.
+    The outer signed source process retains its original deadline and bound.
+    """
+    event = monitor_message(message, utils, kind=kind, channel_peer=channel_peer)
+    reply = getattr(message, "reply_to", None)
+    parent_id = getattr(reply, "reply_to_msg_id", None)
+    if event["attention"] != "none" or event["outgoing"] or parent_id is None:
+        return event
+    # Cross-peer quotes and topic roots are not replies to this account.
+    target_peer = getattr(reply, "reply_to_peer_id", None)
+    if target_peer is not None and utils.get_peer_id(target_peer) != int(event["chatId"]):
+        return event
+    monitor_int(parent_id, positive=True)
+    parent = await client.get_messages(message.peer_id, ids=parent_id)
+    if parent is None:
+        return event  # A deleted parent cannot prove who was addressed.
+    me = await client.get_me()
+    sender = getattr(parent, "from_id", None)
+    if (type(parent).__name__ == "Message" and getattr(parent, "id", None) == parent_id
+            and utils.get_peer_id(getattr(parent, "peer_id", None)) == int(event["chatId"])
+            and getattr(parent, "out", None) is True and type(sender).__name__ == "PeerUser"
+            and getattr(sender, "user_id", None) == getattr(me, "id", None)):
+        event["attention"] = "reply"
+    return event
 
 
 def import_telethon_monitor():
@@ -6492,7 +6528,7 @@ async def monitor_initial_history(client, channel, peer_id, utils, position, bac
             include = native_date >= since
             finished = finished or not include
         if include and type(message).__name__ == "Message":
-            events.append(monitor_message(message, utils, kind="new", channel_peer=peer_id))
+            events.append(await monitor_addressed_message(client, message, utils, kind="new", channel_peer=peer_id))
     # A short page is not provider exhaustion. Continue until an exact empty
     # bounded history page; service-only pages still advance their native ID.
     # Even after exhaustion require the first original-pts difference before
@@ -6618,13 +6654,13 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
                 raise TelegramRuntimeError("Telegram monitor page exceeds its bound; retain the cursor.", code="TELEGRAM_MONITOR_GAP")
             for message in messages:
                 if type(message).__name__ == "Message":
-                    events.append(monitor_message(message, utils, kind="new", channel_peer=peer_id))
+                    events.append(await monitor_addressed_message(client, message, utils, kind="new", channel_peer=peer_id))
                 elif type(message).__name__ != "MessageService":
                     raise TelegramRuntimeError("Telegram monitor message is unavailable; retain the cursor.", code="TELEGRAM_MONITOR_GAP")
             for update in updates:
                 update_name = type(update).__name__
                 if update_name in {"UpdateEditMessage", "UpdateEditChannelMessage", "UpdateNewMessage", "UpdateNewChannelMessage"}:
-                    events.append(monitor_message(update.message, utils, kind="edit" if update_name.startswith("UpdateEdit") else "new", channel_peer=peer_id))
+                    events.append(await monitor_addressed_message(client, update.message, utils, kind="edit" if update_name.startswith("UpdateEdit") else "new", channel_peer=peer_id))
                 elif update_name in {"UpdateChannelTooLong", "UpdateChannel"} and channel is None:
                     channel_id = getattr(update, "channel_id", None)
                     if type(channel_id) is not int or channel_id <= 0:
