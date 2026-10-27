@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.13.4",
-    "summary": "Первый вход сам подготавливает отсутствующие локальные зависимости Telegram без отдельной команды и повторной авторизации."
+    "version": "2.13.5",
+    "summary": "Фоновое чтение различает личные сообщения, прямые упоминания и ответы ассистенту в группах, чтобы обычная переписка не запускала лишний разбор."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.13.4",
+    "version": "2.13.5",
     "minimumHostVersion": "3.18.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
