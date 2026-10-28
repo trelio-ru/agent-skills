@@ -197,7 +197,7 @@ segment. Resume не теряет cancellation нового run и не меня
 git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 Не перезаписывай чужие изменения и не дели node_modules между worktree.
 
-Для проверки движения иска в ГАС читай обязательный раздел
+Для проверки движения иска и выбора канала обращения в ГАС читай обязательный раздел
 [проверки статуса](platform-skills/gas-pravosudie/scripts/instruction-guides/part-02.md#проверка-статуса)
 и его [forward-сценарии](platform-skills/gas-pravosudie/tests/status-check-scenarios.md).
 
