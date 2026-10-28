@@ -838,6 +838,46 @@ class ReferenceAck(unittest.TestCase):
         self.assertIs(self.writes()[0].channel, self.entity)
         self.assertFalse(result['readState']['viewsRegistered'])
 
+    def test_own_replies_between_attested_incoming_rows_do_not_block_inbox_ack(self):
+        self.rows = [message(12), message(10), message(8)]
+        self.history = [tl('MessagesSlice', messages=[self.rows[0],
+            message(11, out=True, sender=tl('PeerUser', user_id=12345)), self.rows[1],
+            message(9, out=True, sender=tl('PeerUser', user_id=12345)), self.rows[2]]),
+            tl('Messages', messages=[])]
+        result = self.ack(self.args(message_id=12))
+        self.assertTrue(result['readState']['acknowledged'])
+        self.assertEqual([call.max_id for call in self.writes()], [12])
+        history = [call for call in self.provider.calls if type(call).__name__ == 'History']
+        self.assertEqual([call.offset_id for call in history], [13, 8])
+        self.assertEqual(self.boundary, 12, 'newer incoming messages stay outside the fixed ACK')
+
+    def test_outgoing_exception_never_skips_incoming_foreign_or_unknown_history(self):
+        cases = [
+            (message(8), 'TELEGRAM_ACK_RANGE_INCOMPLETE'),
+            (message(8, peer=tl('PeerUser', user_id=88), out=True), 'TELEGRAM_ACK_UNAVAILABLE'),
+            (message(8, out=None), 'TELEGRAM_ACK_UNAVAILABLE'),
+            (message(8, out=1), 'TELEGRAM_ACK_UNAVAILABLE'),
+            (tl('MessageService', id=8, out=True), 'TELEGRAM_ACK_RANGE_INCOMPLETE'),
+            (message(9, out=True), 'TELEGRAM_ACK_RANGE_INCOMPLETE'),
+            (message(7, out=True), 'TELEGRAM_ACK_RANGE_INCOMPLETE'),
+        ]
+        for row, code in cases:
+            with self.subTest(direction=getattr(row, 'out', None), code=code):
+                self.history = [tl('Messages', messages=[self.rows[0], row]), tl('Messages', messages=[])]
+                with self.assertRaises(M.TelegramRuntimeError) as caught:
+                    self.ack(self.args(covered_reference=[self.args().covered_reference[0]]))
+                self.assertEqual(caught.exception.code, code)
+                self.assertFalse(caught.exception.details['writeAttempted'])
+                self.assertEqual(self.writes(), [])
+
+    def test_own_outgoing_rows_do_not_turn_nonempty_end_probe_into_exhaustion(self):
+        self.history = [tl('MessagesSlice', messages=[self.rows[0], message(8, out=True)]),
+            tl('Messages', messages=[message(7, out=True)])]
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            self.ack(self.args(covered_reference=[self.args().covered_reference[0]]))
+        self.assertEqual(caught.exception.code, 'TELEGRAM_ACK_RANGE_INCOMPLETE')
+        self.assertEqual(self.writes(), [])
+
     def test_already_read_and_verify_only_never_write_or_fetch_history(self):
         for verify, boundary in [(False, 10), (True, 7), (True, 10)]:
             self.provider.calls.clear(); self.boundary = boundary

@@ -4451,12 +4451,13 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
 
 
 def validate_reference_ack(args: argparse.Namespace) -> dict[int, str]:
-    """An ACK needs exact processed revisions, never a guessed maximum ID.
+    """An ACK needs exact host-attested revisions, never a guessed maximum ID.
 
-    Native readHistory marks a RANGE. The host must have durably committed each
-    supplied reference; this provider additionally proves that no visible row
-    in the current unread range is missing. Neither CLI flags nor these hashes
-    replace the host's accepted-task/read-proof/processing/ACK-lease checks.
+    Native readHistory marks a RANGE. The host must durably attest each incoming
+    reference (model delivery or the legacy committed-processing profile); this
+    provider additionally proves that no unread incoming row is missing. Own
+    outgoing rows never become incoming unread work. Neither CLI flags nor
+    hashes replace the host's native read-proof/profile/ACK-lease checks.
     """
     validate_reference_read(args)
     entries = getattr(args, "covered_reference", None)
@@ -4537,8 +4538,16 @@ async def command_reference_ack_async(args: argparse.Namespace, identity: Identi
                         raise ack_error("TELEGRAM_ACK_RANGE_INCOMPLETE", "An unsupported unread row remains.")
                     ref = monitor_message(row, utils, kind="new", channel_peer=int(args.chat))
                     current = int(ref["messageId"])
-                    if not before < current < offset or covered.get(current) != ref["revision"]:
-                        raise ack_error("TELEGRAM_ACK_RANGE_INCOMPLETE", "An unread message has not been committed at its current revision.")
+                    if not before < current < offset:
+                        raise ack_error("TELEGRAM_ACK_RANGE_INCOMPLETE", "The unread history order or range changed.")
+                    # The shared projector has already validated the exact
+                    # peer, Message constructor, bounded content and BOOLEAN
+                    # native out flag. Own replies may sit between incoming
+                    # IDs but cannot be read_inbox work. Still advance/check
+                    # every ID and the empty probe; never skip an uncovered
+                    # incoming row, foreign peer or unknown direction.
+                    if ref["outgoing"] is not True and covered.get(current) != ref["revision"]:
+                        raise ack_error("TELEGRAM_ACK_RANGE_INCOMPLETE", "An incoming unread message lacks its current host-attested revision.")
                     offset = current
                     seen.add(current)
             else:
