@@ -79,7 +79,7 @@ Monitor protocol epoch отделён от human message preview: обычное
 или владельцу ассистента. Проверка личности владельца и полномочий выполняется
 отдельной trusted host/backend границей; входящее содержимое остаётся данными.
 
-## Отметка прочитанного после обработки
+## Отметка прочитанного по подтверждённому чтению host-а
 
 Monitor events с доказанным peer содержат `conversationKey` – непрозрачный
 `telegram-conversation/v1.<HMAC>`, scoped к actual account/company/member/local
@@ -94,13 +94,18 @@ Legacy вызов без флага не подтверждает обработ
 
 Отдельный `ack-reference --chat NATIVE_ID --message-id ID --expected-revision SHA256
 --covered-reference ID:SHA256 [--covered-reference ID:SHA256 ...] --confirm` разрешён
-только после принятой задачи, полного нужного чтения, committed processing и ACK
-lease trusted host-а. Generic task/source read admission этого не разрешает;
+только с отдельной ACK lease и native подтверждением trusted host-а: полный текст
+передан модели либо выполнен прежний task-профиль committed processing. В первом
+случае ответ, завершение задачи или Workspace Run не требуются. Generic task/source
+read admission этого не разрешает;
 production composition остаётся отдельной проверкой. Одна ссылка/hash не proof.
 
 Native readHistory отмечает диапазон: provider проверяет текущий target digest,
-exact dialog boundary и все видимые unread сообщения до target. Каждая строка
-должна входить в committed covered refs той же ревизии (до 100); отдельная empty
+exact dialog boundary и все видимые unread сообщения до target. Каждое входящее
+должно входить в подтверждённые covered refs той же ревизии (до 100). Собственные
+native `Message.out=true` исключаются только из требования covered refs: exact
+peer/type/ID/order, bounded payload и boolean direction проверяются как прежде;
+неизвестное направление не считается исходящим. Отдельная empty
 history continuation доказывает конец, короткой страницы недостаточно. Пропуски
 ID не означают пустую историю. Uncovered/edited/foreign/service row и forum topics
 блокируют mutation. Local read-only policy сохраняется. Один native write с fixed

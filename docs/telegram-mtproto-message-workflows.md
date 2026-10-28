@@ -810,26 +810,32 @@ metadata, `attachmentsContentRead=false`; доступ к text не доказы
 `TELEGRAM_REFERENCE_CHANGED` требует обработки нового события/решения host-а,
 а не замены записанного digest или silent reset. Ошибка источника/cleanup –
 `TELEGRAM_REFERENCE_UNAVAILABLE` без private diagnostics и partial success.
-После фактического чтения host всё ещё обязан связать сообщение с принятой
-задачей и committed processing до отдельного read acknowledgement. Source merge,
+После фактического чтения нужен отдельный native допуск host-а: model delivery
+с read-confirmation либо прежний task-профиль committed processing. Source merge,
 успех этой команды и message body не создают задачи/разрешения на другие системы.
 
-### Отметка прочитанного после зафиксированной обработки
+### Отметка прочитанного по подтверждённому чтению host-а
 
 `ack-reference --chat NATIVE_ID --message-id ID --expected-revision SHA256
 --covered-reference ID:SHA256 [--covered-reference ID:SHA256 ...] --confirm`
 использует тот же private account/session и exact native message resolver. Перед
-запуском trusted host обязан проверить принятую задачу, фактическое полное чтение
-нужного содержания, committed processing каждого указанного события и отдельную
-ACK lease. Hash/CLI-флаг сами этого не доказывают; обычный task skill и passive
+запуском trusted host обязан проверить фактическую передачу полного содержания
+в модель и native read-confirmation каждого события либо прежний task-профиль
+с committed processing. Отдельная ACK lease обязательна в обоих профилях; ждать
+ответа, завершения задачи или Workspace Run для model-read профиля не нужно.
+Hash/CLI-флаг сами этого не доказывают; обычный task skill и passive
 source profile не получают новую mutation authority. Production composition
 этих проверок остаётся отдельным release gate.
 
 Telegram readHistory меняет **диапазон**, поэтому одной ссылки на позднее сообщение
 недостаточно. Provider перечитывает его semantic revision и exact dialog read
 boundary, затем весь видимый интервал `read_inbox_max_id < id <= target`. До 100
-строк с убывающими native IDs: каждая должна совпасть с зафиксированным digest
-из covered refs. Short page не доказывает конец: обязателен отдельный empty
+строк с убывающими native IDs: каждое входящее должно совпасть с подтверждённым
+digest из covered refs. Собственные native `Message.out=true` не требуют covered
+ref, поскольку не входят во входящие непрочитанные. Их exact peer, constructor,
+ID/order, bounded payload и boolean direction всё равно проверяются общим
+projector-ом, они не отменяют предел страницы и проверку конца. Short page не
+доказывает конец: обязателен отдельный empty
 continuation probe. Uncovered, edited, foreign, unsupported/service row, слишком
 большая область, отсутствие target или недоказанное окончание блокируют запись.
 Числовые пропуски ID не заменяют историю. Forum topics пока закрыты: dialog-wide

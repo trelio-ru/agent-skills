@@ -30,7 +30,8 @@ account checkpoint date and include messages already read on another device.
 Never use it to reset an existing cursor or claim historical edit recovery.
 `read-reference` сверяет exact native ID/revision без context/ACK и требует полный текст;
 `ack-reference` uses native range coverage, one non-retried write and read-back;
-only committed exact refs may cover unread history. Verify-only reconciles an
+only native host-attested exact incoming refs may cover unread history; own
+outgoing rows retain peer/order/end checks but need no incoming coverage. Verify-only reconciles an
 unknown result without writing; generic task/source read admission never grants ACK.
 Host-only owner `reply-reference` reuses SAME send/read-back with native private
 peer/owner/revision proof and stdin-only text; never add it to taskCommands.
