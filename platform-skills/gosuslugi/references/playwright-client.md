@@ -37,6 +37,11 @@ popup. Он может находиться на отдельном HTTPS broker
 внешних сайтов и callback-путей нет. Хост/path/fixed query и state этого callback
 проверяются точно. Helper создаётся **до первого login click**, а не после
 перехода на broker; утраченная transaction не восстанавливается задним числом.
+Начальный OAuth запрос поддерживает GET query и HTML POST-форму
+`application/x-www-form-urlencoded`, в том числе без параметров в URL.
+Callback/state берутся из фактически наблюдённого запроса; дубликаты между
+query/body отклоняются. Body/auth URL не выводятся в диагностику. Формат
+ответа ЕСИА остаётся прежним: exact GET callback/state и document commit.
 После verified external document return listeners сразу отключаются. Дальнейшие
 outer OAuth/SSO, JS-переходы, токены, ошибки и закрытие popup принадлежат вызывающему
 сценарию и не отзывают завершённый ответ ЕСИА. Доступ к credentials уже закрыт.

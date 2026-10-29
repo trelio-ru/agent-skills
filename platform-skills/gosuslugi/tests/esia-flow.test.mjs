@@ -24,6 +24,76 @@ function returned(overrides = {}, target = callback) {
     url.searchParams.set(name, value);
   return url.href;
 }
+function authorizationForm(overrides = {}) {
+  return { contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
+    body: new URL(authorization(callback, overrides)).searchParams.toString() };
+}
+
+test('a real form POST binds the same OAuth code transaction without parameters in its URL', () => {
+  const flow = new ServiceFlow(gas), url = 'https://esia.gosuslugi.ru/aas/oauth2/ac';
+  flow.observeNavigation(url, 'POST', authorizationForm({ response_type: 'CoDe' }));
+  flow.allowSecret();
+  assert.equal(flow.binding.callback.href, callback);
+  assert.equal(flow.hasAuthenticatedReturn, false);
+  assert.throws(() => flow.observeNavigation(returned({ state: 'wrong' })), /service_callback_rejected_state/);
+  flow.observeNavigation(returned());
+  assert.throws(() => flow.allowSecret(), /service_authorization_request_required/);
+  flow.observeResponse(returned(), 200);
+  assert.equal(flow.hasAuthenticatedReturn, true);
+  assert.throws(() => flow.observeNavigation(returned()), /service_callback_already_used/);
+  assert.throws(() => flow.observeNavigation(url, 'POST', authorizationForm()), /service_callback_already_used/);
+});
+
+test('POST parameters cannot hide duplicates, replace a transaction or weaken callback/mode guards', () => {
+  const url = 'https://esia.gosuslugi.ru/aas/oauth2/ac';
+  for (const key of ['redirect_uri', 'state', 'client_id', 'response_type']) {
+    for (const transport of ['body', 'query']) {
+      const form = authorizationForm();
+      let target = url;
+      if (transport === 'body') form.body += '&' + new URLSearchParams({ [key]: 'duplicate' });
+      else target += '?' + new URLSearchParams({ [key]: 'duplicate' });
+      const flow = new ServiceFlow(gas);
+      assert.throws(() => flow.observeNavigation(target, 'POST', form), /service_oauth_parameters_invalid/);
+      assert.equal(flow.binding, null);
+    }
+  }
+  for (const overrides of [{ response_type: 'token' }, { response_type: 'code token' },
+    { redirect_uri: 'http://first.example.org/cb' }, { redirect_uri: callback + '#fragment' },
+    { state: '' }]) {
+    const flow = new ServiceFlow(gas);
+    assert.throws(() => flow.observeNavigation(url, 'POST', authorizationForm(overrides)), /service_(redirect_rejected|oauth_parameters_invalid)/);
+    assert.equal(flow.binding, null);
+  }
+  for (const form of [
+    { ...authorizationForm(), body: authorizationForm().body + '&padding=' + 'a'.repeat(65536) },
+    { ...authorizationForm(), body: authorizationForm().body + '&bad=%ZZ' },
+    { ...authorizationForm(), body: authorizationForm().body + '&bad=%C3%28' },
+  ]) {
+    const flow = new ServiceFlow(gas);
+    assert.throws(() => flow.observeNavigation(url, 'POST', form), /service_(redirect_rejected|oauth_parameters_invalid)/);
+    assert.equal(flow.binding, null);
+  }
+  const unsupported = new ServiceFlow(gas);
+  unsupported.observeNavigation(url, 'POST', { ...authorizationForm(), contentType: 'application/json' });
+  assert.throws(() => unsupported.allowSecret(), /service_authorization_request_required/);
+  const flow = new ServiceFlow(gas);
+  flow.observeNavigation(url, 'POST', authorizationForm());
+  assert.throws(() => flow.observeNavigation(url, 'POST', authorizationForm({ state: 'new' })), /service_transaction_changed/);
+  assert.throws(() => flow.observeNavigation(returned(), 'POST', authorizationForm()), /service_callback_rejected_method/);
+});
+
+test('distinct query/form parameters retain one exact decoded callback and state', () => {
+  const form = authorizationForm({ state: 'synthetic + literal% state' });
+  const body = new URLSearchParams(form.body); body.delete('client_id');
+  const flow = new ServiceFlow(gas);
+  flow.observeNavigation('https://esia.gosuslugi.ru/aas/oauth2/ac?client_id=SYNTHETIC', 'POST', { ...form, body: body.toString() });
+  flow.allowSecret();
+  assert.throws(() => flow.observeNavigation(returned()), /service_callback_rejected_state/);
+  flow.observeNavigation(returned({ state: 'synthetic + literal% state' }));
+  flow.observeResponse(returned({ state: 'synthetic + literal% state' }), 200);
+  assert.equal(flow.hasAuthenticatedReturn, true);
+  assert.equal(flow.redact('synthetic + literal% state'), '[redacted]');
+});
 test('only the actual bound ESIA transaction unlocks credentials and a single matching callback', () => {
   const flow = new ServiceFlow(gas);
   assert.throws(() => flow.allowSecret(), /service_authorization_request_required/);
@@ -201,8 +271,9 @@ function browserFixture(service = gas) {
     return page;
   }
   const original = makePage();
-  function request(page, url, { navigation = true, method = 'GET', parent = null, childFrame = false, missing = false } = {}) {
+  function request(page, url, { navigation = true, method = 'GET', parent = null, childFrame = false, missing = false, form = null } = {}) {
     const value = { missing, url: () => url, method: () => method, isNavigationRequest: () => navigation,
+      headers: () => ({ 'content-type': form?.contentType ?? '' }), postData: () => form?.body ?? null,
       serviceWorker: () => null, redirectedFrom: () => parent,
       frame: () => { if (value.missing) throw new Error('Frame not created'); return childFrame ? { page: () => page } : page.frame; } };
     context.emit('request', value); return value;
@@ -222,6 +293,33 @@ function browserFixture(service = gas) {
     get binds() { return binds; } };
 }
 const eventsSettled = () => new Promise(resolve => setImmediate(resolve));
+
+test('the initial form POST in an early direct popup binds only after opener proof and returns once', async () => {
+  const b = browserFixture(), watcher = b.start();
+  const popup = b.makePage(b.original, 'about:blank');
+  b.request(popup, 'https://esia.gosuslugi.ru/aas/oauth2/ac', { method: 'POST', form: authorizationForm(), missing: false });
+  assert.equal(b.binds, 0);
+  b.context.emit('page', popup); await eventsSettled();
+  assert.equal(b.binds, 1); b.flow.allowSecret();
+  const cb = b.request(popup, returned()); b.response(cb, 302);
+  assert.equal(watcher.returned, false);
+  const final = b.request(popup, gas.origin + '/work', { parent: cb });
+  b.response(final); popup.commit(final.url());
+  assert.equal(watcher.returned, true); assert.equal(watcher.closed, true);
+  assert.deepEqual(b.errors, []);
+  assert.throws(() => b.flow.allowSecret(), /service_authorization_request_required/);
+});
+
+test('POST form data from subframes, XHR and unrelated popups cannot bind an authorization', async () => {
+  const b = browserFixture(), watcher = b.start(), url = 'https://esia.gosuslugi.ru/aas/oauth2/ac';
+  b.request(b.original, url, { method: 'POST', form: authorizationForm(), childFrame: true });
+  b.request(b.original, url, { method: 'POST', form: authorizationForm(), navigation: false });
+  const unrelated = b.makePage(null);
+  b.request(unrelated, url, { method: 'POST', form: authorizationForm() });
+  b.context.emit('page', unrelated); await eventsSettled();
+  assert.equal(b.binds, 0); assert.equal(b.flow.binding, null); assert.deepEqual(b.errors, []);
+  watcher.close();
+});
 
 test('the browser observer accepts mixed-case code only through its bound callback document', () => {
   const b = browserFixture(), watcher = b.start();

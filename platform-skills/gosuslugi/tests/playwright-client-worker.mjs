@@ -82,6 +82,11 @@ try {
     let callback = `${callbackOrigin}/callback?state=synthetic-state&code=synthetic-code`;
     const auth = new URL('https://esia.gosuslugi.ru/aas/oauth2/ac');
     auth.search = new URLSearchParams({ redirect_uri: callbackOrigin + '/callback', state: 'synthetic-state', client_id: 'SYNTHETIC', response_type: 'code' });
+    // Exercise actual browser form serialization, not a reconstructed GET:
+    // same-page password/TOTP and an early direct-popup SSO use body-only OAuth.
+    const postEntry = index === 1 || index === 5;
+    const authForm = `<form id="esia-entry" method="post" action="${auth.origin + auth.pathname}"${popupFlow ? ' target="esia-popup"' : ''}>` +
+      [...auth.searchParams].map(([key, value]) => `<input type="hidden" name="${key}" value="${value.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}">`).join('') + '</form>';
     const postCallback = origin + '/api/auth/callback?state=synthetic-post-state&code=synthetic-post-code';
     const postAuth = new URL('https://passport.pochta.ru/oauth2/authorize');
     postAuth.search = new URLSearchParams({ redirect_uri: origin + '/api/auth/callback',
@@ -120,15 +125,17 @@ try {
         } else if (index === 8 && url.origin === returnOrigin && url.pathname === '/account') {
           body = '<h1>Кабинет</h1>' + workingForm;
         } else if (popupFlow) {
-          body = workingForm + `<a href="#" id="login-popup">Вход через ЕСИА</a>
+          body = workingForm + (postEntry ? authForm : '') + `<a href="#" id="login-popup">Вход через ЕСИА</a>
             ${index === 4 ? '<div id="login-modal" hidden><p>Чтобы продолжить, войдите</p><button id="modal-login">Вход через ЕСИА</button></div>' : ''}<script>
-            function openAuth(){window.authPopup=window.open(${JSON.stringify(withTotp ? 'about:blank' : auth.href)}, 'esia-popup');
+            function openAuth(){window.authPopup=window.open(${JSON.stringify(postEntry || withTotp ? 'about:blank' : auth.href)}, 'esia-popup');
+              ${postEntry ? "document.querySelector('#esia-entry').submit();" : ''}
               ${withTotp ? `setTimeout(()=>window.authPopup.location.href=${JSON.stringify(auth.href)}, 100)` : ''}};
             document.querySelector('#login-popup').onclick=e=>{e.preventDefault();${index === 4 ? "document.querySelector('#login-modal').hidden=false" : 'openAuth()'}};
             ${index === 4 ? "document.querySelector('#modal-login').onclick=openAuth;" : ''}
             addEventListener('message',e=>{if(e.source===window.authPopup&&e.origin===${JSON.stringify(callbackOrigin)}&&e.data==='synthetic-authorized')document.body.dataset.authorized='yes'});
             </script>`;
-        } else body = `<a href="${(tracking ? postAuth : auth).href.replaceAll('&', '&amp;')}">Вход через ЕСИА</a>`;
+        } else if (postEntry) body = authForm + '<a href="#" onclick="event.preventDefault();document.querySelector(\'#esia-entry\').submit()">Вход через ЕСИА</a>';
+        else body = `<a href="${(tracking ? postAuth : auth).href.replaceAll('&', '&amp;')}">Вход через ЕСИА</a>`;
       } else if (url.origin === 'https://roles.gosuslugi.ru' && index === 10) {
         // The real app paints its h2 before loading cards from a separate
         // request. Keep that interval and the delayed post-click navigation
@@ -141,6 +148,12 @@ try {
           document.querySelector('#personal').onclick=()=>setTimeout(()=>location.href=${JSON.stringify(callback)},1000);
           </script>`;
       } else if (url.origin === 'https://esia.gosuslugi.ru') {
+        if (postEntry && url.pathname === '/aas/oauth2/ac') {
+          assert.equal(request.method(), 'POST');
+          assert.equal(url.search, '');
+          assert.equal(request.headers()['content-type'], 'application/x-www-form-urlencoded');
+          assert.deepEqual([...new URLSearchParams(request.postData())], [...auth.searchParams]);
+        }
         // Some sites open an empty window before starting the OAuth request.
         // Its URL remains about:blank during the first network response; the
         // authorizer must wait for that document, not fail or read a key early.

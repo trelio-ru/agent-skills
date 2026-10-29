@@ -345,6 +345,10 @@ trusted source и сохраняться в закрытом статусе; pro
 Регистр `response_type=code` у Госуслуг допускает только четыре ASCII-буквы,
 без trim/повторного decode/переписывания запроса. Другие OAuth modes и все
 callback/state/method/duplicate/replay guards проверяются независимо.
+Начальный OAuth request принимается как GET query либо наблюдённая HTML
+POST-форма `application/x-www-form-urlencoded` в том же main frame/direct popup.
+Query и body объединяются с сохранением дубликатов, body ограничен 64 КиБ;
+значения остаются в RAM. Callback по-прежнему требует GET и exact state/path.
 Делегированный helper реализует только ЕСИА: callback берётся из реального
 request без карты внешних сайтов. После exact callback/state и внешнего
 HTTP document commit он сразу отключает observation и возвращает те же
