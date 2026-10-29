@@ -394,6 +394,10 @@ Windows не использует CRT exec overlay; argv, ожидание и р
 Теги skill-<skill-id>-vX.Y.Z и выпущенные package bytes неизменяемы.
 Каждый release tag отправляй отдельным push и подтверждай запуск его workflow
 по [контракту выпуска](docs/release-process.md).
+MAX фото/альбомы следуют [контракту](docs/max-web-agent-skill.md#история-и-состояние-чтения):
+read-only downloadRef связывает exact аккаунт/чат/сообщение с thumbnail bytes,
+не с позицией или меняющимся CDN URL. Viewer и оригинал проверяются отдельно;
+refs не открывают mutation/assist/ACK. Проверяй ротацию URL, дубли и album tiles.
 MAX read-only assist сохраняет штатный phone lookup для cold контакта;
 точная home-search кнопка проверяется и host gate, и browser event fence.
 Для каждой новой signed-runtime публикации нужна уникальная runtime version,

@@ -159,6 +159,33 @@ query и fragment в ссылках запрещены. История берё�
 поле. Единственное точное совпадение разрешает выбор без автора; несколько
 одинаковых сообщений остаются неоднозначными. Ошибка выбора объясняет этот
 порядок без ослабления переданных ограничений.
+Фотографии дополнительно получают `attachments[].downloadRef`, который
+`download --chat EXACT_URL --attachment-ref REF --output PATH` повторно связывает
+с тем же company/member/connection/account binding, exact чатом, полной
+метаинформацией сообщения и SHA-256 проверенных thumbnail bytes. Ref не является
+provider ID, credential или mutation authority; другие message selectors,
+`--attachment-index` кроме default и assist с ним запрещены. URL CDN меняются
+при повторной навигации, поэтому сам URL и DOM-позиция не задают identity.
+Одинаковые byte-identical фото с одинаковыми message metadata остаются
+неоднозначными. Добавление предшествующего сообщения не меняет ref.
+
+Только фото из `button.tile img.image` и HTTPS `i.oneme.ru` получают ref;
+avatars/link previews/чужие origin исключены. Thumbnail читается существующим
+browser context GET без redirect/retry: HTTP 200, JPEG/PNG/WebP, объявленные
+1–4 194 304 bytes и exact размер. Проверяются до 20
+последних фото возвращённого окна в пределах общего 10-секундного budget; неоднозначность с непроверенными одинаковыми
+bubble metadata не скрывается лимитом. При отказе CDN история остаётся доступной,
+но attachment получает `downloadRefUnavailable=MAX_PHOTO_REFERENCE_UNAVAILABLE`.
+Bytes, подписи и CDN URL не входят в handle/result/error или постоянный cache.
+
+Скачивание открывает только проверенную tile и требует единственный новый
+`dialog[open]` с exact текущим image source, затем единственную кнопку «Скачать».
+Перед кликом источник/чат сверяются повторно; Next/Previous не используются.
+Оригинал сохраняет прежний attachment transfer с size/SHA-256 и exclusive
+owner-only output. `MAX_PHOTO_REFERENCE_INVALID` требует свежего exact read;
+`MAX_PHOTO_VIEWER_UNVERIFIED` сохраняет неизвестность результата и не разрешает
+blind retry. Source monitors/ACK и мутации не получают новых selectors или прав.
+
 Длинные сообщения сохраняются. Deep link проверяет загрузку UI и один раз
 перезагружает пустую SPA; URL сам по себе не доказывает открытый чат. Нераспознанная
 пустая история возвращает ошибку, а не успешный пустой массив.
