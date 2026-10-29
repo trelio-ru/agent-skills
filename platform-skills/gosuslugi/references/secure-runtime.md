@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.5.10 объявляет signed host browser-session class
+Runtime 3.5.11 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -308,7 +308,11 @@ TOTP не сбрасывает submission guards.
 
 Клиент `scripts/playwright-client.mjs` входит в подписанный пакет Госуслуг.
 Verified команда `client` возвращает exact materialized module path и nonsecret
-company/member/configHome. Это разрешённый client-side import проверенного
+company/member/configHome и nonsecret controller общего host >=3.24.0.
+Общий signed opt-in, binding/session lease, очередь/request UUID, bounded
+private transport и close/expiry описаны в playwright-client.md. Управление
+не зависит от stdin прежнего терминала и не подключается к denied terminal.
+Это разрешённый client-side import проверенного
 пакета; импорт repository source или старого materialized release запрещён.
 Сам клиент не открывает vault, не читает OS key и не запускает браузер.
 
@@ -390,7 +394,7 @@ promises независимыми событиями; await внутри command
 применяется только к отказам helper-а. Verified callback не заменяется
 `authorization_result_unknown` из-за дальнейшего действия сайта. Download waiter
 и click сразу получают обработчики отказа; очередь ждёт обе операции, сохранение
-файла завершается до cleanup. EOF/finish закрывают все собственные ресурсы,
+файла завершается до cleanup. Общий close/expiry callback закрывает все собственные ресурсы,
 даже если один close отказал; чужой browser не закрывается.
 
 Клиент наблюдает main-frame запросы/ответы и document commit в исходной странице

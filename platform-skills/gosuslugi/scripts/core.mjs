@@ -5,7 +5,7 @@ import os from 'node:os';
 
 export const LEASE_MS = 30 * 60 * 1000;
 export const SKILL = 'gosuslugi';
-export const RUNTIME_VERSION = '3.5.10';
+export const RUNTIME_VERSION = '3.5.11';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // HTTP failure evidence is deliberately smaller than a browser response: a
 // status and a canonical HTTPS origin cannot contain OAuth paths, queries,
@@ -47,6 +47,14 @@ export async function browserSessionBinding(env = process.env) {
   // existing 30-minute in-process and native deadlines.
   requireThat(binding.leaseMs === LEASE_MS && !binding.manualAssist, 'browser_session_policy_invalid');
   return binding;
+}
+export async function prepareCallerController(env = process.env) {
+  await browserSessionBinding(env);
+  const runtime = await browserSessionRuntimePromise;
+  requireThat(typeof runtime.prepareBrowserController === 'function', 'browser_controller_host_required');
+  // Admission, private transport, queue and absolute lease belong to the
+  // common host. The provider does not create another browser/terminal server.
+  return runtime.prepareBrowserController({ environment: env });
 }
 export function guardianConfig(line) {
   requireThat(typeof line === 'string' && Buffer.byteLength(line) < 16384, 'guardian_config_invalid');

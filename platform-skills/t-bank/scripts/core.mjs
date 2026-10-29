@@ -5,7 +5,17 @@ import os from 'node:os';
 
 export const LEASE_MS = 30 * 60 * 1000;
 export const SKILL = 't-bank';
-export const RUNTIME_VERSION = '1.3.8';
+export const RUNTIME_VERSION = '1.3.9';
+
+export async function prepareCallerController(env = process.env) {
+  const url = String(env.TRELIO_BROWSER_SESSION_MODULE_URL || '');
+  requireThat(url.startsWith('file:'), 'browser_controller_host_required');
+  const runtime = await import(url);
+  requireThat(typeof runtime.prepareBrowserController === 'function', 'browser_controller_host_required');
+  // Only controller preparation uses the new common lease. Existing native
+  // T-ID permits, vault and authentication supervision remain independent.
+  return runtime.prepareBrowserController({ environment: env });
+}
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // HTTP failure evidence is deliberately smaller than a browser response: a
 // status and a canonical HTTPS origin cannot contain OAuth paths, queries,

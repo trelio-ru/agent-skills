@@ -7,7 +7,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { browserSessionBinding, childEnvironment, configRoot, identityFromEnv, importExistingAccounts, LEASE_MS, requireThat, RUNTIME_VERSION, RuntimeError, serviceHttpFailure, storageDirectory } from './core.mjs';
+import { browserSessionBinding, prepareCallerController, childEnvironment, configRoot, identityFromEnv, importExistingAccounts, LEASE_MS, requireThat, RUNTIME_VERSION, RuntimeError, serviceHttpFailure, storageDirectory } from './core.mjs';
 import { closedDiagnostics } from './auth-safety.mjs';
 import { atomicWrite, createPrivateFile, ensurePrivateDirectory, nativeHelper, nativeKeyHelper,
   nativeRequestTitleInput, SOURCE, verifyPrivate, keychainStatus, verifyKeychain } from './native.mjs';
@@ -145,7 +145,7 @@ export async function run(args, statusTimeoutMs = 30000) {
   if (command === 'client') return { modulePath: path.join(SOURCE, 'playwright-client.mjs'),
     guidePath: path.join(SOURCE, '..', 'references', 'playwright-client.md'),
     options: { company: identity.company, member: identity.member, ...(identity.account ? { accountId: identity.account.id } : {}) }, configHome: root,
-    ownership: 'caller', browserAccess: 'full_playwright_context' };
+    ownership: 'caller', browserAccess: 'full_playwright_context', controller: await prepareCallerController() };
   const helper = await nativeHelper(root), keyHelper = await nativeKeyHelper(root, helper), directory = storageDirectory(root, identity);
   await ensurePrivateDirectory(directory, helper);
   if (command === 'bootstrap') { await bootstrapBrowser(root); return doctor(directory, helper, root); }

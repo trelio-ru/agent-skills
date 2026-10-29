@@ -270,7 +270,11 @@ deadline. Временный файл source удаляется после вы�
 
 Клиент `scripts/playwright-client.mjs` входит в подписанный пакет Т‑Банка.
 Verified команда `client` возвращает exact materialized module path и nonsecret
-company/member/configHome. Это разрешённый client-side import текущего
+company/member/configHome и nonsecret controller общего host >=3.24.0.
+Signed opt-in, исходная lease, очередь/request UUID, bounded private transport
+и close/expiry принадлежат host; контракт – playwright-client.md. Terminal
+stdin не используется для продолжения между ходами; новый канал не подключается
+к denied terminal. Это разрешённый client-side import текущего
 проверенного пакета; импорт repository source или старого materialized release
 запрещён. Клиент сам не открывает vault, не читает OS key и не запускает браузер.
 

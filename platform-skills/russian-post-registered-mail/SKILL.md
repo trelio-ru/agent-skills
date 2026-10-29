@@ -118,9 +118,19 @@ Use ordinary long-lived Node.js with full Playwright from supported
 from `client`. VM `node_repl` can import then fail with `process is not defined`;
 do not shim globals, edit package/cache or retry compatibility via Touch ID.
 
-Before auth create browser/context/page and command channel. Start Codex
-stdin-controller with `tty:true`, retain `session_id` for `write_stdin`, register
-handlers immediately and test status/browser connectivity. Start auth separately.
+Before auth create browser/context/page and the common host >=3.24.0 controller
+returned by Gosuslugi >=4.5.11 `client`. Import its exact `controller.moduleUrl`,
+pass the unchanged descriptor to `openBrowserController`, and test status/browser
+connectivity. Keep the caller alive independently of terminal stdin; no TTY or
+nonempty `write_stdin` protocol across turns. Start auth separately.
+Use the SAME verified Gosuslugi localAction for `browser-controller status ID`,
+`submit ID REQUEST_UUID --input-file ABSOLUTE_JSON`, `poll ID REQUEST_UUID` and
+`close ID`, as specified in its complete `guidePath`. The file is owner-only,
+bounded and outside Git/Workspace, without auth values. Retain session/request
+IDs before waiting. After a lost response poll the SAME request; never mint a
+new submit ID to repeat an unknown click/payment/send. Read actual site state.
+Missing/expired controller is a concrete transport limit, not proof of failed
+login or permission to retry. Never attach a new channel to a denied old terminal.
 Attach success/rejection handlers to both `login.request` and
 `login.authenticated` **before click**. Keep safe phase/request state and verify
 returned page/context identity. Never block command queue on either promise;
@@ -129,7 +139,7 @@ means no second helper. Pass ready request arguments once. Get failure cause fro
 exact session status, never raw exception with OAuth URL. Agreed exact consent
 uses same page/existing permission, not a new question per letter.
 
-Handle locator/snapshot errors per command. EOF, command error and intermediate
+Handle locator/snapshot errors per command. Closed terminal stdin, command error and intermediate
 read-back do not end procedure; no per-step finally close. Check
 `postBrowser.isConnected()`/`postPage.isClosed()`, repair selector in same context.
 Return relevant cards/labels only, no whole inbox or bearer download hrefs.
@@ -140,8 +150,9 @@ retroactively reconstruct transaction. Keep live browser/context. Gosuslugi stor
 credentials; Post exists only in caller and cannot restore after process closure.
 
 After all card checks, explicit cancellation or unrecoverable blocker, run separate
-cleanup of helper and only scenario-owned context/browser. Human blocker keeps
-them alive. Controller cannot extend Gosuslugi native credential deadline. Never
+common `close` cleanup of helper and only scenario-owned context/browser. Human
+blocker keeps them alive within the ORIGINAL 30 minutes from client; new turns
+and polls cannot extend it. Controller cannot extend Gosuslugi native credential deadline. Never
 close other tabs/personal Chrome.
 
 ## Preparation and delivery notice

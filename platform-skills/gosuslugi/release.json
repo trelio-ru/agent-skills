@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.10",
-    "summary": "Исправлен вход через ЕСИА с параметрами в теле POST-формы, в том числе в интернет-приёмной Банка России. Проверки callback, state и дубликатов сохранены."
+    "version": "4.5.11",
+    "summary": "Исправлено продолжение браузерных сценариев между сообщениями."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.10",
-    "minimumHostVersion": "3.7.1",
+    "version": "3.5.11",
+    "minimumHostVersion": "3.24.0",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",
       "interpreter": "node"
@@ -224,6 +224,11 @@
       {
         "source": "scripts/esia-consent.mjs",
         "path": "scripts/esia-consent.mjs",
+        "mode": 420
+      },
+      {
+        "source": "trelio-browser-controller.json",
+        "path": "trelio-browser-controller.json",
         "mode": 420
       }
     ]

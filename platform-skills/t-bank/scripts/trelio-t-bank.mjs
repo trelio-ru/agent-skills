@@ -7,7 +7,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { childEnvironment, configRoot, identityFromEnv, LEASE_MS, requireThat, RUNTIME_VERSION, RuntimeError, serviceHttpFailure, storageDirectory } from './core.mjs';
+import { prepareCallerController, childEnvironment, configRoot, identityFromEnv, LEASE_MS, requireThat, RUNTIME_VERSION, RuntimeError, serviceHttpFailure, storageDirectory } from './core.mjs';
 import { atomicWrite, createPrivateFile, ensurePrivateDirectory, nativeHelper, nativeKeyHelper,
   nativeRequestTitleInput, SOURCE, verifyPrivate, keychainStatus, verifyKeychain } from './native.mjs';
 import { bootstrapBrowser, loadPlaywright } from './browser.mjs';
@@ -150,6 +150,7 @@ export async function run(args, statusTimeoutMs = 30000) {
     configHome: root,
     ownership: 'caller',
     browserAccess: 'full_playwright_context',
+    controller: await prepareCallerController(),
   };
   const helper = await nativeHelper(root), keyHelper = await nativeKeyHelper(root, helper),
     directory = storageDirectory(root, identity);

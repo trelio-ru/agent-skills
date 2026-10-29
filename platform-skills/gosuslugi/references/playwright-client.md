@@ -8,7 +8,8 @@
 
 1. Агент получает текущий навык Госуслуг и выполняет verified команду `client`.
    В ответе находятся `modulePath`, `options` с exact company/member и
-   `configHome`. Секретов, browser endpoint и OAuth URL в ответе нет.
+   `configHome`, а также `controller` общего host >=3.24.0. Секретов,
+   browser endpoint, transport bearer и OAuth URL в ответе нет.
 2. Обычный Node.js Playwright-сценарий импортирует клиент по возвращённому пути,
    создаёт свой headed browser/context и открывает публичный сайт. Сценарий
    должен продолжать работать, пока отдельный auth-вызов находится в ожидании.
@@ -99,6 +100,44 @@ transaction была только входом и не могла отправи
 
 ## Пример сценария
 
+Управление новым caller выполняется общим `browser-controller`, без `readline`,
+TTY и nonempty `write_stdin`. Импортируй `controller.moduleUrl` exact ответа
+`client` и передай весь `controller` без изменений в `openBrowserController`.
+Host хранит только временный owner-only transport record; callbacks, page,
+формы, команды и результаты остаются в процессе caller. Это не sandbox для
+произвольного кода и не дополнительное разрешение на действия сайта.
+
+Все последующие команды передавай **тому же verified `runtimeExecution.localAction`**
+в его `parameters.arguments` (с прежним `--local-account`, если он выбран):
+
+- `browser-controller status SESSION_ID [--after-sequence N]` – готовность и
+  события. До `nextSequence=sequence` читай следующие страницы с nextSequence;
+  `eventOverflow=true` требует отдельного state/read-back, без повтора действий
+- `browser-controller submit SESSION_ID REQUEST_UUID --input-file ABSOLUTE_JSON`
+  – поставить одну команду в очередь. JSON – обычный owner-only файл 0600/exact
+  Windows DACL вне Git/Workspace, до 64 КиБ; credentials/auth URL там запрещены
+- `browser-controller poll SESSION_ID REQUEST_UUID` – результат этой команды.
+  `queued`/`running` требуют чтения; `completed` содержит result. При потере
+  ответа сначала poll **того же UUID**, без нового submit/click. `outcome_unknown`,
+  `unknown_request` и transport refusal не доказывают неотправку: установи
+  фактический результат в живой Page. Тот же UUID не исполняется повторно;
+  другой payload с ним даёт `request_conflict`
+- `browser-controller close SESSION_ID` – cleanup только ресурсов caller;
+  `closed` подтверждает завершение callback, `cleanup_unconfirmed` – явный пробел
+
+Возвращай из handle только выбранные сведения до 8 КиБ; события до 4 КиБ.
+Большой/несериализуемый результат даёт outcome_unknown после выполненного
+действия, поэтому его нельзя повторять ради меньшего ответа.
+
+Сохрани session ID и UUID операций в уже разрешённых рабочих заметках до ожидания.
+Смена хода/cwd и polling не продлевают исходные 30 минут с `client`. Истечение
+канала закрывает свои ресурсы через callback; native credential deadline действует
+независимо. Это cooperative lifecycle caller, не watchdog против зависшего
+произвольного JS. Не подключай этот канал к прежнему терминалу после его отказа
+политики. Не повторяй неизвестную подачу и не сбрасывай verified callback.
+Результат `client` без `controller` требует штатного обновления host/provider
+до нового запуска; не изобретай поле, transport или путь в cache.
+
 Адрес и селекторы ниже иллюстрируют порядок; реальный сценарий получает их
 из публичной страницы нужного сайта. Playwright устанавливается штатными
 средствами среды вызывающего агента, а не новым Agent Skill. Для пошаговой
@@ -110,7 +149,6 @@ request/authenticated в `handle`: оно заблокирует `state` и вт
 
 ```js
 import fs from 'node:fs/promises';
-import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 
@@ -118,13 +156,15 @@ import { chromium } from 'playwright';
 const client = JSON.parse(await fs.readFile(process.argv[2], 'utf8'));
 const { createEsiaAuthorization, observeEsiaAuthorization, safeAuthorizationFailure } =
   await import(pathToFileURL(client.modulePath).href);
+const { openBrowserController } = await import(client.controller.moduleUrl);
 const browser = await chromium.launch({ channel: 'chrome', headless: false });
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
 const origin = 'https://service.example.org';
 await page.goto(origin);
-const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
+const emit = value => { controller?.publish(value); return value; };
 let login, observer, step, stopped = false, transitionFailed = false;
+let controller;
 const usedSteps = new Set();
 function reportCallerFailure() {
   // A locator, download or command error is not an ESIA rejection. Keep the
@@ -145,8 +185,9 @@ async function handle(command) {
     for (const close of [() => login?.close(), () => context.close(), () => browser.close()]) {
       try { await close(); } catch { cleanupFailed = true; }
     }
-    lines.close();
-    return emit({ phase: cleanupFailed ? 'caller_cleanup_failed' : 'caller_closed' });
+    const result = emit({ phase: cleanupFailed ? 'caller_cleanup_failed' : 'caller_closed' });
+    setImmediate(() => { void controller.close(); });
+    return result;
   }
   // Only inspected, authorized login controls on the public source page.
   // Do not use this command to inspect/click auth fields or accept consent.
@@ -192,19 +233,19 @@ async function handle(command) {
   await page.locator(command.selector).click();
   emit({ ...observer.snapshot(), step }); // Не await request: modal ещё может требовать click.
 }
-const lines = readline.createInterface({ input: process.stdin });
-let queue = Promise.resolve();
-lines.on('line', line => {
-  queue = queue.then(() => handle(JSON.parse(line))).catch(reportCallerFailure);
-});
-// EOF also ends this caller's ownership. A command failure above keeps the
-// queue and session alive so state/finish remain available for recovery.
-lines.on('close', () => {
-  queue = queue.then(() => handle({ action: 'finish' })).catch(reportCallerFailure);
+controller = await openBrowserController(client.controller, {
+  handle: async command => {
+    try { return await handle(command); }
+    catch { reportCallerFailure(); throw new Error('caller_action_failed'); }
+  },
+  onClose: async () => {
+    const result = await handle({ action: 'finish' });
+    if (result?.phase === 'caller_cleanup_failed') throw new Error('caller_cleanup_failed');
+  },
 });
 emit({ phase: 'caller_ready' });
 // After verified callback, add the site's business steps to handle() and check
-// its actual result. Only finish closes this caller's context/browser.
+// its actual result. The shared close command or original lease invokes onClose.
 ```
 
 Первая команда входа, после проверки полномочий:
