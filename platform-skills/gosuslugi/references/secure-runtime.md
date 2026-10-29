@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.5.9 объявляет signed host browser-session class
+Runtime 3.5.10 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -334,6 +334,17 @@ ASCII-регистр четырёх букв. Значение не обреза
 и не переписывается; `token`, hybrid и неизвестные режимы не принимаются.
 Параметры по-прежнему должны быть единственными; совместимость регистра не
 ослабляет HTTPS, callback, state, method или one-use guards.
+
+Начальный запрос может быть GET с query либо реальный POST с
+`application/x-www-form-urlencoded` body в исходном main frame/проверенном
+direct popup. Query/body объединяются без замены значений: дубликаты
+`redirect_uri`, `state`, `client_id`, `response_type` между ними отклоняются.
+POST body ограничен 65536 байт UTF-8; malformed percent/UTF-8 не исправляются
+молча. JSON/multipart не интерпретируются как OAuth form. Тело, значения и
+auth URL остаются в private RAM, не попадают в descriptor/ошибки/логи.
+Request не переписывается и не повторяется, новой карты сайтов нет.
+XHR/subframe/чужое окно не могут создать binding из POST body. Это поддержка
+начального запроса; form-post callback по-прежнему не поддерживается.
 
 Callback code/state/fixed query, GET, отсутствие fragment/token payload,
 дубликатов и replay проверяются до первого return proof. Отказ возвращается

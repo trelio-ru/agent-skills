@@ -1,5 +1,5 @@
 import { authOrigin, requireThat, RuntimeError } from './core.mjs';
-import { entryUrl, externalUrl } from './esia-flow.mjs';
+import { authorizationParameters, entryUrl, externalUrl } from './esia-flow.mjs';
 
 /**
  * Observe one OAuth transaction in the original page or its new direct popup.
@@ -145,12 +145,18 @@ export class PlaywrightAuthorizationFlow {
     if (event.kind === 'request') {
       const { request } = event;
       const url = request.url(), navigation = request.isNavigationRequest();
-      const oauth = navigation && authOrigin(url) && new URL(url).searchParams.has('redirect_uri');
+      // Read a form body only after main-frame/page/opener routing, and only
+      // for official auth navigation. XHR, subframes and unrelated popups must
+      // never acquire a binding from body parameters. The real Request stays
+      // untouched, including its POST method and encoding; no replay/GET shim.
+      const form = navigation && authOrigin(url) && request.method() === 'POST'
+        ? { contentType: request.headers()['content-type'] ?? '', body: request.postData() ?? '' } : null;
+      const oauth = navigation && authorizationParameters(url, request.method(), form);
       if (oauth) {
         requireThat(!this.active || this.active === record, 'authorization_page_changed');
         requireThat(!this.original.isClosed() &&
           (record.page === this.original || entryUrl(this.original.url(), this.flow.service)), 'authorization_target_mismatch');
-        this.flow.observeNavigation(url, request.method());
+        this.flow.observeNavigation(url, request.method(), form);
         this.active = record;
         this.onBinding();
       } else if (this.active === record || !this.active && record.page === this.original) {

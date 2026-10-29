@@ -26,6 +26,32 @@ function uniqueParameter(url, key, required = true) {
   if (values.length) requireThat(values[0].length <= 4096, 'service_oauth_parameters_invalid');
   return values[0] ?? null;
 }
+
+/** Read only the browser-observed authorization transport, without rewriting it.
+ * Some relying parties submit OAuth as an HTML form: the URL alone then has no
+ * redirect_uri. Merge query/body entries rather than using set(), so duplicate
+ * security parameters across the two transports still fail uniqueParameter().
+ * Bodies/values remain in caller RAM and never enter a descriptor or diagnostic.
+ */
+export function authorizationParameters(value, method = 'GET', form = null) {
+  const url = new URL(value);
+  if (!authOrigin(url.href)) return null;
+  const formEncoded = method === 'POST' && form && typeof form.contentType === 'string' &&
+    form.contentType.split(';')[0].trim().toLowerCase() === 'application/x-www-form-urlencoded';
+  const searchParams = new URLSearchParams(url.searchParams);
+  if (formEncoded) {
+    requireThat(typeof form.body === 'string' && Buffer.byteLength(form.body, 'utf8') <= 65536,
+      'service_oauth_parameters_invalid');
+    // URLSearchParams silently repairs malformed percent/UTF-8 bytes. Do not
+    // let that repair change the state/callback identity we claim to observe.
+    try { decodeURIComponent(form.body.replaceAll('+', ' ')); }
+    catch { requireThat(false, 'service_oauth_parameters_invalid'); }
+    for (const [key, content] of new URLSearchParams(form.body)) searchParams.append(key, content);
+  }
+  if (!searchParams.has('redirect_uri')) return null;
+  requireThat(method === 'GET' || formEncoded, 'service_redirect_rejected');
+  return { searchParams };
+}
 export class ServiceFlow {
   constructor(service, { reused = false } = {}) {
     this.service = service;
@@ -44,19 +70,19 @@ export class ServiceFlow {
   redact(text) {
     return [...this.secrets].reduce((value, secret) => value.split(secret).join('[redacted]'), text);
   }
-  observeNavigation(value, method = 'GET') {
+  observeNavigation(value, method = 'GET', form = null) {
     const url = new URL(value);
-    if (authOrigin(url.href) && url.searchParams.has('redirect_uri')) {
+    const parameters = authorizationParameters(value, method, form);
+    if (parameters) {
       requireThat(!this.callbackSeen, 'service_callback_already_used');
       // Capture the browser's real authorization request, never manufacture one.
       // Bind the exact observed callback even when it belongs to an external
       // broker. A second transaction cannot replace it during the native lease.
-      const redirect = uniqueParameter(url, 'redirect_uri');
-      const state = uniqueParameter(url, 'state');
-      const client = uniqueParameter(url, 'client_id');
-      const responseType = uniqueParameter(url, 'response_type');
+      const redirect = uniqueParameter(parameters, 'redirect_uri');
+      const state = uniqueParameter(parameters, 'state');
+      const client = uniqueParameter(parameters, 'client_id');
+      const responseType = uniqueParameter(parameters, 'response_type');
       requireThat(
-        method === 'GET' &&
           // Recognize only ASCII case variants of authorization-code mode.
           // Do not trim, decode twice, accept token/hybrid modes or rewrite the
           // request. Duplicate parameters and callback/state guards remain

@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.9",
-    "summary": "Исправлена совместимость делегированного входа ЕСИА с ASCII-регистром response_type=code. Другие режимы OAuth, дубликаты, неподходящий callback, подмена state и повторный callback остаются запрещены."
+    "version": "4.5.10",
+    "summary": "Исправлен вход через ЕСИА с параметрами в теле POST-формы, в том числе в интернет-приёмной Банка России. Проверки callback, state и дубликатов сохранены."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.9",
+    "version": "3.5.10",
     "minimumHostVersion": "3.7.1",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",
