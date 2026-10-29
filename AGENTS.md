@@ -202,7 +202,8 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 и его [forward-сценарии](platform-skills/gas-pravosudie/tests/status-check-scenarios.md).
 
 Комментируй неочевидные инварианты, права, состояния, retries и восстановление.
-Для Avito читай [визуальный контракт](platform-skills/avito/references/workflow.md)
+Для Avito, включая диалоги и ограничения первого контакта, читай
+[визуальный контракт](platform-skills/avito/references/workflow.md)
 и [защиту сессии](platform-skills/avito/references/security.md). Только
 host bounded text/image/input API, без прямого HTTP, DOM/AX-дерева, code extraction
 или fallback. Локальный fixed link router может обработать href exact click
