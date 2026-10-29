@@ -57,7 +57,26 @@
   `--context-ref` у изменяющих команд отклоняется. Не проси оператора нажимать
   строку вместо доступного `assist-click`. Новый `login` сбрасывает только
   журнал ссылок, чтобы смена аккаунта не переносила старые привязки.
-- Перед `download` прочитай exact чат через `read`. Для `--message-id` бери
+- Перед `download` прочитай exact чат через `read`. Для фото используй
+  `attachments[].downloadRef`: `download --chat КАНОНИЧЕСКИЙ_URL
+  --attachment-ref ТОЧНЫЙ_REF --output НОВЫЙ_ПУТЬ`. Каждое фото альбома имеет
+  собственный ref; время, `messageKey` и позиция не выбирают фотографию.
+  Не сочетай ref с `--message-id`, `--target-text`, `--target-author` или
+  `--attachment-index`. Runtime заново проверяет аккаунт, чат, сообщение,
+  содержимое фото и единственный просмотрщик, затем нажимает его «Скачать».
+  Ref – read-only locator, не ID MAX, не credential и не разрешение mutation;
+  он запрещён у reply/edit/delete/forward/react и assist. Подписанные CDN URL
+  могут меняться: runtime связывает ref с проверенными thumbnail bytes,
+  а оригинал получает только штатным действием MAX. Байты/URL не возвращаются.
+  На одно чтение проверяется до 20 последних фото в возвращённом окне;
+  непроверенные или одинаковые фото без однозначной identity не получают ref.
+  При `downloadRefUnavailable=MAX_PHOTO_REFERENCE_UNAVAILABLE` CDN identity не
+  проверена; не подставляй вместо неё время. `MAX_PHOTO_REFERENCE_INVALID`
+  означает stale/неоднозначный ref либо другую область: перечитай exact чат.
+  `MAX_PHOTO_VIEWER_UNVERIFIED` не подтверждает скачивание; проверь live result
+  перед повтором. Успех подтверждают только готовый файл, размер и SHA-256.
+  Для обычных файлов без `downloadRef` сохраняется следующий выбор сообщения.
+  Для `--message-id` бери
   только непустой `providerMessageId`: `messageKey` – локальный хеш снимка,
   `index` – позиция, они не являются ID MAX. Если `providerMessageId=null`,
   скопируй **весь** `message.text` в `--target-text`, включая тип файла,

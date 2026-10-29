@@ -48,7 +48,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "49";
+const ADAPTER_VERSION = "50";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 // A cold worker must launch Chrome, hydrate home and then resolve the exact
@@ -327,6 +327,7 @@ const parseArguments = (argv, environment = process.env) => {
     reaction: "",
     toChat: "",
     attachmentIndex: 1,
+    attachmentRef: "",
     limit: 20,
     pages: 1,
     iterations: 1,
@@ -402,6 +403,7 @@ const parseArguments = (argv, environment = process.env) => {
     else if (argument === "--reaction") options.reaction = value();
     else if (argument === "--to-chat") options.toChat = value();
     else if (argument === "--attachment-index") options.attachmentIndex = Number(value());
+    else if (argument === "--attachment-ref") options.attachmentRef = value();
     else if (argument === "--limit") options.limit = Number(value());
     else if (argument === "--pages") options.pages = Number(value());
     else if (argument === "--iterations") options.iterations = Number(value());
@@ -529,6 +531,7 @@ Usage:
   trelio-max.mjs unread --limit 10 --pages 1
   trelio-max.mjs watch --limit 10 --iterations 4 --interval-ms 15000
   trelio-max.mjs download --chat "Название" --message-id ID --attachment-index 1 --output PATH
+  trelio-max.mjs download --chat "https://web.max.ru/123" --attachment-ref REF_FROM_READ --output PATH
   trelio-max.mjs send --chat "Название" --message "Текст" --file PATH --confirm
   trelio-max.mjs reply --chat "Название" --message-id ID --message "Текст" --confirm
   trelio-max.mjs react --chat "Название" --message-id ID --reaction "👍" --confirm
@@ -1282,6 +1285,7 @@ const outgoingMessage = (options) => {
 };
 
 const requireMessageTarget = (options) => {
+  if (options.command === "download" && options.attachmentRef) return;
   if (!options.messageId && !options.targetText) {
     throw new Error(`${options.command} requires --message-id or --target-text.`);
   }
@@ -1384,6 +1388,14 @@ const validateCommandOptions = (options) => {
   }
   if (options.description !== null && options.command !== "chat-update") {
     throw new Error(`${options.command} does not accept --description.`);
+  }
+  // Photo references are read-only selectors, never provider IDs or mutation
+  // authority. Do not silently ignore one on another command (including assist).
+  if (options.attachmentRef && (options.command !== "download"
+    || !/^max-photo\/v1\.[a-f0-9]{64}$/u.test(options.attachmentRef)
+    || options.messageId || options.targetText || options.targetAuthor || options.attachmentIndex !== 1
+    || !options.chat || normalizeChatUrl(options.chat) !== options.chat)) {
+    throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID", "Use one fresh photo downloadRef with download, an exact chat and no other message selectors.");
   }
   if (options.output && options.command !== "download") {
     throw new Error(`${options.command} does not accept --output.`);
@@ -2667,6 +2679,118 @@ const visibleMessages = async (page, limit, { strictReferences = false } = {}) =
       text: message.text,
     })),
   }));
+};
+
+// MAX photo-only bubbles often expose neither a message ID nor body beyond
+// the minute. Bind a read-only selector to the exact account/chat, whole message
+// metadata AND verified thumbnail bytes, not DOM order or the local messageKey.
+// The source (which may contain a signed query) never leaves this process; only
+// its scoped content digest is model-visible. It is a lookup, not an access credential.
+const photoSourceDigest = async (page, source, timeoutMs = 60_000) => {
+  let response;
+  try {
+    // The URL comes only from a verified MAX photo tile, never CLI input. A
+    // rotating CDN signature is not image identity: hash the bounded thumbnail
+    // bytes in this same browser account instead. Never return URLs or bytes.
+    const url = new URL(source);
+    if (url.origin !== 'https://i.oneme.ru' || url.username || url.password || url.hash) throw new Error();
+    response = await page.context().request.get(source, { maxRedirects: 0, maxRetries: 0, timeout: timeoutMs });
+    const headers = response.headers();
+    const length = Number(headers['content-length']);
+    if (response.status() !== 200 || !/^image\/(?:jpeg|png|webp)(?:;|$)/iu.test(headers['content-type'] || '')
+      || !Number.isSafeInteger(length) || length < 1 || length > 4 * 1024 * 1024) throw new Error();
+    const bytes = await response.body();
+    if (bytes.length !== length) throw new Error();
+    return sha256(bytes);
+  } catch {
+    throw new MaxRuntimeError('MAX_PHOTO_REFERENCE_UNAVAILABLE', 'The bounded MAX photo identity could not be verified. Read the exact chat again.');
+  } finally {
+    await response?.dispose().catch(() => undefined);
+  }
+};
+
+const addPhotoDownloadReferences = async (page, options, messages) => {
+  const rows = await page.evaluate(() => {
+    document.querySelectorAll("[data-trelio-max-photo]").forEach(n => n.removeAttribute("data-trelio-max-photo"));
+    const result = [];
+    for (const node of document.querySelectorAll("[data-trelio-max-message]")) {
+      const index = Number(node.getAttribute("data-trelio-max-message"));
+      const attachments = Array.from(node.querySelectorAll(
+        'a[download], [aria-label*="скач" i], [aria-label*="download" i], [class*="attachment" i], [class*="file" i], img, video, audio',
+      )).slice(0, 20);
+      attachments.forEach((image, offset) => {
+        // The verified MAX photo tile excludes avatars, link previews and other
+        // decorative images. A changed/foreign source yields no usable handle.
+        if (!image.matches('button.tile img.image') || image.closest('.messageWrapper') !== node) return;
+        let source;
+        try {
+          source = new URL(image.getAttribute("src") || "");
+          if (source.protocol !== "https:" || source.hostname !== "i.oneme.ru"
+            || source.port || source.username || source.password || source.hash) return;
+        } catch { return; }
+        const marker = `${index}:${offset + 1}`;
+        image.setAttribute("data-trelio-max-photo", marker);
+        result.push({ index, attachmentIndex: offset + 1, source: source.href, marker });
+      });
+    }
+    return { url: window.location.href, rows: result };
+  });
+  if (!rows.rows.length) return [];
+  const chat = normalizeChatUrl(rows.url);
+  if (normalizeChatUrl(options.chat) && normalizeChatUrl(options.chat) !== chat) {
+    throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID", "The exact MAX photo chat changed before reading.");
+  }
+  if (!hasChatReferenceIdentity(options)) throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID", "Photo references require a bound MAX account.");
+  const scope = [options.companyId, options.memberId, options.connectionId,
+    options.account?.id ?? null, options.account?.companyBinding ?? null, chat];
+  const candidates = [];
+  const eligible = rows.rows.filter(row => messages.some(m => m.index === row.index));
+  const bounded = eligible.slice(-20);
+  // The thumbnail budget must not make an unexamined identical bubble into a
+  // unique match merely by position. If its whole message metadata also occurs
+  // outside this budget, omit the handle conservatively.
+  const unexaminedKeys = new Set(eligible.slice(0, eligible.length - bounded.length)
+    .map(row => messages.find(m => m.index === row.index)?.messageKey));
+  const identityDeadline = Date.now() + Math.min(options.timeoutMs || 60_000, 10_000);
+  for (const row of bounded) {
+    const message = messages.find(m => m.index === row.index);
+    const attachment = message?.attachments.find(a => a.index === row.attachmentIndex);
+    if (!attachment || unexaminedKeys.has(message.messageKey)) continue;
+    const remaining = identityDeadline - Date.now();
+    const contentDigest = remaining > 0
+      ? await photoSourceDigest(page, row.source, remaining).catch(() => null) : null;
+    if (!contentDigest) {
+      attachment.downloadRefUnavailable = 'MAX_PHOTO_REFERENCE_UNAVAILABLE';
+      continue;
+    }
+    const downloadRef = `max-photo/v1.${sha256(JSON.stringify(['max-photo/v1', scope,
+      message.providerMessageId, message.author, message.timestamp, message.text,
+      contentDigest]))}`;
+    attachment.downloadRef = downloadRef;
+    candidates.push({ downloadRef, message, marker: row.marker, source: row.source });
+  }
+  // A repeated copy of the exact same image/body/time is still ambiguous.
+  // Do not advertise a handle that could later select either duplicate.
+  const counts = new Map();
+  candidates.forEach(row => counts.set(row.downloadRef, (counts.get(row.downloadRef) || 0) + 1));
+  for (const message of messages) for (const attachment of message.attachments) {
+    if (counts.get(attachment.downloadRef) > 1) delete attachment.downloadRef;
+  }
+  return candidates;
+};
+
+const findPhotoDownloadTarget = async (page, options) => {
+  const messages = await visibleMessages(page, 100);
+  const candidates = await addPhotoDownloadReferences(page, options, messages);
+  const matches = candidates.filter(row => row.downloadRef === options.attachmentRef);
+  if (matches.length !== 1) throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID",
+    "The MAX photo reference is stale, absent or ambiguous. Read the exact chat again; do not select by position.");
+  const selected = matches[0];
+  const image = page.locator(`[data-trelio-max-photo="${selected.marker}"]`);
+  if (await image.count() !== 1 || await image.getAttribute("src") !== selected.source) {
+    throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID", "The exact MAX photo changed before opening.");
+  }
+  return { ...selected, image };
 };
 
 const findMessageTarget = async (page, options, { outgoingOnly = false } = {}) => {
@@ -4811,12 +4935,11 @@ const readChatMessages = async (page, options) => {
     // disappearing between hydration and extraction is not such evidence.
     throw new Error("MAX message history has no recognized messages; empty history is not verified. Keep the dedicated profile and report the UI limitation.");
   }
-  return {
-    opened,
-    chatReference: await rememberOpenedChat(page, options, opened, true),
-    loadedPages,
-    messages,
-  };
+  const chatReference = await rememberOpenedChat(page, options, opened, true);
+  // Source monitors retain their stricter native identity/ACK ABI. Ordinary
+  // reads alone expose photo lookup handles, with no new processing authority.
+  if (options.command === "read") await addPhotoDownloadReferences(page, options, messages);
+  return { opened, chatReference, loadedPages, messages };
 };
 
 // A bounded DOM timeline is not a native server update sequence. Require the
@@ -5448,9 +5571,63 @@ const installAttachmentTransfer = async (page, { output, timeoutMs, onPending = 
   };
 };
 
+const downloadPhotoAttachment = async (page, options) => {
+  const target = await findPhotoDownloadTarget(page, options);
+  let transfer;
+  let timer;
+  try {
+    if (await page.locator("dialog[open]").count() !== 0) throw new MaxRuntimeError(
+      "MAX_PHOTO_VIEWER_UNVERIFIED", "Close the existing MAX dialog before selecting a photo.");
+    // Only the tile proven by the fresh reference can open the viewer. Never
+    // use a message/album position, a page-global Download button or a guessed
+    // original-image URL. MAX itself chooses the original transfer.
+    await target.image.locator("xpath=ancestor::button[contains(concat(' ', normalize-space(@class), ' '), ' tile ')][1]").click({ timeout: options.timeoutMs });
+    await page.waitForFunction((source) => {
+      const dialogs = Array.from(document.querySelectorAll("dialog[open]"));
+      if (dialogs.length !== 1) return false;
+      const images = Array.from(dialogs[0].querySelectorAll("img"))
+        .filter(image => !image.classList.contains("avatarImage"));
+      if (images.length !== 1 || images[0].getAttribute("src") !== source) return false;
+      dialogs[0].setAttribute("data-trelio-max-photo-viewer", "true");
+      return true;
+    }, target.source, { timeout: options.timeoutMs });
+    const viewer = page.locator('dialog[open][data-trelio-max-photo-viewer="true"]');
+    const button = viewer.getByRole("button", { name: /^(?:скачать|download)$/iu });
+    if (normalizeChatUrl(page.url()) !== options.chat || await button.count() !== 1) {
+      throw new MaxRuntimeError("MAX_PHOTO_VIEWER_UNVERIFIED", "MAX did not expose one download control for the exact photo.");
+    }
+    transfer = await installAttachmentTransfer(page, { output: options.output, timeoutMs: options.timeoutMs });
+    const expired = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new MaxRuntimeError("MAX_DOWNLOAD_TIMEOUT", "MAX photo did not finish in time.")), options.timeoutMs);
+    });
+    const completed = Promise.race([transfer.completion, expired]);
+    void completed.catch(() => undefined);
+    // Recheck the image immediately before the one download click: gallery
+    // navigation or replacement while the handler was installed is not consent
+    // to download another image. No Next/Previous control is ever invoked.
+    const unchanged = await viewer.evaluate((dialog, source) => {
+      const images = Array.from(dialog.querySelectorAll('img')).filter(image => !image.classList.contains('avatarImage'));
+      return images.length === 1 && images[0].getAttribute('src') === source;
+    }, target.source);
+    if (!unchanged || normalizeChatUrl(page.url()) !== options.chat) throw new MaxRuntimeError(
+      "MAX_PHOTO_VIEWER_UNVERIFIED", "The exact MAX photo changed before download.");
+    await button.click({ timeout: options.timeoutMs });
+    return { downloaded: true, ...(await completed), sourceMessage: target.message, downloadRef: target.downloadRef };
+  } catch (error) {
+    if (error instanceof MaxRuntimeError) throw error;
+    // Browser failures can embed request URLs. Never expose a signed image
+    // source, provider response or raw Playwright exception to the model.
+    throw new MaxRuntimeError("MAX_PHOTO_VIEWER_UNVERIFIED", "The exact MAX photo viewer or its download could not be verified.");
+  } finally {
+    clearTimeout(timer);
+    await transfer?.stop();
+  }
+};
+
 const downloadSelectedAttachment = async (page, options) => {
   await openChat(page, options);
   await loadHistoryPages(page, options.pages, options.timeoutMs);
+  if (options.attachmentRef) return downloadPhotoAttachment(page, options);
   const target = await findMessageTarget(page, options);
   const attachments = target.locator.locator(
     'a[download], button[aria-label*="скач" i], button[aria-label*="download" i], [role="button"][aria-label*="скач" i], [role="button"][aria-label*="download" i], button[title*="скач" i], button[title*="download" i]',
@@ -6717,6 +6894,11 @@ export {
   openChat,
   visibleMessages,
   findMessageTarget,
+  addPhotoDownloadReferences,
+  photoSourceDigest,
+  findPhotoDownloadTarget,
+  downloadPhotoAttachment,
+  downloadSelectedAttachment,
   validateCommandOptions,
   withBrowser,
   readUnreadDialogs,
