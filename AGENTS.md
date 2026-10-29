@@ -367,7 +367,11 @@ Advisory wait без запроса требует осмотра промежу
 Ошибки caller/download не проходят через `safeAuthorizationFailure` и не меняют
 verified callback. Оба concurrent promise сразу наблюдаются; `saveAs` завершается
 до cleanup всех собственных ресурсов даже при отказе одного close. Проверяй
-исполняемый пример из playwright-client.md, включая timeout раньше click и EOF.
+исполняемый пример из playwright-client.md, включая timeout раньше click и
+общий close/expiry callback. Caller-owned Playwright использует signed opt-in
+общего host controller >=3.24.0 через SAME admitted skill_run; terminal stdin
+не является межходовым протоколом. Unknown response читается по прежнему UUID,
+без нового submit, изменения auth proof или подключения к denied terminal.
 Завершённый ESIA helper не владеет жизненным циклом browser. Следующая отдельно
 разрешённая процедура может подключить новый helper к той же подготовленной Page
 после verified callback и оценки прежнего бизнес-результата. Pending/failure либо

@@ -581,8 +581,32 @@ test('start reuses the running exact lease; new calls cannot renew or use a prev
 });
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
-  assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.7.1');
-  assert.equal(release.release.version, '2.3.8');
+  assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.24.0');
+  assert.equal(release.release.version, '2.3.9');
+});
+test('client obtains its controller from the common host before any native or credential I/O', {
+  skip: !['darwin', 'win32'].includes(process.platform),
+}, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bank-controller-discovery-'));
+  const replacement = { TRELIO_CONFIG_HOME: root, TRELIO_SKILL_ID: identity.skill,
+    TRELIO_SKILL_COMPANY_ID: identity.company, TRELIO_SKILL_MEMBER_ID: identity.member,
+    TRELIO_BROWSER_CONTROLLER_ENABLED: '1',
+    TRELIO_BROWSER_SESSION_MODULE_URL: new URL('./browser-controller-fixture.mjs', import.meta.url).href,
+    TRELIO_BROWSER_SESSION_DEADLINE_AT: String(Date.now() + LEASE_MS) };
+  const previous = Object.fromEntries(Object.keys(replacement).map(key => [key, process.env[key]]));
+  Object.assign(process.env, replacement);
+  try {
+    const client = await run(['client']);
+    assert.equal(client.controller.apiVersion, 1);
+    assert.equal(client.controller.moduleUrl, replacement.TRELIO_BROWSER_SESSION_MODULE_URL);
+    assert.equal(client.controller.deadlineAt, Number(replacement.TRELIO_BROWSER_SESSION_DEADLINE_AT));
+    assert.equal(client.browserAccess, 'full_playwright_context');
+    assert.deepEqual(await fs.readdir(root), []);
+    assert.doesNotMatch(JSON.stringify(client.controller), /token|port|password/);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 test('status and stop report a dead supervisor as closed without calling its stale control port', { skip: !supported }, async t => {
   const env = { TRELIO_CONFIG_HOME: nativeRoot, TRELIO_SKILL_ID: 't-bank', TRELIO_SKILL_COMPANY_ID: identity.company, TRELIO_SKILL_MEMBER_ID: identity.member };

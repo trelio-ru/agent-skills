@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "t-bank",
-    "version": "2.3.8",
-    "summary": "Полные инструкции читаются отдельными частями из подписанного пакета. Правила безопасности и рабочих сценариев сохранены без потери текста."
+    "version": "2.3.9",
+    "summary": "Исправлено продолжение браузерных сценариев между сообщениями."
   },
   "connection": null,
   "runtime": {
-    "version": "1.3.8",
-    "minimumHostVersion": "3.7.1",
+    "version": "1.3.9",
+    "minimumHostVersion": "3.24.0",
     "entrypoint": {
       "path": "scripts/trelio-t-bank.mjs",
       "interpreter": "node"
@@ -168,7 +168,18 @@
         "source": "scripts/instruction-guides/part-03.md",
         "path": "scripts/instruction-guides/part-03.md",
         "mode": 420
+      },
+      {
+        "source": "trelio-browser-controller.json",
+        "path": "trelio-browser-controller.json",
+        "mode": 420
       }
-    ]
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "protected-snapshot",
+      "leaseMs": 1800000,
+      "manualAssist": false
+    }
   }
 }

@@ -213,8 +213,15 @@ async function guideCaller({ failCreation } = {}) {
   const code = guide.match(/```js\n([\s\S]*?)\n```/)[1];
   const body = code.slice(code.indexOf('let login,'));
   const helpers = [], events = [], clicks = [];
-  const lines = new EventEmitter();
-  lines.close = () => { if (!lines.closed) { lines.closed = true; lines.emit('close'); } };
+  let queue = Promise.resolve();
+  const openBrowserController = async (_descriptor, options) => {
+    let closed = false;
+    return { handle: options.handle, close: async () => {
+      if (closed) return;
+      closed = true;
+      await options.onClose();
+    } };
+  };
   const context = { closed: false, close() { this.closed = true; } };
   const page = { url: () => 'https://service.example.org', context: () => context,
     draft: 'prepared', files: ['attachment.txt'], consent: true,
@@ -233,12 +240,12 @@ async function guideCaller({ failCreation } = {}) {
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const caller = await new AsyncFunction('page', 'context', 'browser', 'client',
     'createEsiaAuthorization', 'observeEsiaAuthorization', 'safeAuthorizationFailure',
-    'emit', 'readline', 'origin', body + '\nreturn { handle, idle: () => queue };')(page, context, browser,
+    'emit', 'openBrowserController', 'origin', body + '\nreturn { handle, controller };')(page, context, browser,
       { options: {}, configHome: '/synthetic' }, create, observeEsiaAuthorization,
-      safeAuthorizationFailure, value => events.push(value), { createInterface: () => lines }, 'https://service.example.org');
+      safeAuthorizationFailure, value => { events.push(value); return value; }, openBrowserController, 'https://service.example.org');
   return { handle: caller.handle, helpers, page, context, browser, events, clicks,
-    dispatch(line) { lines.emit('line', line); return caller.idle(); },
-    end() { lines.close(); return caller.idle(); } };
+    dispatch(line) { queue = queue.then(() => caller.controller.handle(JSON.parse(line))).catch(() => {}); return queue; },
+    end() { return caller.controller.close(); } };
 }
 
 test('published caller continues a distinct authorized procedure without replacing its prepared Page', async () => {
@@ -298,7 +305,7 @@ test('published caller preserves a failed helper creation instead of minting ano
   assert.equal(caller.helpers.length, 2); assert.equal(caller.context.closed, false);
 });
 
-// Drive the actual line queue as well as handle(): a generic exception must
+// Drive the documented host adapter as well as handle(): a generic exception must
 // leave later state/finish commands usable and retain independent ESIA proof.
 test('published caller isolates locator and command failures from the authorization result', async () => {
   const caller = await guideCaller();
@@ -310,9 +317,9 @@ test('published caller isolates locator and command failures from the authorizat
   assert.equal(caller.context.closed, false); assert.equal(caller.browser.closed, false);
   caller.helpers[0].returnedResolve({ page: caller.page, context: caller.context });
   await Promise.resolve();
+  const priorEvents = caller.events.length;
   await caller.dispatch('invalid JSON with synthetic-secret');
-  assert.deepEqual(caller.events.at(-1), { phase: 'caller_action_failed',
-    authorization: { phase: 'esia_callback_verified' }, step: 'application' });
+  assert.equal(caller.events.length, priorEvents, 'malformed input never reaches a browser handler');
   await caller.dispatch(JSON.stringify({ action: 'state' }));
   assert.deepEqual(caller.events.at(-1), { phase: 'esia_callback_verified', step: 'application' });
   assert.doesNotMatch(JSON.stringify(caller.events), /private\.example|synthetic-secret|authorization_result_unknown/);
@@ -321,7 +328,7 @@ test('published caller isolates locator and command failures from the authorizat
   assert.equal(caller.context.closed, true); assert.equal(caller.browser.closed, true);
 });
 
-test('published caller attempts every owned close on failure and cleans up on EOF', async () => {
+test('published caller attempts every owned close on failure through common close/expiry callback', async () => {
   for (const failure of ['helper', 'context', 'browser', 'none']) {
     const caller = await guideCaller(), closed = [];
     await caller.handle({ action: 'authorize', step: 'application', selector: '#login' });
@@ -331,7 +338,8 @@ test('published caller attempts every owned close on failure and cleans up on EO
         if (name === failure) throw new Error('private cleanup error');
       };
     }
-    await caller.end();
+    if (failure === 'none') await caller.end();
+    else await assert.rejects(caller.end(), /caller_cleanup_failed/);
     assert.deepEqual(closed, ['helper', 'context', 'browser']);
     assert.deepEqual(caller.events.at(-1), { phase: failure === 'none' ? 'caller_closed' : 'caller_cleanup_failed' });
     await caller.handle({ action: 'finish' });

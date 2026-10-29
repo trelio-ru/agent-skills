@@ -213,6 +213,42 @@ test('idle authorizer closes on peer loss and notices a human-completed return',
   }
 });
 
+test('published caller keeps the common channel usable while T-ID waits and preserves verified proof', async () => {
+  const guide = (await fs.readFile(new URL('../references/playwright-client.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const code = guide.match(/```js\n([\s\S]*?)\n```/)[1];
+  const body = code.slice(code.indexOf('const origin ='));
+  let options, requestResolve, authenticatedResolve, clicks = 0, created = 0;
+  const events = [], closed = [];
+  const context = { close: async () => { closed.push('context'); } };
+  const browser = { close: async () => { closed.push('browser'); } };
+  const page = { goto: async () => {}, getByRole: () => ({ click: async () => { clicks++; } }) };
+  const create = async source => {
+    assert.equal(source, page); created++;
+    return { request: new Promise(resolve => { requestResolve = resolve; }),
+      authenticated: new Promise(resolve => { authenticatedResolve = resolve; }),
+      close: async () => { closed.push('helper'); } };
+  };
+  const open = async (_descriptor, callbacks) => {
+    options = callbacks;
+    return { publish: value => events.push(value) };
+  };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  await new AsyncFunction('page', 'context', 'browser', 'client', 'createTIdAuthorization', 'openBrowserController', body)(
+    page, context, browser, { options: {}, controller: {}, configHome: '/synthetic' }, create, open);
+  assert.deepEqual(await options.handle({ action: 'authorize' }), { phase: 'tid_request_pending' });
+  assert.equal(clicks, 1); assert.equal(created, 1);
+  assert.deepEqual(await options.handle({ action: 'state' }), { phase: 'tid_request_pending' });
+  requestResolve({ arguments: ['authorize', '--confirm'] }); await Promise.resolve();
+  assert.equal(events.at(-1).phase, 'tid_authorization_required');
+  authenticatedResolve({ page, context }); await Promise.resolve();
+  await assert.rejects(options.handle({ action: 'authorize' }), /attempt_exists/);
+  await assert.rejects(options.handle({ action: 'unknown' }), /unsupported_command/);
+  assert.deepEqual(await options.handle({ action: 'state' }), { phase: 'tid_callback_verified' });
+  assert.equal(created, 1); assert.equal(clicks, 1);
+  await options.onClose(); await options.onClose();
+  assert.deepEqual(closed, ['helper', 'context', 'browser']);
+});
+
 test('client discovery is static and the SDK does not expose a secret or launch a browser', async () => {
   assert.equal(bankArguments(['client']).command, 'client');
   assert.throws(() => bankArguments(['client', '--confirm']), /unsupported_option/);

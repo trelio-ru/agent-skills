@@ -8,7 +8,8 @@
 
 1. Агент получает текущий навык Т‑Банка и выполняет verified команду `client`.
    В ответе находятся `modulePath`, `options` с exact company/member и
-   `configHome`. Секретов, browser endpoint и OAuth URL в ответе нет.
+   `configHome`, а также `controller` общего host >=3.24.0. Секретов,
+   browser endpoint, transport bearer и OAuth URL в ответе нет.
 2. Обычный Playwright-сценарий импортирует клиент по возвращённому пути,
    создаёт свой headed browser/context и открывает публичный сайт. Сценарий
    должен продолжать работать, пока отдельный auth-вызов находится в ожидании.
@@ -48,6 +49,37 @@ bindings и machine paths, не bearer и не данные входа.
 
 ## Пример сценария
 
+Новый пошаговый caller использует общий `browser-controller`, без stdin/TTY
+долгоживущего терминала. Импортируй exact `controller.moduleUrl` и передай
+неизменённый descriptor в `openBrowserController`. Все короткие обращения идут
+через прежний verified `runtimeExecution.localAction`, в `parameters.arguments`:
+
+- `browser-controller status SESSION_ID [--after-sequence N]` – готовность и
+  события; продолжай с nextSequence до sequence. Event overflow требует свежего
+  state/read-back и не разрешает повторить действие
+- `browser-controller submit SESSION_ID REQUEST_UUID --input-file ABSOLUTE_JSON`
+  – одна команда из owner-only файла 0600/exact Windows DACL до 64 КиБ вне Git/
+  Workspace. Не помещай credentials/auth URL в файл
+- `browser-controller poll SESSION_ID REQUEST_UUID` – читать ту же попытку до
+  `completed`; `queued`/`running` не разрешают повтор. При потерянном ответе
+  сначала poll того же UUID. Он не исполняется второй раз; изменённый payload
+  получает `request_conflict`. `unknown_request`, `outcome_unknown` или transport
+  refusal требуют проверки фактического результата без replay подачи
+- `browser-controller close SESSION_ID` – cleanup собственных ресурсов;
+  `closed` подтверждает callback, `cleanup_unconfirmed` оставляет явный пробел
+
+Handle возвращает только выбранные сведения до 8 КиБ, событие – до 4 КиБ.
+Oversized/несериализуемый result сохраняется как outcome_unknown после действия;
+не повторяй его ради уменьшенного ответа.
+
+Сохрани session/operation IDs перед ожиданием. Исходный срок – 30 минут с
+`client`, включая запуск и ожидание; новые ходы/cwd/polls его не продлевают.
+Общий host не исполняет source и не анализирует полномочия сайтовых действий.
+Это cooperative cleanup caller, native credential guardian остаётся отдельным.
+Не подключай канал к старому терминалу после отказа политики и не считай такой
+отказ неуспехом T-ID либо разрешением повторить login/платёж. Отсутствующий
+`controller` требует штатного обновления до нового запуска, без guessed cache path.
+
 Адрес и селекторы ниже иллюстрируют порядок; реальный сценарий получает их
 из публичной страницы нужного сайта. Playwright устанавливается штатными
 средствами среды вызывающего агента, а не новым Agent Skill.
@@ -60,36 +92,50 @@ import { chromium } from 'playwright';
 // client.json — точный nonsecret ответ verified команды client.
 const client = JSON.parse(await fs.readFile(process.argv[2], 'utf8'));
 const { createTIdAuthorization } = await import(pathToFileURL(client.modulePath).href);
+const { openBrowserController } = await import(client.controller.moduleUrl);
 const browser = await chromium.launch({ channel: 'chrome', headless: false });
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
-let login;
-try {
-  await page.goto('https://service.example.org/');
-  login = await createTIdAuthorization(page, {
-    ...client.options,
-    configHome: client.configHome,
-    origin: 'https://service.example.org',
-    confirm: true, // Разрешение пользователя уже проверено агентом.
-    // requestTitle можно добавить как короткую тему fallback.
-  });
-  await page.getByRole('link', { name: 'Войти с T‑ID' }).click();
-  console.log(JSON.stringify({ phase: 'tid_authorization_required', ...await login.request }));
-  // Здесь агент запускает отдельный verified authorize с выданными arguments.
-  const session = await login.authenticated;
-  if (session.page !== page || session.context !== context) throw new Error('context_changed');
-
-  // Обычный произвольный Playwright-код в пределах поручения:
-  // await page.locator(...).fill(...);
-  // await page.locator('input[type=file]').setInputFiles(approvedFiles);
-  // const downloaded = page.waitForEvent('download'); ...
-  // await page.evaluate(...); await page.goto(nextApprovedUrl);
-  console.log(JSON.stringify({ phase: 'scenario_complete' }));
-} finally {
-  await login?.close();
-  await context.close();
-  await browser.close();
-}
+const origin = 'https://service.example.org';
+await page.goto(origin);
+let login, phase = 'caller_ready', stopped = false;
+const controller = await openBrowserController(client.controller, {
+  handle: async command => {
+    if (command.action === 'state') return { phase };
+    if (command.action === 'authorize') {
+      // Consume before create/click: an ambiguous result never permits a
+      // second helper. The handler must not await request/authenticated.
+      if (login || phase !== 'caller_ready') throw new Error('attempt_exists');
+      phase = 'tid_request_pending';
+      login = await createTIdAuthorization(page, {
+        ...client.options, configHome: client.configHome, origin, confirm: true,
+      });
+      login.request.then(request => controller.publish({ phase: 'tid_authorization_required', request }),
+        () => { phase = 'authorization_failed'; controller.publish({ phase }); });
+      login.authenticated.then(session => {
+        phase = session.page === page && session.context === context ? 'tid_callback_verified' : 'authorization_failed';
+        controller.publish({ phase });
+      }, () => { phase = 'authorization_failed'; controller.publish({ phase }); });
+      await page.getByRole('link', { name: 'Войти с T‑ID' }).click();
+      return { phase };
+    }
+    // Add the site's authorized business commands here. A verified T-ID
+    // callback alone does not prove cabinet readiness or a payment result.
+    throw new Error('unsupported_command');
+  },
+  onClose: async () => {
+    if (stopped) return;
+    stopped = true;
+    let failed = false;
+    for (const close of [() => login?.close(), () => context.close(), () => browser.close()]) {
+      try { await close(); } catch { failed = true; }
+    }
+    if (failed) throw new Error('caller_cleanup_failed');
+  },
+});
+controller.publish({ phase });
+// Keep the same caller/context alive through cabinet checks and the complete
+// business procedure. Use the common close only after its final result.
 ```
 
 На Windows выбирается установленный `msedge` либо Chrome; собственный
