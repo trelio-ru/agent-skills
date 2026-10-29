@@ -370,7 +370,11 @@ verified callback. Оба concurrent promise сразу наблюдаются; 
 исполняемый пример из playwright-client.md, включая timeout раньше click и
 общий close/expiry callback. Caller-owned Playwright использует signed opt-in
 общего host controller >=3.24.0 через SAME admitted skill_run; terminal stdin
-не является межходовым протоколом. Unknown response читается по прежнему UUID,
+не является межходовым протоколом. Input JSON передаётся по physical realpath
+собственного regular файла: guard проверяет все ancestors, в том числе macOS
+`/var`/`/tmp` aliases. Полный JSON result ограничивается UTF-8 bytes, не symbols;
+проверки private-file/reparse и unknown-outcome/no-replay не ослабляются.
+Unknown response читается по прежнему UUID,
 без нового submit, изменения auth proof или подключения к denied terminal.
 Завершённый ESIA helper не владеет жизненным циклом browser. Следующая отдельно
 разрешённая процедура может подключить новый helper к той же подготовленной Page

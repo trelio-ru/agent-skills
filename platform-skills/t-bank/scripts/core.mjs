@@ -5,7 +5,7 @@ import os from 'node:os';
 
 export const LEASE_MS = 30 * 60 * 1000;
 export const SKILL = 't-bank';
-export const RUNTIME_VERSION = '1.3.9';
+export const RUNTIME_VERSION = '1.3.10';
 
 export async function prepareCallerController(env = process.env) {
   const url = String(env.TRELIO_BROWSER_SESSION_MODULE_URL || '');

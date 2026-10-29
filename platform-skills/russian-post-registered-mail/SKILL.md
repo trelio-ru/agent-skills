@@ -126,8 +126,15 @@ nonempty `write_stdin` protocol across turns. Start auth separately.
 Use the SAME verified Gosuslugi localAction for `browser-controller status ID`,
 `submit ID REQUEST_UUID --input-file ABSOLUTE_JSON`, `poll ID REQUEST_UUID` and
 `close ID`, as specified in its complete `guidePath`. The file is owner-only,
-bounded and outside Git/Workspace, without auth values. Retain session/request
-IDs before waiting. After a lost response poll the SAME request; never mint a
+bounded and outside Git/Workspace, without auth values. Before `--input-file`,
+resolve your already-created regular owner-only JSON with `fs.realpath` or
+`Path.resolve(strict=True)`: host checks every ancestor. macOS `/var` and `/tmp`
+are aliases; pass the returned `/private/...` path. Keep the same file/payload/
+UUID; never chmod parents or weaken symlink/reparse guards. Bound the full JSON
+result by UTF-8 bytes, not characters, within 8 KiB with envelope headroom.
+Oversized result can be outcome_unknown; observe actual site state without
+repeating the prior action to reduce its output. Retain session/request IDs
+before waiting. After a lost response poll the SAME request; never mint a
 new submit ID to repeat an unknown click/payment/send. Read actual site state.
 Missing/expired controller is a concrete transport limit, not proof of failed
 login or permission to retry. Never attach a new channel to a denied old terminal.

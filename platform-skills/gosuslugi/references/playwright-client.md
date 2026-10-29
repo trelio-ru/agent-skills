@@ -129,6 +129,21 @@ Host хранит только временный owner-only transport record; c
 Большой/несериализуемый результат даёт outcome_unknown после выполненного
 действия, поэтому его нельзя повторять ради меньшего ответа.
 
+Перед `--input-file` получи физический абсолютный путь **собственного уже
+созданного regular JSON**: `await fs.realpath(ownCommandFile)` либо
+`Path(ownCommandFile).resolve(strict=True)`. Host проверяет весь путь, включая
+родительские каталоги: macOS `/var/...` и `/tmp/...` являются системными
+симлинками; передавай возвращённый `/private/...`, а не исходный алиас.
+Это тот же файл и payload, с прежними owner-only правами и request UUID.
+Не меняй права каталогов, не отключай проверки symlink/reparse и не используй
+realpath для подстановки чужого файла. `BROWSER_CONTROLLER_STORAGE_UNSAFE`
+требует проверки пути/прав; неизвестный результат не разрешает новый submit UUID.
+
+Размер результата считай по полному `Buffer.byteLength(JSON.stringify(result),
+'utf8')`, с запасом под envelope. Лимит символов не гарантирует 8 КиБ: кириллица
+занимает несколько bytes. Ограничивай read-only snapshot до возврата из handler;
+после outcome_unknown сначала выясни исход прежней команды, без replay действия.
+
 Сохрани session ID и UUID операций в уже разрешённых рабочих заметках до ожидания.
 Смена хода/cwd и polling не продлевают исходные 30 минут с `client`. Истечение
 канала закрывает свои ресурсы через callback; native credential deadline действует
