@@ -177,7 +177,6 @@ MAX_PROMPT_BODY_BYTES = 4_096
 MAX_PASSWORD_HINT_CHARS = 256
 # A rejected factor may be corrected by the human in the SAME login attempt.
 # Neither a new page nor another prompt renews the original authentication lease.
-MAX_LOGIN_FACTOR_ATTEMPTS = 3
 LOGIN_ERROR_SPECS = {
     "PasswordHashInvalidError": ("TELEGRAM_PASSWORD_INVALID", "password_invalid", "Неверный пароль двухэтапной аутентификации. Введите пароль ещё раз.", "enter_password_again"),
     "PhoneCodeInvalidError": ("TELEGRAM_CODE_INVALID", "code_invalid", "Неверный код входа Telegram. Проверьте код и введите его ещё раз.", "enter_code_again"),
@@ -204,6 +203,12 @@ LOGIN_ERROR_SPECS = {
     "ServerError": ("TELEGRAM_SERVICE_UNAVAILABLE", "service_unavailable", "На стороне Telegram произошла ошибка. Попробуйте войти позже.", "check_service_before_explicit_login"),
     "RpcCallFailError": ("TELEGRAM_SERVICE_UNAVAILABLE", "service_unavailable", "На стороне Telegram произошла ошибка. Попробуйте войти позже.", "check_service_before_explicit_login"),
     "AuthRestartError": ("TELEGRAM_LOGIN_RESTART_REQUIRED", "login_restart_required", "Telegram запросил новый процесс входа. Начните вход заново.", "restart_login_explicitly"),
+    "PhoneCodeHashEmptyError": ("TELEGRAM_LOGIN_RESTART_REQUIRED", "login_restart_required", "Telegram не подтвердил запрос кода. Начните вход заново.", "restart_login_explicitly"),
+    "PhoneNumberAppSignupForbiddenError": ("TELEGRAM_PHONE_UNREGISTERED", "phone_unregistered", "Telegram не разрешает регистрацию номера через этот навык. Укажите существующий аккаунт или создайте его в приложении Telegram.", "review_telegram_account"),
+    "PhonePasswordProtectedError": ("TELEGRAM_LOGIN_METHOD_UNAVAILABLE", "login_method_unavailable", "Для этого номера Telegram требует другой способ входа. Выберите вход по QR-коду.", "choose_qr_login"),
+    "SmsCodeCreateFailedError": ("TELEGRAM_CODE_UNAVAILABLE", "code_unavailable", "Telegram не смог отправить SMS-код. Можно выбрать вход по QR-коду.", "choose_qr_login"),
+    "UpdateAppToLoginError": ("TELEGRAM_APP_UPDATE_REQUIRED", "application_update_required", "Telegram требует обновления приложения навыка. Требуется обновление со стороны разработчика.", "contact_skill_maintainer"),
+    "SignInFailedError": ("TELEGRAM_SERVICE_UNAVAILABLE", "service_unavailable", "На стороне Telegram произошла ошибка входа. Проверьте состояние перед новой попыткой.", "check_service_before_explicit_login"),
 }
 LOGIN_METHOD_CODE = "code"
 LOGIN_METHOD_QR = "qr"
@@ -1848,7 +1853,7 @@ async def authorize_with_password(client: Any, args: argparse.Namespace, GetPass
                                   *, deadline: float, cancel_label: str) -> None:
     hint = await telegram_password_hint(client, GetPasswordRequest)
     error_message = ""
-    for attempt in range(MAX_LOGIN_FACTOR_ATTEMPTS):
+    while True:
         require_login_time(deadline)
         password = prompt_value("Пароль 2FA Telegram", hidden=True,
             terminal_prompts=args.terminal_prompts, cancel_label=cancel_label,
@@ -1859,7 +1864,7 @@ async def authorize_with_password(client: Any, args: argparse.Namespace, GetPass
             return
         except Exception as error:
             failure = telegram_login_error(error, stage="password_check")
-            if failure.code not in {"TELEGRAM_PASSWORD_INVALID", "TELEGRAM_PASSWORD_CHECK_EXPIRED", "TELEGRAM_PASSWORD_CHANGED"} or attempt + 1 == MAX_LOGIN_FACTOR_ATTEMPTS:
+            if failure.code not in {"TELEGRAM_PASSWORD_INVALID", "TELEGRAM_PASSWORD_CHECK_EXPIRED", "TELEGRAM_PASSWORD_CHANGED"}:
                 raise failure from error
             error_message = str(failure)
         finally:
@@ -1876,7 +1881,7 @@ async def authorize_with_code_login(
 ) -> None:
     deadline = getattr(args, "login_deadline", time.monotonic() + DEFAULT_QR_LOGIN_TIMEOUT_SECONDS)
     error_message = ""
-    for attempt in range(MAX_LOGIN_FACTOR_ATTEMPTS):
+    while True:
         require_login_time(deadline)
         phone = prompt_value("Телефон Telegram с кодом страны", terminal_prompts=args.terminal_prompts,
                              cancel_label="Назад", error=error_message, deadline=deadline)
@@ -1886,42 +1891,50 @@ async def authorize_with_code_login(
             break
         except Exception as error:
             failure = telegram_login_error(error, stage="send_code")
-            if failure.code not in {"TELEGRAM_PHONE_INVALID", "TELEGRAM_PHONE_BANNED", "TELEGRAM_PHONE_UNREGISTERED"} or attempt + 1 == MAX_LOGIN_FACTOR_ATTEMPTS:
+            if failure.code in {"TELEGRAM_CODE_UNAVAILABLE", "TELEGRAM_LOGIN_METHOD_UNAVAILABLE"}:
+                prompt_choice(str(failure), (("qr", "Войти по QR-коду"),),
+                    terminal_prompts=args.terminal_prompts, cancel_label="Отмена", deadline=deadline)
+                require_login_time(deadline)
+                await authorize_with_qr_login(client, args, SessionPasswordNeededError, GetPasswordRequest)
+                return
+            if failure.code not in {"TELEGRAM_PHONE_INVALID", "TELEGRAM_PHONE_BANNED", "TELEGRAM_PHONE_UNREGISTERED"}:
                 raise failure from error
             error_message = str(failure)
-    for generation in range(MAX_LOGIN_FACTOR_ATTEMPTS):
-        error_message = ""
-        for attempt in range(MAX_LOGIN_FACTOR_ATTEMPTS):
+    error_message = ""
+    # The human, the original deadline and Telegram's own rate limit bound this
+    # loop. An arbitrary local attempt counter must not disconnect a correctable
+    # login or show "enter again" on a terminal page with no input control.
+    while True:
+        require_login_time(deadline)
+        code = prompt_value("Код входа Telegram", hidden=True, terminal_prompts=args.terminal_prompts,
+                            cancel_label="Назад", error=error_message, deadline=deadline).strip().replace(" ", "")
+        try:
             require_login_time(deadline)
-            code = prompt_value("Код входа Telegram", hidden=True, terminal_prompts=args.terminal_prompts,
-                                cancel_label="Назад", error=error_message, deadline=deadline).strip().replace(" ", "")
-            try:
+            await client.sign_in(phone=phone, code=code, phone_code_hash=sent.phone_code_hash)
+            return
+        except SessionPasswordNeededError:
+            await authorize_with_password(client, args, GetPasswordRequest, deadline=deadline, cancel_label="Назад")
+            return
+        except Exception as error:
+            failure = telegram_login_error(error, stage="code_check")
+            if failure.code == "TELEGRAM_CODE_EXPIRED":
+                # One explicit native button requests ONE new code. Polling,
+                # page reload, a bad code and a network failure never send it.
+                prompt_choice("Срок действия кода Telegram истёк. Получить новый код?",
+                    (("resend", "Получить новый код"),), terminal_prompts=args.terminal_prompts,
+                    cancel_label="Отмена", deadline=deadline)
                 require_login_time(deadline)
-                await client.sign_in(phone=phone, code=code, phone_code_hash=sent.phone_code_hash)
-                return
-            except SessionPasswordNeededError:
-                await authorize_with_password(client, args, GetPasswordRequest, deadline=deadline, cancel_label="Назад")
-                return
-            except Exception as error:
-                failure = telegram_login_error(error, stage="code_check")
-                if failure.code == "TELEGRAM_CODE_EXPIRED" and generation + 1 < MAX_LOGIN_FACTOR_ATTEMPTS:
-                    # Expiry is conclusive, unlike a network timeout. A native
-                    # button press explicitly requests ONE new code; polling,
-                    # page reload and an invalid code never trigger this RPC.
-                    prompt_choice("Срок действия кода Telegram истёк. Получить новый код?",
-                        (("resend", "Получить новый код"),), terminal_prompts=args.terminal_prompts,
-                        cancel_label="Отмена", deadline=deadline)
-                    require_login_time(deadline)
-                    try:
-                        sent = await client.send_code_request(phone)
-                    except Exception as send_error:
-                        raise telegram_login_error(send_error, stage="send_code") from send_error
-                    break
-                if failure.code != "TELEGRAM_CODE_INVALID" or attempt + 1 == MAX_LOGIN_FACTOR_ATTEMPTS:
-                    raise failure from error
-                error_message = str(failure)
-            finally:
-                code = None
+                try:
+                    sent = await client.send_code_request(phone)
+                except Exception as send_error:
+                    raise telegram_login_error(send_error, stage="send_code") from send_error
+                error_message = ""
+                continue
+            if failure.code != "TELEGRAM_CODE_INVALID":
+                raise failure from error
+            error_message = str(failure)
+        finally:
+            code = None
 
 
 def qr_image_data_url(qrcode_module: Any, url: str) -> str:

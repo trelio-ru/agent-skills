@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.15.2`
-объявляет runtime `2.15.2`, требует Telethon `>=1.45,<2` и host >=3.25.0.
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.15.3`
+объявляет runtime `2.15.3`, требует Telethon `>=1.45,<2` и host >=3.25.0.
 Connection definition, package credential и namespace личной сессии сохраняются.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
 входа. Чтение не отправляет Telegram read receipts; исходящие действия
@@ -25,8 +25,11 @@ sandbox и approval mode клиента его не выдают и не зам�
 Старый ID, повторный submit и polling не отправляют фактор ещё раз. Для кода
 сохраняется прежний `phone_code_hash`; новый код запрашивается только кнопкой
 «Получить новый код» после подтверждённого `PhoneCodeExpiredError`. Исправление
-пароля после QR не создаёт новый QR. До трёх исправлений фактора и до трёх
-поколений кода делят исходный `--qr-timeout`; Back/повторный ввод его не продлевают.
+пароля после QR не создаёт новый QR. Исправления и явный перевыпуск кода делят исходный `--qr-timeout`;
+Back/повторный ввод его не продлевают. Искусственного лимита числа исправлений
+нет: остановку определяют исходный срок, отмена либо подтверждённый отказ Telegram.
+Если Telegram не смог отправить SMS или требует другой способ входа, человек
+может кнопкой выбрать QR в той же странице и lease, без автоматического переключения.
 SDK login retries/flood sleep отключены; network/неизвестный outcome не повторяется.
 
 Причина известного отказа показывается на странице, включая terminal failure;
@@ -37,6 +40,7 @@ SDK login retries/flood sleep отключены; network/неизвестный
 `TELEGRAM_PASSWORD_CHANGED`, `TELEGRAM_LOGIN_RESTART_REQUIRED`,
 `TELEGRAM_ACCOUNT_DEACTIVATED`, `TELEGRAM_APP_INVALID`, `TELEGRAM_APP_RESTRICTED`,
 `TELEGRAM_SERVICE_UNAVAILABLE`, `TELEGRAM_SESSION_UNAVAILABLE`,
+`TELEGRAM_CODE_UNAVAILABLE`, `TELEGRAM_LOGIN_METHOD_UNAVAILABLE`, `TELEGRAM_APP_UPDATE_REQUIRED`,
 `TELEGRAM_RATE_LIMITED`, `TELEGRAM_LOGIN_EXPIRED`, `TELEGRAM_LOGIN_CANCELLED`
 определяются только fixed SDK identity либо собственной проверенной веткой.
 Flood wait сохраняет bounded numeric `retryAfterSeconds`; ожидание не разрешает

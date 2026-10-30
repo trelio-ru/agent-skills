@@ -3,6 +3,7 @@
 Ошибки входа Telegram и исправление факторов на локальной странице следуют
 [контракту](docs/telegram-mtproto-message-workflows.md#вход-и-ошибки-локальной-формы):
 только fresh human submit, fixed SDK codes, прежняя lease и никакого auth replay.
+Локальный счётчик попыток не заменяет исходный срок и ограничения Telegram.
 
 Task execution цифрового ассистента требует подписанный provider-owned
 `trelio-assistant-execution.json`; общий host проверяет его до account/provider
