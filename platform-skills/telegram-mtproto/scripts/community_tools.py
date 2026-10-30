@@ -10,9 +10,10 @@ import json
 import re
 from datetime import datetime
 
-VERSION = "2.13.0"
+VERSION = "2.15.0"
 READS = {"topics", "topic-read", "poll", "pins", "message-stats", "public-forwards", "invites", "join-requests"}
-MUTATIONS = {"topic-send", "react", "poll-create", "poll-vote", "poll-close", "pin", "unpin", "invite-create", "join-request"}
+MEMBERSHIP = {"group-create", "member-add"}
+MUTATIONS = {"topic-send", "react", "poll-create", "poll-vote", "poll-close", "pin", "unpin", "invite-create", "join-request"} | MEMBERSHIP
 COMMANDS = READS | MUTATIONS
 MAX_PAGE = 30
 
@@ -38,7 +39,12 @@ def add_parsers(commands, positive_id):
 
     for name in sorted(COMMANDS):
         p = commands.add_parser(name, help="Bounded Telegram " + name + " workflow")
-        p.add_argument("--chat", required=True)
+        if name != "group-create":
+            p.add_argument("--chat", required=True)
+        if name in MEMBERSHIP:
+            p.add_argument("--user", action="append", required=True, help="Exact user ID or @username; no display names")
+        if name == "group-create":
+            p.add_argument("--title", required=True)
         if name in {"topics", "topic-read", "pins", "public-forwards", "invites", "join-requests"}:
             p.add_argument("--limit", type=int, choices=range(1, MAX_PAGE + 1), default=20)
         if name in {"react", "poll", "poll-vote", "poll-close", "pin", "unpin", "message-stats", "public-forwards"}:
@@ -648,14 +654,154 @@ async def mutation(client, entity, args, identity, r, f, t, u, markdown):
                                      code="TELEGRAM_ACTION_OUTCOME_UNKNOWN") from error
 
 
+async def basic_group_state(client, entity, r, f):
+    """An exact full membership list, never a sampled member search."""
+    response = await client(f.messages.GetFullChatRequest(chat_id=entity.id))
+    full = getattr(response, "full_chat", None)
+    participants = getattr(full, "participants", None)
+    if (type(full).__name__ != "ChatFull" or full.id != entity.id
+            or type(participants).__name__ != "ChatParticipants" or participants.chat_id != entity.id):
+        raise r.TelegramRuntimeError("Exact group membership is unavailable.")
+    rows = getattr(participants, "participants", None)
+    if not isinstance(rows, list) or len(rows) > 200:
+        raise r.TelegramRuntimeError("Group membership exceeds its supported bound.")
+    ids = [getattr(row, "user_id", None) for row in rows]
+    if any(type(value) is not int or value <= 0 for value in ids) or len(set(ids)) != len(ids):
+        raise r.TelegramRuntimeError("Group membership is incomplete or malformed.")
+    chats = [chat for chat in getattr(response, "chats", []) if type(chat).__name__ == "Chat" and chat.id == entity.id]
+    if len(chats) != 1:
+        raise r.TelegramRuntimeError("Fresh group metadata does not match.")
+    return chats[0], set(ids)
+
+
+async def membership(client, entity, args, identity, r, f, t, u):
+    """One approved native write, with no retry or name-based target recovery.
+
+    Basic group creation accepts up to ten selected people in ONE RPC. Adding
+    one person uses the native method for the exact Chat/supergroup, avoiding a
+    partially dispatched multi-person loop. Privacy exclusions remain explicit;
+    creating a group never proves that every requested person joined it.
+    """
+    if (args.dry_run and args.approval_hash) or (not args.dry_run and not re.fullmatch(r"[0-9a-f]{64}", args.approval_hash or "")):
+        raise r.TelegramRuntimeError("Prepare --dry-run, then the unchanged --confirm --approval-hash operation.")
+    if not args.dry_run:
+        r.assert_send_allowed(identity, confirmed=True)
+    me = await client.get_me()
+    maximum = 10 if args.command == "group-create" else 1
+    if not 1 <= len(args.user) <= maximum:
+        raise r.TelegramRuntimeError("Select 1..10 people for creation, or exactly one person to add.")
+    users = []
+    for reference in args.user:
+        if not re.fullmatch(r"(?:[1-9][0-9]{0,18}|@[A-Za-z][A-Za-z0-9_]{3,31})", reference):
+            raise r.TelegramRuntimeError("Select an exact user ID or @username, not a display name or phone.")
+        user = await r.resolve_entity(client, reference)
+        if (type(user).__name__ != "User" or type(user.id) is not int or user.id <= 0
+                or user.id == me.id or getattr(user, "deleted", False)
+                or user.id in [item.id for item in users]):
+            raise r.TelegramRuntimeError("Selected user identities must be distinct active people other than self.")
+        if reference.isdigit() and user.id != int(reference):
+            raise r.TelegramRuntimeError("Selected user ID does not match Telegram metadata.")
+        if reference.startswith('@') and (getattr(user, 'username', None) or '').casefold() != reference[1:].casefold():
+            raise r.TelegramRuntimeError("Selected username no longer matches Telegram metadata.")
+        users.append(user)
+    operation = {"version": VERSION, "command": args.command, "users": [user.id for user in users]}
+    preview = {"command": args.command, "actingAccount": r.public_entity(me),
+               "users": [r.public_entity(user) for user in users], "mayNotifyUsers": True, "snapshotAtomic": False}
+    if args.command == "group-create":
+        title = text(args.title, 128, r)
+        operation["title"] = preview["title"] = title
+        preview["groupType"] = "basic_group"
+        request = f.messages.CreateChatRequest(users=[u.get_input_user(user) for user in users], title=title)
+    else:
+        if type(entity).__name__ == "Chat":
+            entity, members = await basic_group_state(client, entity, r, f)
+            present = users[0].id in members
+        elif type(entity).__name__ == "Channel" and getattr(entity, 'megagroup', False) and not getattr(entity, 'broadcast', False):
+            response = await client(f.channels.GetFullChannelRequest(channel=entity))
+            if type(response.full_chat).__name__ != 'ChannelFull' or response.full_chat.id != entity.id:
+                raise r.TelegramRuntimeError("Fresh supergroup metadata does not match.")
+            chats = [chat for chat in response.chats if type(chat).__name__ == 'Channel' and chat.id == entity.id]
+            if len(chats) != 1:
+                raise r.TelegramRuntimeError("Fresh supergroup identity is unavailable.")
+            entity = chats[0]
+            try:
+                participant = (await client(f.channels.GetParticipantRequest(channel=entity, participant=users[0]))).participant
+                if getattr(participant, 'user_id', None) != users[0].id or type(participant).__name__ not in {
+                        'ChannelParticipant', 'ChannelParticipantSelf', 'ChannelParticipantAdmin', 'ChannelParticipantCreator'}:
+                    raise r.TelegramRuntimeError("User membership cannot be safely established.")
+                present = True
+            except Exception as error:
+                if type(error).__name__ != 'UserNotParticipantError':
+                    raise
+                present = False
+        else:
+            raise r.TelegramRuntimeError("Adding people requires an exact ordinary group or supergroup.")
+        await admin(entity, r)
+        operation.update(chatId=u.get_peer_id(entity), title=entity.title, alreadyMember=present)
+        preview.update(chat=r.public_entity(entity), alreadyMember=present, historyForwardLimit=0)
+        request = (f.messages.AddChatUserRequest(chat_id=entity.id, user_id=u.get_input_user(users[0]), fwd_limit=0)
+                   if type(entity).__name__ == 'Chat' else
+                   f.channels.InviteToChannelRequest(channel=entity, users=[u.get_input_user(users[0])]))
+    bounded_result(preview, r, 20000)
+    if args.dry_run:
+        return {"dryRun": True, "approvalHash": r.scheduled_approval(identity, me.id, operation),
+                "expiresInSeconds": r.MESSAGE_APPROVAL_TTL_SECONDS, "preview": preview}
+    r.scheduled_approval(identity, me.id, operation, args.approval_hash)
+    if args.command == 'member-add' and present:
+        return {"applied": False, "alreadyMember": True, "chatId": u.get_peer_id(entity),
+                "chat": r.public_entity(entity), "userId": users[0].id}
+    created_id = None
+    try:
+        response = await client(request)
+        if type(response).__name__ != 'InvitedUsers' or not isinstance(response.missing_invitees, list):
+            raise ValueError
+        missing = [getattr(row, 'user_id', None) for row in response.missing_invitees]
+        if len(set(missing)) != len(missing) or any(value not in operation['users'] for value in missing):
+            raise ValueError
+        if args.command == 'group-create':
+            # Only native creation evidence supplies the new peer. Never search
+            # by title after a lost response: that could adopt another group.
+            events = [update.message for update in response.updates.updates
+                      if type(update).__name__ == 'UpdateNewMessage'
+                      and type(getattr(update.message, 'action', None)).__name__ == 'MessageActionChatCreate']
+            if len(events) != 1 or events[0].action.title != title:
+                raise ValueError
+            peer_id = getattr(events[0].peer_id, 'chat_id', None)
+            chats = [chat for chat in response.updates.chats if type(chat).__name__ == 'Chat' and chat.id == peer_id]
+            if len(chats) != 1 or chats[0].title != title or getattr(chats[0], 'creator', False) is not True:
+                raise ValueError
+            entity, created_id = chats[0], u.get_peer_id(chats[0])
+        if type(entity).__name__ == 'Chat':
+            fresh, members = await basic_group_state(client, entity, r, f)
+            if fresh.title != entity.title or any((user.id in members) != (user.id not in missing) for user in users):
+                raise ValueError
+            if args.command == 'group-create' and members != {me.id, *(user.id for user in users if user.id not in missing)}:
+                raise ValueError
+        elif not missing:
+            participant = (await client(f.channels.GetParticipantRequest(channel=entity, participant=users[0]))).participant
+            if type(participant).__name__ not in {'ChannelParticipant', 'ChannelParticipantAdmin', 'ChannelParticipantCreator'} or participant.user_id != users[0].id:
+                raise ValueError
+        return bounded_result({"created": args.command == 'group-create', "applied": not missing,
+            "chatId": u.get_peer_id(entity), "chat": r.public_entity(entity), "addedUserIds": [user.id for user in users if user.id not in missing],
+            "notAddedUserIds": missing, "automaticRetryAllowed": False, "snapshotAtomic": False}, r)
+    except Exception as error:
+        raise r.TelegramRuntimeError("The group action was dispatched. Verify exact state before another action; do not create or invite again automatically.",
+            code='TELEGRAM_ACTION_OUTCOME_UNKNOWN', details={"automaticRetryAllowed": False,
+                **({"createdChatId": created_id} if created_id is not None else {})}) from error
+
+
 async def run(args, identity, r):
     r.import_telethon_workflows()  # Fail before IO when an old SDK lacks the current TL layer.
     client = r.build_client(args, identity)
     failure, dispatched = None, False
     try:
         await r.ensure_authorized(client)
-        entity = await r.resolve_entity(client, args.chat)
+        entity = None if args.command == 'group-create' else await r.resolve_entity(client, args.chat)
         f, t, u, markdown = api()
+        if args.command in MEMBERSHIP:
+            result = await membership(client, entity, args, identity, r, f, t, u)
+            dispatched = not args.dry_run
+            return {"securityBoundary": "chat-only", **result}
         if args.command in READS:
             result = await read_command(client, entity, args, r, f, t, u)
             return bounded_result({"securityBoundary": "chat-only", "chat": r.public_entity(entity),
@@ -675,4 +821,6 @@ async def run(args, identity, r):
         except Exception as error:
             if failure is None:
                 raise r.TelegramRuntimeError("Telegram cleanup failed; verify the exact action before retrying.",
-                         code="TELEGRAM_ACTION_OUTCOME_UNKNOWN" if dispatched else None) from error
+                         code="TELEGRAM_ACTION_OUTCOME_UNKNOWN" if dispatched else None,
+                         details={"automaticRetryAllowed": False, "createdChatId": result["chatId"]}
+                         if dispatched and args.command == 'group-create' else None) from error

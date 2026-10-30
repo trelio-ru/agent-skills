@@ -637,7 +637,7 @@ def assert_send_allowed(
 
 
 @contextlib.contextmanager
-def session_lock(identity: Identity) -> Iterator[None]:
+def session_lock(identity: Identity, *, allow_removed: bool = False) -> Iterator[None]:
     """Serialize one local MTProto session without storing lock data in a Run."""
 
     lock_dir = connection_root(identity) / "locks"
@@ -659,6 +659,11 @@ def session_lock(identity: Identity) -> Iterator[None]:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as error:
                 raise TelegramRuntimeError("This Telegram session is already used by another process.") from error
+        # Fence under the SAME native lock as session use: a process selected
+        # before catalogue removal must not recreate an erased SQLite login.
+        if not allow_removed and (connection_root(identity) / "removed.json").exists():
+            raise TelegramRuntimeError("This saved Telegram connection was removed. Create a new local account.",
+                                       code="TELEGRAM_ACCOUNT_REMOVED")
         yield
     finally:
         if os.name == "nt":
@@ -6975,6 +6980,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_inbox_tools().add_parsers(commands, positive_message_id)
     commands.add_parser("bootstrap", help="Install the pinned local Telethon runtime")
     commands.add_parser("doctor", help="Check local runtime, policy and session without revealing secrets")
+    commands.add_parser("__trelio_account_remove", help=argparse.SUPPRESS)
     policy = commands.add_parser("policy", help="Read or update local sending policy")
     policy_commands = policy.add_subparsers(dest="policy_command", required=True)
     policy_commands.add_parser("show")
@@ -7213,9 +7219,61 @@ def import_existing_account() -> dict[str, Any]:
         return {"schemaVersion": 1, "accounts": []}
     if root.is_symlink() or not root.is_dir():
         raise TelegramRuntimeError("Unsafe existing account directory.")
+    if (root / "removed.json").exists():
+        return {"schemaVersion": 1, "accounts": []}
     reference = {"company_id": identity.company_id, "member_id": identity.member_id, "connection_id": identity.connection_id}
     return {"schemaVersion": 1, "accounts": [{"sourceKey": identity.connection_id, "scope": "company",
         "name": "Основной аккаунт", "comment": "", "providerRef": json.dumps(reference)}]}
+
+
+def remove_local_account(identity: Identity) -> dict[str, Any]:
+    """Erase this provider's local login without SDK, bootstrap or network.
+
+    Preflight the bounded tree before unlinking anything. Keep the native lock
+    and a value-free tombstone: stale selected processes and legacy discovery
+    must not resurrect this storage slot. Partial I/O failure retains that
+    fence and the host catalogue so the exact local cleanup can be recovered.
+    """
+    if not identity.account:
+        raise TelegramRuntimeError("Removal requires the host-selected local account.")
+    root = connection_root(identity)
+    with session_lock(identity, allow_removed=True):
+        entries = []
+
+        def inspect(directory):
+            ensure_private_directory(directory)
+            for child in directory.iterdir():
+                if directory == root and child.name in {"locks", "removed.json"}:
+                    continue
+                metadata = child.lstat()
+                if child.is_symlink() or not (stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)):
+                    raise TelegramRuntimeError("Unsafe entry prevents local account removal.")
+                if len(entries) >= 256:
+                    raise TelegramRuntimeError("Local account removal exceeds its file bound.")
+                entries.append(child)
+                if child.is_dir():
+                    inspect(child)
+                else:
+                    ensure_private_file(child)
+
+        inspect(root)
+        write_private_json(root / "removed.json", {"schemaVersion": 1, "removed": True})
+        for child in reversed(entries):
+            # Recheck before deleting; recursive rm and symlink traversal could
+            # erase another account if an entry changed after preflight.
+            parent = child.parent
+            while True:
+                ensure_private_directory(parent)
+                if parent == root:
+                    break
+                parent = parent.parent
+            if child.is_dir() and not child.is_symlink():
+                ensure_private_directory(child)
+                child.rmdir()
+            else:
+                ensure_private_file(child)
+                child.unlink()
+        return {"schemaVersion": 1, "removed": True, "accountId": identity.account["id"]}
 
 
 def main() -> int:
@@ -7246,6 +7304,15 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
+        if args.command == "__trelio_account_remove":
+            result = remove_local_account(identity_from_args(args))
+            print(json.dumps(result))
+            return 0
+        if args.command != "bootstrap" and os.environ.get("TRELIO_SKILL_ACCOUNT_JSON"):
+            identity = identity_from_args(args)
+            if (connection_root(identity) / "removed.json").exists():
+                raise TelegramRuntimeError("This saved Telegram connection was removed. Create a new local account.",
+                                           code="TELEGRAM_ACCOUNT_REMOVED")
         if args.command == "monitor":
             validate_monitor_input(args)
         if args.command == "read-reference":

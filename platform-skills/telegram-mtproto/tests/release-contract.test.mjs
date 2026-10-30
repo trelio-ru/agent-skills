@@ -33,7 +33,7 @@ const releaseManifest = JSON.parse(releaseSource);
 test("Telegram MTProto release preserves privacy, search, scheduled-message, edit and Markdown contracts", () => {
   assert.match(skillInstructions, /members --chat ID_OR_USERNAME/u);
   for (const source of [skillInstructions, connectionDocs]) {
-    for (const command of ["channel-stats", "send-album", "forward", "commentsCount", "groupedId", "TELEGRAM_BULK_DELIVERY_UNKNOWN", "topic-send", "poll-create", "poll-vote", "join-request", "message-stats", "TELEGRAM_ACTION_OUTCOME_UNKNOWN", "draft-save", "draft-clear", "invite-edit", "invite-revoke", "topic-create", "topic-rename", "topic-close", "topic-reopen", "edit-media", "--silent", "--no-link-preview", "chat-info", "send-as", "delete --chat", "--scope", "from_id"]) {
+    for (const command of ["channel-stats", "send-album", "forward", "commentsCount", "groupedId", "TELEGRAM_BULK_DELIVERY_UNKNOWN", "topic-send", "poll-create", "poll-vote", "join-request", "message-stats", "TELEGRAM_ACTION_OUTCOME_UNKNOWN", "draft-save", "draft-clear", "invite-edit", "invite-revoke", "topic-create", "topic-rename", "topic-close", "topic-reopen", "edit-media", "group-create", "member-add", "--silent", "--no-link-preview", "chat-info", "send-as", "delete --chat", "--scope", "from_id"]) {
       assert.ok(source.includes(command), `Missing delivered channel contract: ${command}`);
     }
   }
@@ -105,9 +105,9 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /`views`/u);
     assert.match(source, /views=null|`null`/u);
   }
-  assert.equal(releaseManifest.release.version, "2.14.1");
+  assert.equal(releaseManifest.release.version, "2.15.0");
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.14.1");
+  assert.equal(releaseManifest.runtime.version, "2.15.0");
   assert.ok(releaseManifest.runtime.files.some(file => file.path === "conversation_tools.py"));
   for (const source of [skillInstructions, connectionDocs]) {
     for (const feature of ["--quote-text", "--quote-offset", "send-series", "chat-settings", "archive --chat", "unmute", "muteInherited", "TELEGRAM_SERIES_DELIVERY_UNKNOWN", "confirmedParts", "uncertainPart", "notAttemptedParts"]) {
@@ -115,7 +115,7 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     }
   }
   assert.ok(releaseManifest.runtime.files.some(file => file.path === "inbox_tools.py"));
-  assert.equal(releaseManifest.runtime.minimumHostVersion, "3.18.0");
+  assert.equal(releaseManifest.runtime.minimumHostVersion, "3.25.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),
     [],
