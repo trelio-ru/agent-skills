@@ -1237,7 +1237,7 @@ class TrelioTelegramTests(unittest.TestCase):
                 asyncio.run(MODULE.command_login_async(args, self.identity()))
 
         self.assertNotIn("sensitive raw RPC detail", str(raised.exception))
-        self.assertIn("login", str(raised.exception))
+        self.assertEqual(raised.exception.code, "TELEGRAM_REQUEST_FAILED")
         client.disconnect.assert_awaited_once()
 
     def test_chat_resolution_error_tells_the_agent_how_to_recover(self):

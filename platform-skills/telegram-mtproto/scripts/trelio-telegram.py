@@ -175,6 +175,36 @@ DEFAULT_QR_LOGIN_TIMEOUT_SECONDS = 300
 DEFAULT_QR_REFRESH_SECONDS = 25
 MAX_PROMPT_BODY_BYTES = 4_096
 MAX_PASSWORD_HINT_CHARS = 256
+# A rejected factor may be corrected by the human in the SAME login attempt.
+# Neither a new page nor another prompt renews the original authentication lease.
+MAX_LOGIN_FACTOR_ATTEMPTS = 3
+LOGIN_ERROR_SPECS = {
+    "PasswordHashInvalidError": ("TELEGRAM_PASSWORD_INVALID", "password_invalid", "Неверный пароль двухэтапной аутентификации. Введите пароль ещё раз.", "enter_password_again"),
+    "PhoneCodeInvalidError": ("TELEGRAM_CODE_INVALID", "code_invalid", "Неверный код входа Telegram. Проверьте код и введите его ещё раз.", "enter_code_again"),
+    "PhoneCodeEmptyError": ("TELEGRAM_CODE_INVALID", "code_invalid", "Код входа Telegram не заполнен. Введите код ещё раз.", "enter_code_again"),
+    "PhoneCodeExpiredError": ("TELEGRAM_CODE_EXPIRED", "code_expired", "Срок действия кода Telegram истёк. Начните вход заново, чтобы получить новый код.", "restart_login_explicitly"),
+    "PhoneNumberInvalidError": ("TELEGRAM_PHONE_INVALID", "phone_invalid", "Некорректный номер телефона. Укажите номер с кодом страны.", "correct_phone_number"),
+    "PhoneNumberBannedError": ("TELEGRAM_PHONE_BANNED", "phone_banned", "Telegram заблокировал этот номер телефона. Проверьте доступ в приложении Telegram.", "review_telegram_account"),
+    "PhoneNumberUnoccupiedError": ("TELEGRAM_PHONE_UNREGISTERED", "phone_unregistered", "Для этого номера нет аккаунта Telegram. Создайте аккаунт в приложении Telegram.", "review_telegram_account"),
+    "PhoneNumberFloodError": ("TELEGRAM_RATE_LIMITED", "rate_limit", "Telegram ограничил попытки входа. Подождите и начните вход позже.", "wait_before_explicit_login"),
+    "PhonePasswordFloodError": ("TELEGRAM_RATE_LIMITED", "rate_limit", "Telegram ограничил попытки ввода пароля. Подождите и начните вход позже.", "wait_before_explicit_login"),
+    "FloodWaitError": ("TELEGRAM_RATE_LIMITED", "rate_limit", "Telegram ограничил попытки входа. Подождите и начните вход позже.", "wait_before_explicit_login"),
+    "AuthTokenExpiredError": ("TELEGRAM_QR_EXPIRED", "qr_expired", "Срок действия QR-кода Telegram истёк. Начните вход заново.", "restart_login_explicitly"),
+    "AuthTokenInvalidError": ("TELEGRAM_QR_INVALID", "qr_invalid", "Telegram отклонил QR-код входа. Начните вход заново.", "restart_login_explicitly"),
+    "AuthTokenAlreadyAcceptedError": ("TELEGRAM_QR_ALREADY_USED", "qr_already_used", "Этот QR-код Telegram уже использован. Проверьте состояние входа перед новой попыткой.", "verify_login_before_retry"),
+    "ApiIdInvalidError": ("TELEGRAM_APP_INVALID", "application_invalid", "Telegram отклонил приложение навыка. Требуется исправление настройки навыка.", "contact_skill_maintainer"),
+    "ApiIdPublishedFloodError": ("TELEGRAM_APP_RESTRICTED", "application_restricted", "Telegram ограничил приложение навыка. Требуется проверка со стороны разработчика.", "contact_skill_maintainer"),
+    "SrpIdInvalidError": ("TELEGRAM_PASSWORD_CHECK_EXPIRED", "password_check_expired", "Проверка пароля Telegram устарела. Введите пароль ещё раз.", "enter_password_again"),
+    "SrpPasswordChangedError": ("TELEGRAM_PASSWORD_CHANGED", "password_changed", "Пароль Telegram изменился во время входа. Введите актуальный пароль.", "enter_password_again"),
+    "SessionRevokedError": ("TELEGRAM_SESSION_UNAVAILABLE", "session_revoked", "Сессия Telegram отозвана. Выполните вход заново.", "review_personal_connection"),
+    "SessionExpiredError": ("TELEGRAM_SESSION_UNAVAILABLE", "session_expired", "Срок действия сессии Telegram истёк. Выполните вход заново.", "review_personal_connection"),
+    "AuthKeyUnregisteredError": ("TELEGRAM_SESSION_UNAVAILABLE", "authorization_required", "Telegram не подтвердил авторизацию сессии. Выполните вход заново.", "review_personal_connection"),
+    "UserDeactivatedError": ("TELEGRAM_ACCOUNT_DEACTIVATED", "account_deactivated", "Аккаунт Telegram деактивирован. Проверьте доступ в приложении Telegram.", "review_telegram_account"),
+    "UserDeactivatedBanError": ("TELEGRAM_ACCOUNT_DEACTIVATED", "account_deactivated", "Telegram заблокировал аккаунт. Проверьте доступ в приложении Telegram.", "review_telegram_account"),
+    "ServerError": ("TELEGRAM_SERVICE_UNAVAILABLE", "service_unavailable", "На стороне Telegram произошла ошибка. Попробуйте войти позже.", "check_service_before_explicit_login"),
+    "RpcCallFailError": ("TELEGRAM_SERVICE_UNAVAILABLE", "service_unavailable", "На стороне Telegram произошла ошибка. Попробуйте войти позже.", "check_service_before_explicit_login"),
+    "AuthRestartError": ("TELEGRAM_LOGIN_RESTART_REQUIRED", "login_restart_required", "Telegram запросил новый процесс входа. Начните вход заново.", "restart_login_explicitly"),
+}
 LOGIN_METHOD_CODE = "code"
 LOGIN_METHOD_QR = "qr"
 BROWSER_PROMPT_SESSION: "BrowserPromptSession | None" = None
@@ -797,7 +827,7 @@ function renderQr(data) {
 
 function renderPrompt(data) {
   currentPromptId = data.id;
-  const error = data.error ? `<p class="error">${escapeHtml(data.error)}</p>` : "";
+  const error = data.error ? `<p id="prompt-error" class="error" role="alert">${escapeHtml(data.error)}</p>` : "";
   const hint = data.hint
     ? `<p class="prompt-hint"><strong>Подсказка Telegram:</strong> ${escapeHtml(data.hint)}</p>`
     : "";
@@ -816,7 +846,7 @@ function renderPrompt(data) {
     const passwordManagerWarning = data.hidden
       ? `<p class="password-manager-warning">Сохранять данные в браузере не нужно – подключение будет сохранено отдельно на этом устройстве. Если браузер предложит сохранить данные, выберите «Нет, спасибо».</p>`
       : "";
-    controls = `<input autofocus name="value" type="${inputType}" autocomplete="off" ${required}>
+    controls = `<input autofocus name="value" type="${inputType}" autocomplete="off" aria-label="${escapeHtml(data.prompt)}" ${data.error ? 'aria-invalid="true" aria-describedby="prompt-error"' : ''} ${required}>
       ${passwordManagerWarning}
       <div class="actions">
         <button type="button" data-cancel="1">${cancelLabel}</button>
@@ -847,6 +877,17 @@ function renderPrompt(data) {
 }
 
 async function submitPrompt(data, formData) {
+  // Freeze this one human submission and drop the secret from the DOM while
+  // Telegram verifies it. The next prompt gets a fresh ID and an empty input.
+  const form = document.getElementById("prompt-form");
+  if (form?.dataset.submitting) return;
+  if (form) {
+    form.dataset.submitting = "true";
+    for (const control of form.elements) {
+      if (control.name === "value") control.value = "";
+      control.disabled = true;
+    }
+  }
   const response = await fetch("submit", {
     method: "POST",
     headers: {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
@@ -935,6 +976,7 @@ class BrowserPromptSession:
         self.token = secrets.token_urlsafe(32)
         self.condition = threading.Condition()
         self.page_loaded = threading.Event()
+        self.finished_seen = threading.Event()
         self.current_prompt: dict[str, Any] | None = None
         self.current_qr: dict[str, Any] | None = None
         self.response: dict[str, Any] | None = None
@@ -1038,6 +1080,7 @@ class BrowserPromptSession:
                         prompt = dict(session.current_prompt) if session.current_prompt else None
                     if finished:
                         self.send_json({"status": "finished", **finished})
+                        session.finished_seen.set()
                     elif qr:
                         self.send_json({"status": "qr", **qr})
                     elif prompt:
@@ -1101,7 +1144,11 @@ class BrowserPromptSession:
                                 )
                                 return
                         else:
-                            value = (fields.get("value") or [""])[0].strip()
+                            value = (fields.get("value") or [""])[0]
+                            # Whitespace may be part of the 2FA password. Only
+                            # ordinary phone/text inputs are normalized here.
+                            if not prompt.get("hidden"):
+                                value = value.strip()
                             if not value and not prompt.get("allow_empty"):
                                 self.send_json(
                                     {"ok": False, "error": "Нужно заполнить поле."},
@@ -1137,6 +1184,8 @@ class BrowserPromptSession:
         choices: Sequence[tuple[str, str]] | None = None,
         cancel_label: str = "Отмена",
         hint: str = "",
+        error: str = "",
+        deadline: float | None = None,
     ) -> str:
         with self.condition:
             self.next_prompt_id += 1
@@ -1151,7 +1200,7 @@ class BrowserPromptSession:
                 "choices": list(choices or []),
                 "cancel_label": cancel_label,
                 "hint": hint,
-                "error": "",
+                "error": error,
             }
             self.condition.notify_all()
         try:
@@ -1163,7 +1212,11 @@ class BrowserPromptSession:
 
         with self.condition:
             while self.response is None:
-                self.condition.wait()
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    self.current_prompt = None
+                    raise TelegramRuntimeError("Время входа в Telegram истекло. Начните вход заново.", code="TELEGRAM_LOGIN_EXPIRED")
+                self.condition.wait(timeout=remaining)
             response = self.response
             self.response = None
         if response.get("cancelled"):
@@ -1189,6 +1242,7 @@ class BrowserPromptSession:
 
     def finish(self, *, title: str, message: str) -> None:
         with self.condition:
+            self.finished_seen.clear()
             self.current_prompt = None
             self.current_qr = None
             self.response = None
@@ -1229,7 +1283,8 @@ def prompt_value_terminal(
         )
     label = f"{prompt} (или {cancel_label}): "
     value = getpass.getpass(label) if hidden else input(label)
-    value = value.strip()
+    if not hidden:
+        value = value.strip()
     if value.casefold() == cancel_label.casefold():
         raise PromptCancelled(f"Ввод отменён: {prompt}")
     if not value and not allow_empty:
@@ -1271,18 +1326,24 @@ def prompt_value(
     terminal_prompts: bool = False,
     cancel_label: str = "Отмена",
     browser_hint: str = "",
+    error: str = "",
+    deadline: float | None = None,
 ) -> str:
     if not terminal_prompts:
         try:
+            extra = {"error": error, "deadline": deadline} if error or deadline is not None else {}
             return ensure_browser_prompt_session().ask(
                 prompt,
                 hidden=hidden,
                 allow_empty=allow_empty,
                 cancel_label=cancel_label,
                 hint=browser_hint,
+                **extra,
             )
         except BrowserPromptUnavailable:
             pass
+    if error:
+        print(error, file=sys.stderr)
     return prompt_value_terminal(
         prompt,
         hidden=hidden,
@@ -1297,6 +1358,7 @@ def prompt_choice(
     *,
     terminal_prompts: bool = False,
     cancel_label: str = "Отмена",
+    deadline: float | None = None,
 ) -> str:
     if not terminal_prompts:
         try:
@@ -1305,6 +1367,7 @@ def prompt_choice(
                 hidden=False,
                 choices=choices,
                 cancel_label=cancel_label,
+                **({"deadline": deadline} if deadline is not None else {}),
             )
         except BrowserPromptUnavailable:
             pass
@@ -1655,6 +1718,11 @@ def build_client(args: argparse.Namespace, identity: Identity):
     # outcome to the caller instead of silently submitting it a second time.
     # Ordinary reads retain the library's safe retry behavior.
     request_policy = {}
+    if getattr(args, "command", None) == "login":
+        # Failed authentication is presented to the human once. The SDK must
+        # not sleep/re-submit factors or code requests behind the local form.
+        request_policy = {"request_retries": 0, "flood_sleep_threshold": 0,
+                          "raise_last_call_error": True}
     if getattr(args, "command", None) in (import_community_tools().COMMANDS | import_authoring_tools().COMMANDS | import_interaction_tools().COMMANDS | import_conversation_tools().COMMANDS | import_inbox_tools().COMMANDS):
         request_policy = {"receive_updates": False}
     if getattr(args, "command", None) in {"monitor", "read-reference", "ack-reference", "audience-count", "channel-stats", "album"}:
@@ -1732,7 +1800,72 @@ def login_method_for_args(args: argparse.Namespace) -> str:
             (LOGIN_METHOD_QR, "QR-код"),
         ),
         terminal_prompts=args.terminal_prompts,
+        **({"deadline": args.login_deadline} if hasattr(args, "login_deadline") else {}),
     )
+
+
+def telegram_login_error(error: Exception, *, stage: str = "login") -> TelegramRuntimeError:
+    """Project reviewed SDK identities, never RPC text, request fields or args.
+
+    The same fixed category drives the local page and the host's closed error
+    projection. Unknown failures keep their uncertainty: an arbitrary message
+    containing PASSWORD_HASH_INVALID must never invite another password submit.
+    """
+    if isinstance(error, TelegramRuntimeError):
+        return error
+    current, seen = error, set()
+    for _ in range(8):
+        if current is None or id(current) in seen:
+            break
+        seen.add(id(current))
+        kind = type(current)
+        spec = LOGIN_ERROR_SPECS.get(kind.__name__) if kind.__module__ in {
+            "telethon.errors.rpcerrorlist", "telethon.errors.rpcbaseerrors",
+        } else None
+        if spec:
+            code, category, message, next_step = spec
+            diagnostic = {"category": category, "stage": stage,
+                          "nextStep": next_step, "automaticRetry": False}
+            seconds = getattr(current, "seconds", None)
+            if code == "TELEGRAM_RATE_LIMITED" and type(seconds) is int and 0 <= seconds <= 86400 * 365:
+                diagnostic["retryAfterSeconds"] = seconds
+                message += f" Время ожидания: {seconds} с."
+            return TelegramRuntimeError(message, code=code, details={"diagnostic": diagnostic})
+        current = current.__cause__ or current.__context__
+    projected = import_inbox_tools().safe_error(error, sys.modules[__name__], stage=stage)
+    message = ("Не удалось связаться с Telegram. Проверьте соединение перед новой попыткой входа."
+               if projected.code == "TELEGRAM_NETWORK_UNAVAILABLE" else
+               "Telegram не завершил вход. Причина не установлена; проверьте состояние перед новой попыткой.")
+    return TelegramRuntimeError(message, code=projected.code or "TELEGRAM_REQUEST_FAILED", details=projected.details)
+
+
+def require_login_time(deadline: float) -> None:
+    if time.monotonic() >= deadline:
+        raise TelegramRuntimeError("Время входа в Telegram истекло. Начните вход заново.", code="TELEGRAM_LOGIN_EXPIRED")
+
+
+async def authorize_with_password(client: Any, args: argparse.Namespace, GetPasswordRequest: Any,
+                                  *, deadline: float, cancel_label: str) -> None:
+    hint = await telegram_password_hint(client, GetPasswordRequest)
+    error_message = ""
+    for attempt in range(MAX_LOGIN_FACTOR_ATTEMPTS):
+        require_login_time(deadline)
+        password = prompt_value("Пароль 2FA Telegram", hidden=True,
+            terminal_prompts=args.terminal_prompts, cancel_label=cancel_label,
+            browser_hint=hint, error=error_message, deadline=deadline)
+        try:
+            require_login_time(deadline)
+            await client.sign_in(password=password)
+            return
+        except Exception as error:
+            failure = telegram_login_error(error, stage="password_check")
+            if failure.code not in {"TELEGRAM_PASSWORD_INVALID", "TELEGRAM_PASSWORD_CHECK_EXPIRED", "TELEGRAM_PASSWORD_CHANGED"} or attempt + 1 == MAX_LOGIN_FACTOR_ATTEMPTS:
+                raise failure from error
+            error_message = str(failure)
+        finally:
+            # A rejected factor never prefills the next page or enters a retry
+            # queue. Only a fresh human submission authorizes the next SDK call.
+            password = None
 
 
 async def authorize_with_code_login(
@@ -1741,34 +1874,54 @@ async def authorize_with_code_login(
     SessionPasswordNeededError: Any,
     GetPasswordRequest: Any,
 ) -> None:
-    phone = prompt_value(
-        "Телефон Telegram с кодом страны",
-        terminal_prompts=args.terminal_prompts,
-        cancel_label="Назад",
-    )
-    sent = await client.send_code_request(phone)
-    code = prompt_value(
-        "Код входа Telegram",
-        hidden=True,
-        terminal_prompts=args.terminal_prompts,
-        cancel_label="Назад",
-    ).replace(" ", "")
-    try:
-        await client.sign_in(
-            phone=phone,
-            code=code,
-            phone_code_hash=sent.phone_code_hash,
-        )
-    except SessionPasswordNeededError:
-        password_hint = await telegram_password_hint(client, GetPasswordRequest)
-        password = prompt_value(
-            "Пароль 2FA Telegram",
-            hidden=True,
-            terminal_prompts=args.terminal_prompts,
-            cancel_label="Назад",
-            browser_hint=password_hint,
-        )
-        await client.sign_in(password=password)
+    deadline = getattr(args, "login_deadline", time.monotonic() + DEFAULT_QR_LOGIN_TIMEOUT_SECONDS)
+    error_message = ""
+    for attempt in range(MAX_LOGIN_FACTOR_ATTEMPTS):
+        require_login_time(deadline)
+        phone = prompt_value("Телефон Telegram с кодом страны", terminal_prompts=args.terminal_prompts,
+                             cancel_label="Назад", error=error_message, deadline=deadline)
+        try:
+            require_login_time(deadline)
+            sent = await client.send_code_request(phone)
+            break
+        except Exception as error:
+            failure = telegram_login_error(error, stage="send_code")
+            if failure.code not in {"TELEGRAM_PHONE_INVALID", "TELEGRAM_PHONE_BANNED", "TELEGRAM_PHONE_UNREGISTERED"} or attempt + 1 == MAX_LOGIN_FACTOR_ATTEMPTS:
+                raise failure from error
+            error_message = str(failure)
+    for generation in range(MAX_LOGIN_FACTOR_ATTEMPTS):
+        error_message = ""
+        for attempt in range(MAX_LOGIN_FACTOR_ATTEMPTS):
+            require_login_time(deadline)
+            code = prompt_value("Код входа Telegram", hidden=True, terminal_prompts=args.terminal_prompts,
+                                cancel_label="Назад", error=error_message, deadline=deadline).strip().replace(" ", "")
+            try:
+                require_login_time(deadline)
+                await client.sign_in(phone=phone, code=code, phone_code_hash=sent.phone_code_hash)
+                return
+            except SessionPasswordNeededError:
+                await authorize_with_password(client, args, GetPasswordRequest, deadline=deadline, cancel_label="Назад")
+                return
+            except Exception as error:
+                failure = telegram_login_error(error, stage="code_check")
+                if failure.code == "TELEGRAM_CODE_EXPIRED" and generation + 1 < MAX_LOGIN_FACTOR_ATTEMPTS:
+                    # Expiry is conclusive, unlike a network timeout. A native
+                    # button press explicitly requests ONE new code; polling,
+                    # page reload and an invalid code never trigger this RPC.
+                    prompt_choice("Срок действия кода Telegram истёк. Получить новый код?",
+                        (("resend", "Получить новый код"),), terminal_prompts=args.terminal_prompts,
+                        cancel_label="Отмена", deadline=deadline)
+                    require_login_time(deadline)
+                    try:
+                        sent = await client.send_code_request(phone)
+                    except Exception as send_error:
+                        raise telegram_login_error(send_error, stage="send_code") from send_error
+                    break
+                if failure.code != "TELEGRAM_CODE_INVALID" or attempt + 1 == MAX_LOGIN_FACTOR_ATTEMPTS:
+                    raise failure from error
+                error_message = str(failure)
+            finally:
+                code = None
 
 
 def qr_image_data_url(qrcode_module: Any, url: str) -> str:
@@ -1801,11 +1954,10 @@ async def authorize_with_qr_login(
 ) -> None:
     qrcode_module = import_qrcode()
     use_browser = not args.terminal_prompts
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + args.qr_timeout
+    deadline = getattr(args, "login_deadline", time.monotonic() + args.qr_timeout)
     qr_login = await client.qr_login()
 
-    while loop.time() < deadline:
+    while time.monotonic() < deadline:
         expires_in = max(
             1,
             int(qr_login.expires.timestamp() - time.time()),
@@ -1829,7 +1981,7 @@ async def authorize_with_qr_login(
         wait_for = min(
             max(1, expires_in - 2),
             max(1, args.qr_refresh_seconds),
-            max(1, int(deadline - loop.time())),
+            max(1, int(deadline - time.monotonic())),
         )
         try:
             await asyncio.wait_for(qr_login.wait(), timeout=wait_for)
@@ -1839,33 +1991,41 @@ async def authorize_with_qr_login(
         except SessionPasswordNeededError:
             if BROWSER_PROMPT_SESSION is not None:
                 BROWSER_PROMPT_SESSION.clear_qr()
-            password_hint = await telegram_password_hint(client, GetPasswordRequest)
-            password = prompt_value(
-                "Пароль 2FA Telegram",
-                hidden=True,
-                terminal_prompts=args.terminal_prompts,
-                cancel_label="Назад" if not args.qr else "Отмена",
-                browser_hint=password_hint,
-            )
-            await client.sign_in(password=password)
+            await authorize_with_password(client, args, GetPasswordRequest, deadline=deadline,
+                                          cancel_label="Назад" if not args.qr else "Отмена")
             return
         except asyncio.TimeoutError:
-            if loop.time() >= deadline:
+            if time.monotonic() >= deadline:
                 break
+            await qr_login.recreate()
+        except Exception as error:
+            failure = telegram_login_error(error, stage="qr_check")
+            if failure.code not in {"TELEGRAM_QR_EXPIRED", "TELEGRAM_QR_INVALID"}:
+                raise failure from error
+            # A conclusive rejected/expired token can be replaced in this same
+            # page by an explicit button. A timeout/unknown acceptance cannot.
+            prompt_choice("QR-код Telegram истёк или отклонён. Показать новый QR-код?",
+                (("refresh", "Показать новый QR-код"),), terminal_prompts=args.terminal_prompts,
+                cancel_label="Отмена", deadline=deadline)
+            require_login_time(deadline)
             await qr_login.recreate()
 
     raise TelegramRuntimeError(
-        "Время входа по QR истекло. Запустите login ещё раз и отсканируйте новый код."
+        "Время входа по QR истекло. Запустите login ещё раз и отсканируйте новый код.", code="TELEGRAM_QR_EXPIRED"
     )
 
 
 async def command_login_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
+    # Back/correction shares the first deadline; no new QR or factor grants a
+    # fresh window. The host's outer signed-process deadline remains independent.
+    args.login_deadline = time.monotonic() + getattr(args, "qr_timeout", DEFAULT_QR_LOGIN_TIMEOUT_SECONDS)
     _, SessionPasswordNeededError, GetPasswordRequest = import_telethon()
     client = build_client(args, identity)
-    await client.connect()
     try:
+        await client.connect()
         if not await client.is_user_authorized():
             while True:
+                require_login_time(args.login_deadline)
                 method = login_method_for_args(args)
                 try:
                     if method == LOGIN_METHOD_QR:
@@ -1887,6 +2047,9 @@ async def command_login_async(args: argparse.Namespace, identity: Identity) -> d
                     if args.qr or args.code:
                         raise
                     continue
+        if not await client.is_user_authorized():
+            raise TelegramRuntimeError("Telegram не подтвердил вход. Проверьте состояние сессии перед новой попыткой.",
+                                       code="TELEGRAM_SESSION_UNAVAILABLE")
         me = await client.get_me()
         session_file = session_path(identity).with_suffix(".session")
         if session_file.exists() and os.name == "posix":
@@ -1898,17 +2061,20 @@ async def command_login_async(args: argparse.Namespace, identity: Identity) -> d
             )
             await asyncio.sleep(0.7)
         return {"authorized": True, "userId": me.id, "username": me.username}
+    except PromptCancelled as error:
+        raise TelegramRuntimeError("Вход в Telegram отменён.", code="TELEGRAM_LOGIN_CANCELLED") from error
     except TelegramRuntimeError:
         raise
     except Exception as error:
         # Telethon exceptions may contain transport or RPC details that are not
         # part of the agent-visible contract. Keep the local UI actionable while
         # returning only a stable, secret-free category to Codex.
-        raise TelegramRuntimeError(
-            "Telegram не завершил вход. Проверьте данные или соединение и запустите login заново."
-        ) from error
+        raise telegram_login_error(error) from error
     finally:
-        await client.disconnect()
+        # Cleanup cannot replace the checked password/limit refusal, nor undo
+        # a positively verified authorization. No raw disconnect error escapes.
+        with contextlib.suppress(Exception):
+            await client.disconnect()
 
 
 def bounded_string(value: Any, limit: int) -> tuple[str, bool]:
@@ -7353,16 +7519,21 @@ def main() -> int:
         else:
             result = run_async_command(args)
     except Exception as error:
+        # Build the safe failure BEFORE finishing the local page: the human
+        # should see the checked reason here, without having to inspect Codex.
+        error_payload = import_inbox_tools().safe_error(error, sys.modules[__name__]).public_payload()
         if BROWSER_PROMPT_SESSION is not None:
             BROWSER_PROMPT_SESSION.finish(
                 title="Вход не завершён",
-                message="Вернитесь в Codex, проверьте сообщение об ошибке и запустите вход заново.",
+                message=error_payload["error"] if args.command == "login" else
+                    "Вернитесь в Codex, проверьте сообщение об ошибке и запустите вход заново.",
             )
-            time.sleep(0.4)
+            # Keep the checked failure available until the page's next poll;
+            # a fixed sleep shorter than the polling interval could hide it.
+            BROWSER_PROMPT_SESSION.finished_seen.wait(timeout=2)
         # Never print arbitrary SDK/network/filesystem exception strings: they
         # can contain private paths, request bodies or connection credentials.
         # Existing recovery/outcome codes retain precedence over causal hints.
-        error_payload = import_inbox_tools().safe_error(error, sys.modules[__name__]).public_payload()
         print(json.dumps(error_payload, ensure_ascii=False), file=sys.stderr)
         return 2
     finally:
