@@ -7237,16 +7237,37 @@ def remove_local_account(identity: Identity) -> dict[str, Any]:
     if not identity.account:
         raise TelegramRuntimeError("Removal requires the host-selected local account.")
     root = connection_root(identity)
+
+    def validate_location(path):
+        # Windows junctions/mount points need not report is_symlink(). Check
+        # every existing ancestor BEFORE the lock can create files there, and
+        # again before traversal/unlink. Inspect from the filesystem root so a
+        # replaced ancestor is refused before probing anything behind it.
+        if os.name == "nt" and path.drive.startswith("\\\\"):
+            raise TelegramRuntimeError("Removal requires local account storage.")
+        for parent in reversed((path, *path.parents)):
+            try:
+                metadata = parent.lstat()
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(metadata.st_mode) or getattr(metadata, "st_file_attributes", 0) & 0x400:
+                raise TelegramRuntimeError("Symbolic links and reparse points prevent local account removal.")
+
+    validate_location(root)
+    validate_location(root / "locks" / "session.lock")
+    validate_location(root / "removed.json")
     with session_lock(identity, allow_removed=True):
         entries = []
 
         def inspect(directory):
+            validate_location(directory)
             ensure_private_directory(directory)
             for child in directory.iterdir():
                 if directory == root and child.name in {"locks", "removed.json"}:
                     continue
+                validate_location(child)
                 metadata = child.lstat()
-                if child.is_symlink() or not (stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)):
+                if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)):
                     raise TelegramRuntimeError("Unsafe entry prevents local account removal.")
                 if len(entries) >= 256:
                     raise TelegramRuntimeError("Local account removal exceeds its file bound.")
@@ -7261,6 +7282,7 @@ def remove_local_account(identity: Identity) -> dict[str, Any]:
         for child in reversed(entries):
             # Recheck before deleting; recursive rm and symlink traversal could
             # erase another account if an entry changed after preflight.
+            validate_location(child)
             parent = child.parent
             while True:
                 ensure_private_directory(parent)

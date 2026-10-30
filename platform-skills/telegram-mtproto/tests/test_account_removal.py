@@ -1,5 +1,8 @@
 """Local erasure uses the original session lock and never opens the SDK."""
 import pathlib
+import os
+import subprocess
+from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest import mock
@@ -10,8 +13,8 @@ M = base.M
 class AccountRemovalTests(unittest.TestCase):
     def setUp(self):
         self.directory = self.enterContext(tempfile.TemporaryDirectory())
-        self.root = pathlib.Path(self.directory) / 'selected'
-        self.sibling = pathlib.Path(self.directory) / 'sibling'
+        self.root = pathlib.Path(self.directory).resolve() / 'selected'
+        self.sibling = pathlib.Path(self.directory).resolve() / 'sibling'
         M.ensure_private_directory(self.root)
         M.ensure_private_directory(self.sibling)
         self.identity = M.Identity('company', 'member', 'connection', account={
@@ -58,3 +61,26 @@ class AccountRemovalTests(unittest.TestCase):
         with self.assertRaises(M.TelegramRuntimeError):
             with M.session_lock(self.identity): pass
         self.assertTrue(M.remove_local_account(self.identity)['removed'])
+
+    def test_reparse_ancestor_is_refused_before_lock_or_erasure_on_every_platform(self):
+        original = pathlib.Path.lstat
+        def reparse(path, *args, **kwargs):
+            metadata = original(path, *args, **kwargs)
+            return SimpleNamespace(st_mode=metadata.st_mode, st_file_attributes=0x400) if path == self.root else metadata
+        with mock.patch.object(pathlib.Path, 'lstat', reparse):
+            with self.assertRaises(M.TelegramRuntimeError): M.remove_local_account(self.identity)
+        self.assertFalse((self.root / 'locks').exists())
+        self.assertTrue(self.file.exists()); self.assertTrue((self.sibling / 'keep').exists())
+
+    @unittest.skipUnless(os.name == 'nt', 'Native NTFS junction fixture')
+    def test_native_windows_junction_and_junction_ancestor_do_not_touch_target(self):
+        link = self.root / 'junction'
+        made = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(link), str(self.sibling)],
+                              capture_output=True, timeout=10)
+        self.assertEqual(made.returncode, 0, 'Native junction fixture failed')
+        with self.assertRaises(M.TelegramRuntimeError): M.remove_local_account(self.identity)
+        self.assertTrue(self.file.exists()); self.assertTrue((self.sibling / 'keep').exists())
+        with mock.patch.object(M, 'connection_root', return_value=link / 'uncreated-account'):
+            with self.assertRaises(M.TelegramRuntimeError): M.remove_local_account(self.identity)
+        self.assertFalse((self.sibling / 'uncreated-account').exists())
+        self.assertFalse((self.root / 'removed.json').exists())
