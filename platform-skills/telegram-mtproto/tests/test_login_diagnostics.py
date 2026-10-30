@@ -220,13 +220,43 @@ class LoginDiagnosticsTests(unittest.TestCase):
                     asyncio.run(M.authorize_with_password(client, args, object(), deadline=time.monotonic()+10, cancel_label="Отмена"))
                 self.assertEqual(prompt.call_count, 1)
                 self.assertEqual(client.sign_in.await_count, 1)
-        client = SimpleNamespace(sign_in=mock.AsyncMock(side_effect=rpc("PasswordHashInvalidError")))
+        client = SimpleNamespace(sign_in=mock.AsyncMock(side_effect=[rpc("PasswordHashInvalidError") for _ in range(4)] + [None]))
         with mock.patch.object(M, "prompt_value", return_value="PRIVATE_PASSWORD") as prompt, \
              mock.patch.object(M, "telegram_password_hint", new=mock.AsyncMock(return_value="")):
-            with self.assertRaises(M.TelegramRuntimeError) as caught:
-                asyncio.run(M.authorize_with_password(client, args, object(), deadline=time.monotonic()+10, cancel_label="Отмена"))
-            self.assertEqual(caught.exception.code, "TELEGRAM_PASSWORD_INVALID")
-            self.assertEqual(prompt.call_count, 3)
+            asyncio.run(M.authorize_with_password(client, args, object(), deadline=time.monotonic()+10, cancel_label="Отмена"))
+            self.assertEqual(prompt.call_count, 5, "a human correction beyond three attempts must keep the same login")
+
+    def test_sms_refusal_offers_qr_in_same_page_without_automatic_switch(self):
+        for name in ("SmsCodeCreateFailedError", "PhonePasswordProtectedError"):
+            with self.subTest(name=name), self.login("code", sign_in=[None], send_code=[rpc(name)]) as (session, client, qr, result, errors):
+                phone = self.prompt(session)
+                self.submit(session, phone, "PRIVATE_PHONE")
+                review = self.prompt(session, phone["id"])
+                self.assertIn("QR", review["prompt"])
+                self.assertEqual(client.qr_login.await_count, 0)
+                self.submit(session, review, choice="qr")
+                password = self.prompt(session, review["id"])
+                self.submit(session, password, "PRIVATE_PASSWORD")
+                with session.condition:
+                    self.assertTrue(session.condition.wait_for(lambda: session.finished, timeout=3))
+                self.assertEqual(client.qr_login.await_count, 1)
+                self.assertEqual(client.send_code_request.await_count, 1)
+
+    def test_expired_code_can_be_replaced_beyond_three_human_requests_with_same_lease(self):
+        with self.login("code", sign_in=[rpc("PhoneCodeExpiredError") for _ in range(4)]+[None]) as (session, client, _, result, errors):
+            phone = self.prompt(session)
+            self.submit(session, phone, "PRIVATE_PHONE")
+            code = self.prompt(session, phone["id"])
+            for index in range(4):
+                self.submit(session, code, "PRIVATE_CODE")
+                review = self.prompt(session, code["id"])
+                self.assertEqual(client.send_code_request.await_count, index+1)
+                self.submit(session, review, choice="resend")
+                code = self.prompt(session, review["id"])
+                self.assertEqual(client.send_code_request.await_count, index+2)
+            self.submit(session, code, "PRIVATE_NEW_CODE")
+            with session.condition:
+                self.assertTrue(session.condition.wait_for(lambda: session.finished, timeout=3))
 
     def test_expired_original_deadline_never_accepts_a_new_factor(self):
         client = SimpleNamespace(sign_in=mock.AsyncMock())
