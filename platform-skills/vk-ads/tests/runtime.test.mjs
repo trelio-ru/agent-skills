@@ -320,6 +320,11 @@ test('OAuth reason projection accepts documented codes only and never infers tok
     [{ error: 'invalid_client', error_description: 'synthetic-only-secret' }, 'invalid_client'],
     [{ error: { code: 'invalid_user', message: 'private' } }, 'invalid_user'],
     [{ code: 'invalid_grant', message: 'private' }, 'invalid_grant'],
+    [{ error: 'token_limit_exceeded', error_description: 'synthetic-only-secret' }, 'token_limit_exceeded'],
+    [{ error: { code: 'token_limit_exceeded', message: 'private' } }, 'token_limit_exceeded'],
+    [{ code: 'token_limit_exceeded', user_id: 123, message: 'private' }, 'token_limit_exceeded'],
+    [{ error: 'token_limit_exceeded_private' }, 'not_recognized'],
+    [{ message: 'token_limit_exceeded' }, 'not_returned'],
     [{ error: 'unknown_private_value', message: 'token limit exceeded synthetic-only-secret' }, 'not_recognized'],
     [{ error: { message: 'token limit exceeded' } }, 'not_returned'],
   ]) {
@@ -335,6 +340,31 @@ test('OAuth reason projection accepts documented codes only and never infers tok
     { httpStatus: 403, requestStage: 'advertising_api' });
   assert.deepEqual(safeApiErrorDetails({ httpStatus: 403, requestStage: 'oauth_token', oauthReason: 'private' }),
     { httpStatus: 403, requestStage: 'oauth_token' });
+});
+test('an exact OAuth token-limit failure never revokes, remints, reads ads or alters the saved grant', async () => {
+  for (const mode of ['client', 'agency']) for (const refreshing of [false, true]) {
+    const initial = { ...auth(), mode, access_token: 'synthetic-old-access', expires_at: 0,
+      ...(refreshing ? { refresh_token: 'synthetic-old-refresh' } : {}) };
+    const before = structuredClone(initial), calls = [];
+    const api = new Api(initial, { fetcher: async (url, options) => {
+      calls.push(url.pathname);
+      assert.equal(options.method, 'POST');
+      assert.equal(options.body.get('grant_type'), refreshing ? 'refresh_token'
+        : mode === 'agency' ? 'agency_client_credentials' : 'client_credentials');
+      return json({ error: 'token_limit_exceeded', error_description: 'private', user_id: 123 }, 403);
+    } });
+    await assert.rejects(api.list('plans'), {
+      code: 'permission_denied',
+      details: { httpStatus: 403, requestStage: 'oauth_token', oauthReason: 'token_limit_exceeded' },
+    });
+    // An attempted read stops at the one original OAuth request. In particular,
+    // neither the error classifier nor GET retry policy may start a second
+    // grant, token/delete, or the requested advertising read after this denial.
+    assert.deepEqual(calls, ['/api/v2/oauth2/token.json']);
+    assert.deepEqual(initial, before); assert.equal(api.access, null);
+    assert.deepEqual(safeApiErrorDetails({ httpStatus: 403, requestStage: 'advertising_api',
+      oauthReason: 'token_limit_exceeded' }), { httpStatus: 403, requestStage: 'advertising_api' });
+  }
 });
 test('malformed refresh values fail before IO and invalid rotation never replaces saved secrets', async () => {
   for (const value of ['', null, [], 'bad\nrefresh']) {

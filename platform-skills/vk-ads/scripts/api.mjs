@@ -12,11 +12,13 @@ const ERROR_TOKEN = /^[a-z0-9_]{1,80}$/;
 const PRIVATE_FIELD = /secret|password|token|authorization|cookie|__proto__|constructor|prototype/i;
 const ERROR_INDEX = /^(?:0|[1-9]\d{0,3})$/;
 const ERROR_PATH = /^[a-z0-9_]{1,80}(?:\[(?:0|[1-9]\d{0,3})\]|\.[a-z0-9_]{1,80}){0,8}$/;
-// OAuth 2.0 section 5.2 plus VK's documented authentication codes. A 403 by
-// itself does not prove token exhaustion: VK documents that limit but does
-// not publish its machine-code signature. Never classify it from free text.
+// OAuth 2.0 section 5.2 plus VK's known authentication codes. Token exhaustion
+// is established only by the exact token_limit_exceeded code, never by a 403
+// or free-form description. This diagnostic grants no recovery action: token
+// deletion affects other grants and must not become an automatic fallback.
 const OAUTH_CODES = ['invalid_request', 'invalid_client', 'invalid_grant', 'unauthorized_client',
   'unsupported_grant_type', 'invalid_scope', 'invalid_token', 'expired_token', 'invalid_user', 'revoked_token',
+  'token_limit_exceeded',
 ];
 const OAUTH_REASONS = [...OAUTH_CODES, 'not_returned', 'not_recognized', 'not_available'];
 const tokenValue = value => typeof value === 'string' && value.length > 0 && value.length < 8192 && !/[\r\n\0]/.test(value);

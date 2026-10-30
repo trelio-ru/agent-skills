@@ -24,9 +24,11 @@ receipt persistence; дополнительная диагностика не о
 проекции проверяются те же два значения; произвольный stage/URL, account,
 наличие токена и OAuth error body не экспортируются. OAuth reason допускает
 только шесть RFC6749§5.2 codes и VK invalid_token/expired_token/invalid_user/
-revoked_token либо not_returned/not_recognized/not_available. JSON до 16 КиБ
+revoked_token/token_limit_exceeded либо not_returned/not_recognized/not_available. JSON до 16 КиБ
 читается лишь по error string/root code/error.code, без message, HTML или headers.
-Неизвестная причина не становится токенным лимитом. Старый receipt без стадии
+Только exact token_limit_exceeded подтверждает лимит; HTTP 403, неизвестная
+причина и свободный текст его не доказывают. Код не разрешает повтор OAuth,
+отзыв токенов, reset или замену credentials. Старый receipt без стадии
 сохраняет отсутствие сведений; diagnostic не разрешает повтор OAuth-настройки
 или рекламной записи и не доказывает причину отказа VK.
 Read-back и полный before/preflight snapshot нормализуют только порядок

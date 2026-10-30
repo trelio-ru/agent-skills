@@ -129,6 +129,9 @@ OAuth refresh сохраняется зашифрованно и обновля�
 readiness failure не теряет выданную пару. Ошибка refresh не разрешает mint
 fallback/массовый revoke. Причины – закрытые документированные codes, не message;
 один403 не подтверждает token-limit, утраченный refresh не восстанавливается догадкой.
+Точный token_limit_exceeded распознаётся только в OAuth-ответе; код не открывает
+token/delete, mint fallback или reset. Username/user_id выбирают пользователя,
+не один токен/устройство; граница client_id и другие потребители требуют проверки.
 Новый max_goals проверяет дневной бюджет либо общий бюджет с конечной датой;
 частичный update и package-specific availability не заменяются догадкой.
 Read-back mismatch сообщает только static field identity без сравниваемых
