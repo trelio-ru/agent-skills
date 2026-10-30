@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.14.1",
-    "summary": "Исправлена отметка прочтения входящих: собственные исходящие ответы между ними не требуют покрытия. Непросмотренные входящие и неизвестный результат записи сохраняют защиту"
+    "version": "2.15.0",
+    "summary": "Добавлены удаление сохранённого локального подключения Telegram, создание обычных групп и добавление участников с проверкой результата"
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,8 +18,8 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.14.1",
-    "minimumHostVersion": "3.18.0",
+    "version": "2.15.0",
+    "minimumHostVersion": "3.25.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
       "interpreter": "python"
@@ -149,6 +149,11 @@
       {
         "source": "scripts/instruction-guides/part-13.md",
         "path": "instruction-guides/part-13.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/trelio-account-removal.json",
+        "path": "trelio-account-removal.json",
         "mode": 420
       }
     ]

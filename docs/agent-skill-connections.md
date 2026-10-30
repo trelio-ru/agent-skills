@@ -266,3 +266,18 @@ Hint failure не отменяет положительный send result, не 
 ответа остаётся незавершённой; отправлять сообщение ещё раз ради hint запрещено.
 Отсутствующие References у ответа и смена INBOX UIDVALIDITY не обещают match.
 Source merge и синтетические fixtures не доказывают live Windows business E2E.
+
+
+## Удаление локального аккаунта
+
+Host >=3.25.0 обслуживает `account remove --id UUID --expected-revision N --confirm`.
+Telegram MTProto >=2.15.0 включает signed `trelio-account-removal.json`; прежние
+providers без marker остаются недоступны для этой операции. Тот же executor
+выполняет fixed `__trelio_account_remove`, проверяет exact value-free receipt и
+лишь затем удаляет metadata/bindings/defaults. Чужая company/member binding
+требует `--all-companies` и явного решения пользователя. Unbind сохраняет вход.
+Provider удаляет только свой bounded local tree под native session lock,
+без SDK/network/bootstrap. Безопасный tombstone и import keys сохраняются против
+stale selection/reimport; I/O failure оставляет запись для восстановления.
+Удаление локального подключения не удаляет внешний Telegram account/историю,
+не отзывает другие устройства и не подменяет отключение server source refs.

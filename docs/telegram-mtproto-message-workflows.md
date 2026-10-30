@@ -1,9 +1,8 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.13.1`
-объявляет runtime `2.13.1`, требует Telethon `>=1.45,<2` и сохраняет
-minimum host `3.7.0`,
-connection definition, package credential и namespace личной сессии.
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.15.0`
+объявляет runtime `2.15.0`, требует Telethon `>=1.45,<2` и host >=3.25.0.
+Connection definition, package credential и namespace личной сессии сохраняются.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
 входа. Чтение не отправляет Telegram read receipts; исходящие действия
 следуют [единому контракту согласования](agent-skill-connections.md#sending-authorization):
@@ -15,8 +14,9 @@ connection definition, package credential и namespace личной сессии
 `parameters.arguments`, без shell и PATH. `runtimeExecution.command` остаётся
 только совместимым fallback ответа, в котором structured action отсутствует.
 Согласие на отправку даёт оператор в текущем разговоре; permission profile,
-sandbox и approval mode клиента его не выдают и не заменяют. Runtime
-patch не меняет backend, plugin, connection или minimum host.
+sandbox и approval mode клиента его не выдают и не заменяют.
+Релиз не меняет backend, plugin или connection; minimum host 3.25.0 нужен
+для общего удаления записи каталога после provider cleanup.
 
 ## Ответ владельцу без задачи
 
@@ -983,7 +983,7 @@ EXACT --user-id ID --decision approve|decline` действует только �
 неполные/несогласованные totals или пустая недоказанная страница отклоняются.
 Approve дополнительно подтверждает exact membership через getParticipant либо
 getFullChat для basic Chat. Decline не объявляется успешным по исчезновению с
-первой страницы. Групповые invitations, ban и role changes не выполняются.
+первой страницы. Ban и role changes не выполняются; прямое добавление людей описано ниже.
 
 ### Общая mutation boundary
 
@@ -1516,3 +1516,46 @@ safe wait и `automaticRetry=false`. Provider text, raw RPC, запросы, pat
 credentials и содержимое сообщений не выводятся. Прежние recovery и unknown
 codes имеют приоритет: сетевой diagnostic внутри unknown ошибки не доказывает
 отсутствие эффекта и не разрешает повтор. Сначала установи exact live state.
+
+
+## Создание групп и прямое добавление участников
+
+
+`group-create --title НАЗВАНИЕ --user @username [--user ID] --dry-run` создаёт
+обычную группу с 1–10 выбранными людьми. `member-add --chat EXACT --user ID_OR_USERNAME
+--dry-run` добавляет ровно одного человека в существующую обычную группу или
+супергруппу. Нужны exact positive user ID либо @username; имена и телефоны не
+подставляются. Используй resolve-phone только по его прежнему отдельному контракту.
+Проверь весь preview: личный аккаунт, название/чат и каждого выбранного человека.
+Выполняй неизменную команду с `--confirm --approval-hash HASH` только по прямому
+поручению пользователя. Уже данное exact разрешение повторно не спрашивай.
+
+Сохранённая сессия и approval не разрешают создавать группы, раскрывать историю
+или приглашать других людей. read-only допускает preview, запрещает execute.
+Для добавления нужны свежие Telegram creator/invite_users права. В обычной группе
+fwd_limit=0 не пересылает старую историю новому участнику; общую доступность истории
+супергруппы определяет Telegram. Операция может уведомить людей. Изменение ролей,
+платные приглашения, автоматическая рассылка ссылки и создание каналов не входят.
+
+Создание использует один native request, новый чат определяется только по exact
+native creation event, затем перечитываются metadata и полный состав. Поиск по
+названию не доказывает создание. `created=true` вместе с `notAddedUserIds` означает,
+что группа создана, но Telegram не добавил этих людей: не создавай группу снова.
+`applied=true` требует проверки выбранных участников; alreadyMember не вызывает
+повторное добавление. Ограничения приватности не обходи массовыми приглашениями.
+
+Обе записи используют прежний одноразовый approval на пять минут с account,
+company/connection и exact составом; consume до RPC, SDK retries отключены.
+TELEGRAM_ACTION_OUTCOME_UNKNOWN запрещает повтор создания/приглашения либо смену
+транспорта. Сначала проверь точный возвращённый createdChatId через chat-info/members;
+если native ID утрачен, сообщи неизвестный результат и не присваивай похожий чат.
+Новые команды не включены автоматически в signed task allowlist ассистента.
+
+
+Методы API: [messages.createChat](https://core.telegram.org/method/messages.createChat),
+[messages.addChatUser](https://core.telegram.org/method/messages.addChatUser),
+[channels.inviteToChannel](https://core.telegram.org/method/channels.inviteToChannel).
+`messages.InvitedUsers.missing_invitees` проецируются только как selected user IDs;
+сырые данные о приватности, access hashes и provider diagnostics не возвращаются.
+`test_membership_tools.py` и `test_account_removal.py` проверяют real parser/handlers,
+one-use/partial results, scope/ACL/readback, native lock и bounded erasure без сети.

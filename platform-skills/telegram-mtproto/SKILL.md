@@ -1,6 +1,6 @@
 ---
 name: telegram-mtproto
-description: Read unread mentions/reactions and cloud drafts; manage personal folders, dialog pins and explicit read state; diagnose safe failures; quote exact original passages, send reviewed long-text series, archive chats and change personal mute deadlines; inspect chat permissions, choose the displayed sender and delete one personally authored message with explicit scope; manage Telegram cloud drafts, silent delivery, link previews, media replacement, forum topics and invite lifecycles; work with reactions, polls, pins and join requests; read and search chats, posts, threads and albums; count subscribers and inspect channel analytics, post views, forwards, comments and reactions; send albums, forward originals, reply, transcribe voice messages and manage scheduled delivery through Trelio's signed personal MTProto runtime. Use for Telegram correspondence, files, audiences, resumable archive-scoped period exports and dialog inventories, login, and local send-policy setup when this catalog transport is selected.
+description: Remove saved local connections; create basic groups and add selected people to groups and supergroups; read unread mentions/reactions and cloud drafts; manage personal folders, dialog pins and explicit read state; diagnose safe failures; quote exact original passages, send reviewed long-text series, archive chats and change personal mute deadlines; inspect chat permissions, choose the displayed sender and delete one personally authored message with explicit scope; manage Telegram cloud drafts, silent delivery, link previews, media replacement, forum topics and invite lifecycles; work with reactions, polls, pins and join requests; read and search chats, posts, threads and albums; count subscribers and inspect channel analytics, post views, forwards, comments and reactions; send albums, forward originals, reply, transcribe voice messages and manage scheduled delivery through Trelio's signed personal MTProto runtime. Use for Telegram correspondence, files, audiences, resumable archive-scoped period exports and dialog inventories, login, and local send-policy setup when this catalog transport is selected.
 ---
 
 # Telegram
@@ -46,6 +46,15 @@ account comment, `--confirm`, preview/hash или успешное выполн�
 ради повторения действия запрещены. Исходная lease не продлевается. Отправка,
 изменение, платёж, подпись и раскрытие данных сохраняют свои отдельные основания
 из полного сценария. Уже данное точное разрешение не спрашивай повторно.
+
+## Создание групп и добавление участников
+
+`group-create --title НАЗВАНИЕ --user @username [--user ID]` создаёт обычную группу.
+`member-add --chat EXACT --user ID_OR_USERNAME` добавляет одного человека в группу
+или супергруппу. Обе команды: сначала `--dry-run`, затем неизменные
+`--confirm --approval-hash HASH` при прямом поручении пользователя.
+Полный обязательный контракт находится в part-09.md. Возможности есть в основном
+MTProto-навыке; отказ конкретного вызова не означает отсутствия этих команд.
 
 ## Личные аккаунты
 
