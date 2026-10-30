@@ -1,5 +1,9 @@
 # Работа с общими Agent Skills
 
+Ошибки входа Telegram и исправление факторов на локальной странице следуют
+[контракту](docs/telegram-mtproto-message-workflows.md#вход-и-ошибки-локальной-формы):
+только fresh human submit, fixed SDK codes, прежняя lease и никакого auth replay.
+
 Task execution цифрового ассистента требует подписанный provider-owned
 `trelio-assistant-execution.json`; общий host проверяет его до account/provider
 I/O. Наличие setup/ACK CLI или account binding не открывает эти команды task-у.

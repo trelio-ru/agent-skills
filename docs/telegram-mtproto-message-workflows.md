@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.15.1`
-объявляет runtime `2.15.1`, требует Telethon `>=1.45,<2` и host >=3.25.0.
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.15.2`
+объявляет runtime `2.15.2`, требует Telethon `>=1.45,<2` и host >=3.25.0.
 Connection definition, package credential и namespace личной сессии сохраняются.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
 входа. Чтение не отправляет Telegram read receipts; исходящие действия
@@ -17,6 +17,36 @@ Connection definition, package credential и namespace личной сессии
 sandbox и approval mode клиента его не выдают и не заменяют.
 Релиз не меняет backend, plugin или connection; minimum host 3.25.0 нужен
 для общего удаления записи каталога после provider cleanup.
+
+## Вход и ошибки локальной формы
+
+Неверные номер, код и 2FA-пароль исправляются на той же tokenized loopback
+странице. Поле очищается; новый prompt ID принимает только свежий ввод человека.
+Старый ID, повторный submit и polling не отправляют фактор ещё раз. Для кода
+сохраняется прежний `phone_code_hash`; новый код запрашивается только кнопкой
+«Получить новый код» после подтверждённого `PhoneCodeExpiredError`. Исправление
+пароля после QR не создаёт новый QR. До трёх исправлений фактора и до трёх
+поколений кода делят исходный `--qr-timeout`; Back/повторный ввод его не продлевают.
+SDK login retries/flood sleep отключены; network/неизвестный outcome не повторяется.
+
+Причина известного отказа показывается на странице, включая terminal failure;
+форма не отсылает человека в чат за расшифровкой. `TELEGRAM_PASSWORD_INVALID`,
+`TELEGRAM_CODE_INVALID`, `TELEGRAM_CODE_EXPIRED`, `TELEGRAM_PHONE_INVALID`,
+`TELEGRAM_PHONE_BANNED`, `TELEGRAM_PHONE_UNREGISTERED`, `TELEGRAM_QR_EXPIRED`,
+`TELEGRAM_QR_INVALID`, `TELEGRAM_QR_ALREADY_USED`, `TELEGRAM_PASSWORD_CHECK_EXPIRED`,
+`TELEGRAM_PASSWORD_CHANGED`, `TELEGRAM_LOGIN_RESTART_REQUIRED`,
+`TELEGRAM_ACCOUNT_DEACTIVATED`, `TELEGRAM_APP_INVALID`, `TELEGRAM_APP_RESTRICTED`,
+`TELEGRAM_SERVICE_UNAVAILABLE`, `TELEGRAM_SESSION_UNAVAILABLE`,
+`TELEGRAM_RATE_LIMITED`, `TELEGRAM_LOGIN_EXPIRED`, `TELEGRAM_LOGIN_CANCELLED`
+определяются только fixed SDK identity либо собственной проверенной веткой.
+Flood wait сохраняет bounded numeric `retryAfterSeconds`; ожидание не разрешает
+автоматический retry. Network и неизвестный отказ остаются разными состояниями.
+Текст RPC/phone/password/OTP/session/QR не попадает в diagnostics.
+
+Успех требует fresh `is_user_authorized` и `get_me`. Ошибка disconnect не
+подменяет доказанный результат. `test_login_diagnostics.py` проверяет реальные
+HTTP submit/state, Origin/prompt IDs, исправления/новый код/cancel/lease/privacy
+с синтетическим SDK без аккаунта и сети Telegram.
 
 ## Ответ владельцу без задачи
 
