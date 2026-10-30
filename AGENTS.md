@@ -88,7 +88,8 @@ Inbox reads сохраняют общий лимит и partial coverage; cloud 
 Telegram `group-create`/`member-add` используют прежний one-use journal, native
 creation evidence и exact membership read-back; missing invitees не разрешают
 повтор создания. Local account remove сохраняет session lock/tombstone и не
-удаляет Telegram account.
+удаляет Telegram account. Перед lock/traversal/unlink очистка проверяет все
+ancestors, включая Windows junction/reparse points.
 
 Для нескольких личных аккаунтов читай [общий контракт](docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов): каталог и company bindings принадлежат host, protected storage и вход – provider-у.
 Для WhatsApp discovery, recency, date-only поиска, coverage и browser fallback

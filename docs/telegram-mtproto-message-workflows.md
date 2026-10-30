@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.15.0`
-объявляет runtime `2.15.0`, требует Telethon `>=1.45,<2` и host >=3.25.0.
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.15.1`
+объявляет runtime `2.15.1`, требует Telethon `>=1.45,<2` и host >=3.25.0.
 Connection definition, package credential и namespace личной сессии сохраняются.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
 входа. Чтение не отправляет Telegram read receipts; исходящие действия
@@ -1559,3 +1559,7 @@ TELEGRAM_ACTION_OUTCOME_UNKNOWN запрещает повтор создания
 сырые данные о приватности, access hashes и provider diagnostics не возвращаются.
 `test_membership_tools.py` и `test_account_removal.py` проверяют real parser/handlers,
 one-use/partial results, scope/ACL/readback, native lock и bounded erasure без сети.
+
+Удаление перед созданием lock и каждым обходом/unlink проверяет все ancestors.
+Symlink и Windows reparse points, включая NTFS junction, закрыты до I/O за ними;
+неизвестный путь не исправляется переносом или рекурсивным удалением.

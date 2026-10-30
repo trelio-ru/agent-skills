@@ -271,7 +271,7 @@ Source merge и синтетические fixtures не доказывают li
 ## Удаление локального аккаунта
 
 Host >=3.25.0 обслуживает `account remove --id UUID --expected-revision N --confirm`.
-Telegram MTProto >=2.15.0 включает signed `trelio-account-removal.json`; прежние
+Telegram MTProto >=2.15.1 включает signed `trelio-account-removal.json`; прежние
 providers без marker остаются недоступны для этой операции. Тот же executor
 выполняет fixed `__trelio_account_remove`, проверяет exact value-free receipt и
 лишь затем удаляет metadata/bindings/defaults. Чужая company/member binding
@@ -281,3 +281,7 @@ Provider удаляет только свой bounded local tree под native s
 stale selection/reimport; I/O failure оставляет запись для восстановления.
 Удаление локального подключения не удаляет внешний Telegram account/историю,
 не отзывает другие устройства и не подменяет отключение server source refs.
+
+Удаление проверяет symbolic/reparse ancestors до lock и каждого unlink.
+NTFS junction не считается обычной папкой; native Windows regression проверяет
+как вложенную junction, так и заменённый ancestor, без изменения target.

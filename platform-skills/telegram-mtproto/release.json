@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.15.0",
-    "summary": "Добавлены удаление сохранённого локального подключения Telegram, создание обычных групп и добавление участников с проверкой результата"
+    "version": "2.15.1",
+    "summary": "Добавлены удаление локального подключения Telegram, создание групп и добавление участников; очистка сессии защищена от symlink и Windows junction"
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.15.0",
+    "version": "2.15.1",
     "minimumHostVersion": "3.25.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
