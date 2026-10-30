@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "t-bank",
-    "version": "2.3.9",
-    "summary": "Исправлено продолжение браузерных сценариев между сообщениями."
+    "version": "2.3.10",
+    "summary": "Уточнены безопасный путь файла команд и UTF-8 бюджет результата браузерного сценария."
   },
   "connection": null,
   "runtime": {
-    "version": "1.3.9",
+    "version": "1.3.10",
     "minimumHostVersion": "3.24.0",
     "entrypoint": {
       "path": "scripts/trelio-t-bank.mjs",

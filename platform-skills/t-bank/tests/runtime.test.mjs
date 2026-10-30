@@ -582,7 +582,7 @@ test('start reuses the running exact lease; new calls cannot renew or use a prev
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
   assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.24.0');
-  assert.equal(release.release.version, '2.3.9');
+  assert.equal(release.release.version, '2.3.10');
 });
 test('client obtains its controller from the common host before any native or credential I/O', {
   skip: !['darwin', 'win32'].includes(process.platform),
