@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "repository": "trelio-ru/agent-skills",
+  "canonicalKey": "trelio.canonicalMainWorktree",
+  "mainMutex": "trelio-skills-main-update.lock",
+  "verify": [
+    "node",
+    "scripts/verify-integration-ci.mjs"
+  ],
+  "transport": [
+    "node",
+    "scripts/push-main.mjs"
+  ]
+}

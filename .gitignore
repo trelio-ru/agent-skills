@@ -3,3 +3,5 @@ __pycache__/
 .DS_Store
 *.skillpkg
 _contracts/
+
+node_modules/

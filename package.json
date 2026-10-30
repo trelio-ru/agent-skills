@@ -1,0 +1,12 @@
+{
+  "name": "agent-skills-maintainer",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "git:integrate": "node scripts/git-integrate.mjs",
+    "test:git-coordination": "node --test scripts/git-coordination.test.mjs"
+  },
+  "devDependencies": {
+    "@trelio/git-coordinator": "git+https://github.com/trelio-ru/agent-workspaces-runtime.git#5543d2c2d3aa038543c61546008401276a62c09e"
+  }
+}

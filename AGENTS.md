@@ -412,7 +412,7 @@ Windows не использует CRT exec overlay; argv, ожидание и р
 заменяют CI без доказанного billing/quota blocker и отдельного решения о VM.
 
 Теги skill-<skill-id>-vX.Y.Z и выпущенные package bytes неизменяемы.
-Каждый release tag отправляй отдельным push и подтверждай запуск его workflow
+Каждый release tag резервируй через `npm run git:integrate -- --tag <tag>` и подтверждай запуск его workflow
 по [контракту выпуска](docs/release-process.md).
 MAX фото/альбомы следуют [контракту](docs/max-web-agent-skill.md#история-и-состояние-чтения):
 read-only downloadRef связывает exact аккаунт/чат/сообщение с thumbnail bytes,
@@ -428,8 +428,8 @@ artifact, digest, CAS и read-back. Сетевые ошибки: минимум 
 перед повтором неоднозначной записи сначала проверь фактическое состояние.
 
 До commit: узкие проверки, git diff --check, полный diff и аудит публичности.
-Commit на русском, только файлы задачи. Опубликуй ветку, дождись exact зелёного
-CI и интегрируй через PR. Затем обнови чистый canonical main и удали только свой
+Commit на русском, только файлы задачи. Запусти `npm run git:integrate`: очередь
+публикует branch/PR и проверяет exact hosted CI перед main. Затем обнови чистый canonical main и удали только свой
 clean merged worktree и ветку. Новая лицензия без решения пользователя не вводится.
 
 `Public source boundary` и check-public-source.mjs проверяют tracked snapshot
@@ -461,3 +461,12 @@ Markdown-навыки без package содержат полный компак�
 Общий CI блокирует превышение у любого текущего provider source. Полный MCP
 результат независимо ограничен 40 000 байтами на final backend/host boundary;
 offline envelope fixture не заменяет live проверку personal layers при выпуске.
+
+## Координация Git и релизных версий
+
+После commit – `npm run git:integrate`: FIFO до fresh fetch/rebase и final CI,
+затем exact guarded push/read-back. Прямой `git:push-main` больше не является
+самостоятельным workflow. Разрешённый релиз резервирует exact tag до CI через
+`npm run git:integrate -- --tag <tag>`. Старые wrappers/boolean не дают admission.
+После checkout установить pinned maintainer dependency через `npm ci --ignore-scripts`.
+Контракт, recovery и границы общего кода – [git-coordination](docs/git-coordination.md).

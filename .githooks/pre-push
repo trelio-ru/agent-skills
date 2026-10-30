@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+push_inventory="$(cat)"
+node platform-skills/tools/check-public-source.mjs
+hook_directory="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+printf '%s\n' "$push_inventory" | node "$hook_directory/../scripts/assert-coordination.mjs"

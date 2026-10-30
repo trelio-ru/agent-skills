@@ -12,7 +12,7 @@
 из `main`. Штатный `platform-skill-runtimes.yml` сохраняет единственный artifact.
 Production signing key отсутствует в GitHub и остаётся на backend Trelio.
 
-Каждый release tag отправляй отдельным `git push origin refs/tags/<exact-tag>`.
+Каждый release tag отправляй отдельным `npm run git:integrate -- --tag <exact-tag>`.
 GitHub не создаёт push/create events при отправке больше трёх tags одним push,
 поэтому наличие remote tag само по себе не подтверждает запуск сборки.
 Проверь exact workflow run каждого tag до production publication. Если событие
@@ -89,3 +89,5 @@ guard сначала выпусти совместимые provider-инстру
 после этого выпускай backend/host guard. Зелёный source audit не меняет live
 releases. Потеря обязательного документа блокирует действие; одна ссылка на
 неупакованную справку не считается доставкой.
+
+Final CI и reservation tag выполняются внутри [общей FIFO](git-coordination.md), до publication.
