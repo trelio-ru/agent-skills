@@ -13,6 +13,8 @@ hosted CI и guarded main push/read-back. Не менять ожидающие H
 права забрать очередь; живые grandchildren после SIGKILL остаются блокировкой.
 Failed CI/rebase сохраняет работу. Внешний clone не входит в локальную очередь:
 remote advance останавливает push, без автоматического rebase/retest.
+Transport до remote mutation проверяет, что clean canonical main является
+предком verified source, иначе останавливается без изменения remote.
 Canonical hook проверяет live ancestry, exact worktree/branch/SHA/tag и verified
 state; boolean, raw push и старый wrapper допуска не дают.
 
@@ -22,3 +24,7 @@ state; boolean, raw push и старый wrapper допуска не дают.
 Репозиторий владеет своими policy, CI adapter, hooks и transport. Общий код не
 копируется, пакет не включается в plugin/runtime/provider artifacts и не меняет
 их version/minimum policy. Обновление infrastructure не означает выпуск продукта.
+
+Обычный FF main использует exact PR evidence и не запускает тот же gate заново.
+Канонический pre-push продолжает проверять каждый protected push. Tag jobs
+сохраняют собственные прежние release-проверки и publication/read-back.

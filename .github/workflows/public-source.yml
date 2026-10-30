@@ -1,9 +1,9 @@
 name: Public source boundary
 
 on:
+  # The FIFO verifies this exact PR head before protected fast-forward main.
+  # Do not repeat the same gate on that main push.
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read

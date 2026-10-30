@@ -8,6 +8,12 @@ const git = (...args) => read('git', args, cwd);
 const sha = git('rev-parse', 'HEAD'), canonical = git('config', '--get', policy(cwd).canonicalKey);
 assertPush(cwd, sha, tag);
 if (read('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], canonical)) throw Error('Canonical main is dirty');
+// A clean canonical tree can still contain an unpublished divergent commit.
+// Reject it BEFORE remote mutation; failed local sync must not leave a pushed
+// main behind. Ordinary stale/ahead canonical ancestors of the candidate remain safe.
+try {
+  git('merge-base', '--is-ancestor', read('git', ['rev-parse', 'HEAD'], canonical), sha);
+} catch { throw Error('Canonical main is outside the verified source path'); }
 execFileSync('git', ['fetch', '--prune', 'origin'], {cwd, stdio: 'inherit'});
 git('merge-base', '--is-ancestor', 'origin/main', sha);
 // No blind retry after ambiguous mutation: exact remote state is read first.
