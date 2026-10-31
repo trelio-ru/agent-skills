@@ -166,6 +166,27 @@ export class Api {
     this.auth.refresh_token = refresh;
     this.auth.expires_at = Date.now() + (Number.isFinite(Number(token.expires_in)) && Number(token.expires_in) > 0 ? Number(token.expires_in) : 300) * 1000;
   }
+  async revokeAllUserGrants() {
+    // VK documents this as all-user deletion, not per-device/per-token revoke.
+    // Only the separately reviewed recovery journal invokes it. Never use the
+    // ordinary request() path: that could mint a token before revoking it.
+    const body = new URLSearchParams({ client_id: this.auth.client_id, client_secret: this.auth.client_secret });
+    if (this.auth.mode === 'agency') body.set('username', this.auth.agency_client);
+    let response;
+    try { response = await this.fetcher(new URL('/api/v2/oauth2/token/delete.json', ORIGIN), {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30000),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }); }
+    catch { throw new Fault('oauth_revoke_unknown'); }
+    // A successful synchronous HTTP acknowledgement is enough to proceed with
+    // the ONE approved issuance; it is not an inventory proof about old grants.
+    // Ignore the response body entirely: neither diagnostics nor recovery need
+    // to expose an arbitrary OAuth payload. 202/429/5xx remain unresolved.
+    await response.body?.cancel().catch(() => {});
+    if (response.status === 200 || response.status === 204) return;
+    throw new Fault(response.status >= 400 && response.status < 500 && response.status !== 429
+      ? 'oauth_revoke_rejected' : response.status === 202 ? 'oauth_revoke_pending' : 'oauth_revoke_unknown',
+    response.status >= 400 ? { httpStatus: response.status } : {});
+  }
   async get(entity, objectId, fields) { return this.request('GET', this.endpoint(entity, id(objectId)), { query: fields ? { fields: fields.join(',') } : {} }); }
   async list(entity, query = {}, maximum = 1000) {
     check(Number.isInteger(maximum) && maximum > 0 && maximum <= 5000, 'list_limit_invalid');

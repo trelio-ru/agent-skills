@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk-ads",
-    "version": "1.5.3",
-    "summary": "Уточнена диагностика входа: точный код VK token_limit_exceeded теперь распознаётся как лимит токенов. Отзыв токенов и повторная выдача автоматически не выполняются; уточнены ограничения безопасного восстановления доступа."
+    "version": "1.6.0",
+    "summary": "Добавлено управляемое восстановление API-доступа после лимита токенов: отдельный план отзыва всех токенов выбранного пользователя, однократная выдача и защищённое сохранение новой пары, проверка чтения кабинета. Неизвестный результат блокирует повтор операции."
   },
   "connection": null,
   "runtime": {
-    "version": "1.5.3",
+    "version": "1.6.0",
     "minimumHostVersion": "3.7.0",
     "entrypoint": {
       "path": "scripts/trelio-vk-ads.mjs",
@@ -19,6 +19,8 @@
       "local-accounts-v1"
     ],
     "files": [
+      {"source":"scripts/auth-recovery.mjs","path":"scripts/auth-recovery.mjs","mode":420},
+      {"source":"references/auth-recovery.md","path":"references/auth-recovery.md","mode":420},
       {"source":"scripts/status-recovery.mjs","path":"scripts/status-recovery.mjs","mode":420},
       {"source":"references/status-recovery.md","path":"references/status-recovery.md","mode":420},
       {

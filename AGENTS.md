@@ -132,6 +132,10 @@ fallback/массовый revoke. Причины – закрытые докум
 Точный token_limit_exceeded распознаётся только в OAuth-ответе; код не открывает
 token/delete, mint fallback или reset. Username/user_id выбирают пользователя,
 не один токен/устройство; граница client_id и другие потребители требуют проверки.
+Отдельное решение на все grants пользователя допускает только reviewed
+[auth recovery](platform-skills/vk-ads/references/auth-recovery.md): один revoke,
+одна initial выдача, encrypted pair до GET, durable unknown-fence. Ни reset,
+ни configure/обычный auth не обходят pending recovery; это не per-device revoke.
 Новый max_goals проверяет дневной бюджет либо общий бюджет с конечной датой;
 частичный update и package-specific availability не заменяются догадкой.
 Read-back mismatch сообщает только static field identity без сравниваемых

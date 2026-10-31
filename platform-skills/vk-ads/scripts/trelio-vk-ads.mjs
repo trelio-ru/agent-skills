@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { identity, configRoot, check, Fault, VERSION, UUID, scope, childEnvironment, clean, id, hash, stable, credentials } from './core.mjs';
 import { Store } from './storage.mjs';
 import { Api } from './api.mjs';
+import { AuthRecovery, assertAuthRecoveryIdle } from './auth-recovery.mjs';
 import { input } from './form.mjs';
 import { Operations } from './operations.mjs';
 import { segments, audience, sources, counterGoals, placements, optimization, vkGroups } from './diagnostics.mjs';
@@ -18,6 +19,8 @@ export function argumentsOf(args) {
     flags[rest[i].slice(2)] = rest[i + 1];
   }
   const allowed = { doctor: [], configure: [], reference: ['name'], 'setup-status': ['operation', 'wait-ms'],
+    'auth-recovery-plan': [], 'auth-recovery-apply': ['plan', 'hash', 'operation', 'confirm'],
+    'auth-recovery-status': ['operation'], 'auth-recovery-check': ['operation'],
     list: ['entity', 'parent', 'limit', 'status'], get: ['entity', 'id', 'fields'], catalog: ['name'],
     stats: ['entity', 'ids', 'from', 'to', 'family', 'period', 'metrics', 'attribution', 'conversion-type', 'breakdown'],
     audiences: ['id', 'limit'], sources: ['type', 'id', 'limit'], 'vk-groups': ['query', 'limit'], 'counter-goals': ['id'], placements: ['group'], optimization: ['group'],
@@ -28,6 +31,7 @@ export function argumentsOf(args) {
   return { command, flags };
 }
 export async function accountApi(store, initialCredentials, options = {}) {
+  assertAuthRecoveryIdle(await store.read());
   let api = new Api(initialCredentials, options);
   if (api.access) return api;
   const expected = hash(stable(credentials(initialCredentials)));
@@ -38,6 +42,7 @@ export async function accountApi(store, initialCredentials, options = {}) {
   // pending setup must still block before any OAuth request.
   return store.lock(async () => {
     const current = await store.read();
+    assertAuthRecoveryIdle(current);
     check(current.credentials && hash(stable(credentials(current.credentials))) === expected, 'credentials_changed');
     check(!current.setup || !['starting', 'waiting_input', 'checking'].includes(current.setup.phase), 'setup_already_pending');
     api = new Api(current.credentials, options);
@@ -53,11 +58,13 @@ export async function configureWorker(store, operation, { prompt = input, makeAp
   try {
     await store.lock(async () => {
       const state = await store.read(); check(state.setup?.id === operation && state.setup.scope === scope(store.owner) && state.setup.expires > Date.now(), 'setup_scope_or_expiry_invalid');
+      assertAuthRecoveryIdle(state);
       state.setup.pid = process.pid; state.setup.phase = 'waiting_input'; await store.write(state);
     });
     value = await prompt();
     await store.lock(async () => {
       const state = await store.read(); check(state.setup?.id === operation && state.setup.scope === scope(store.owner) && state.setup.expires > Date.now(), 'setup_scope_or_expiry_invalid');
+      assertAuthRecoveryIdle(state);
       // Persist encrypted credentials even if the readiness probe is offline.
       // An explicit replacement retains the old value until submission succeeds.
       state.credentials = value;
@@ -105,12 +112,19 @@ export async function main(args = process.argv.slice(2), env = process.env) {
   if (command === '__trelio_accounts_import') return { schemaVersion: 1, accounts: [] };
   const owner = identity(env);
   if (command === 'reference') {
-    check(['workflow', 'security', 'diagnostics', 'audience-management', 'status-recovery'].includes(flags.name), 'reference_invalid');
+    check(['workflow', 'security', 'diagnostics', 'audience-management', 'status-recovery', 'auth-recovery'].includes(flags.name), 'reference_invalid');
     return { markdown: await fs.readFile(new URL(`../references/${flags.name}.md`, import.meta.url), 'utf8') };
   }
   const store = new Store(configRoot(env), owner);
   try {
     await store.init();
+    // Recovery planning/status does not call accountApi: issuing a token just
+    // to prepare a plan would consume the very quota this flow must repair.
+    const recovery = new AuthRecovery(store);
+    if (command === 'auth-recovery-plan') return await recovery.plan();
+    if (command === 'auth-recovery-apply') return await recovery.apply(flags.plan, flags.hash, flags.operation, flags.confirm);
+    if (command === 'auth-recovery-status') return await recovery.status(flags.operation);
+    if (command === 'auth-recovery-check') return await recovery.check(flags.operation);
     if (command === '__configure-worker') {
       check(UUID.test(flags.operation || ''), 'setup_not_found');
       // The parent persists the child PID and releases the setup lock before
@@ -128,6 +142,7 @@ export async function main(args = process.argv.slice(2), env = process.env) {
       const operation = crypto.randomUUID();
       await store.lock(async () => {
         const state = await store.read();
+        assertAuthRecoveryIdle(state);
         check(!state.setup || !['starting', 'waiting_input', 'checking'].includes(state.setup.phase) || state.setup.expires <= Date.now(), 'setup_already_pending');
         check(!Object.values(state.operations).some(r => ['unknown', 'written_unverified'].includes(r.phase)), 'unresolved_write_blocks_reconfigure');
         state.setup = { id: operation, scope: scope(owner), phase: 'starting', expires: Date.now() + 5 * 60 * 1000 }; await store.write(state);
@@ -145,7 +160,7 @@ export async function main(args = process.argv.slice(2), env = process.env) {
     if (command === 'reset') {
       check(flags.confirm === 'delete-local-credentials', 'confirmation_required');
       return await store.lock(async () => {
-        const state = await store.read(); check(!state.setup || !['starting', 'waiting_input', 'checking'].includes(state.setup.phase), 'setup_already_pending');
+        const state = await store.read(); assertAuthRecoveryIdle(state); check(!state.setup || !['starting', 'waiting_input', 'checking'].includes(state.setup.phase), 'setup_already_pending');
         // Reset credentials, not receipts: deleting an unknown write history
         // would make resetting a way to duplicate an advertising mutation.
         state.credentials = null; state.plans = Object.fromEntries(Object.entries(state.plans).filter(([key]) => Object.values(state.operations).some(r => r.planId === key)));
@@ -162,6 +177,7 @@ export async function main(args = process.argv.slice(2), env = process.env) {
         receipt.phase = 'accepted_unknown'; receipt.humanAcceptedUnverifiedResult = true; await store.write(latest); return receipt;
       });
     }
+    assertAuthRecoveryIdle(state);
     if (!state.credentials) return { availability: 'setup_required', runtimeVersion: VERSION, requiredAction: 'Create/select a local account, then configure' };
     check(!state.setup || !['starting', 'waiting_input', 'checking'].includes(state.setup.phase), 'setup_already_pending');
     const api = await accountApi(store, state.credentials), ops = new Operations(store, api);

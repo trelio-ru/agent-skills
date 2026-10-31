@@ -73,8 +73,12 @@ credential identity; plaintext/argv/ordinary env не используются. 
 переиспользуют её. Refresh значения редактируются и отражаются только privately,
 обычные API ответы дополнительно очищаются от совпадений с refresh.
 Утраченное старой версией значение не добывается из logs или стороннего store.
-Массовый token/delete не является recovery и не предоставлен в CLI; отсутствующий
-документированный точечный revoke нельзя заменять угаданным API или reset.
+Массовый token/delete не является автоматическим или точечным recovery.
+Только отдельное решение на ВСЕ grants выбранного пользователя допускает
+[auth recovery](auth-recovery.md): bound plan, один revoke, одна initial выдача,
+encrypted pair до GET и persistent unknown-fence. Обычные auth, reset и configure
+не обходят pending recovery. API acknowledgement не является inventory proof
+остальных grants. Отсутствующий точечный revoke не заменяется угаданным API.
 Запись атомарна; unknown receipt сохраняется до network dispatch. Максимум
 100 plans/1000 receipts и 4 MiB ciphertext; автоматического удаления pending
 или unknown evidence нет. При лимите требуется отдельное maintenance решение,

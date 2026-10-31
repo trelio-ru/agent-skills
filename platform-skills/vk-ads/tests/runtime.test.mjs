@@ -8,6 +8,7 @@ import http from 'node:http';
 import { identity, credentials, Fault, hash, scope, clean, date } from '../scripts/core.mjs';
 import { Store, privateProcess } from '../scripts/storage.mjs';
 import { Api, safeApiErrorDetails, apiValidationDetails } from '../scripts/api.mjs';
+import { AuthRecovery, assertAuthRecoveryIdle } from '../scripts/auth-recovery.mjs';
 import { Operations, prepare, matches } from '../scripts/operations.mjs';
 import { input } from '../scripts/form.mjs';
 import { argumentsOf, configureWorker, setupStatus, accountApi } from '../scripts/trelio-vk-ads.mjs';
@@ -51,6 +52,138 @@ async function fixture(t, options = { codec: codec() }) {
     progress('ready'); return store;
   } finally { clearTimeout(watchdog); }
 }
+// Logical failure injection does not need OS credentials or a test switch in
+// the shipped CLI. The real encrypted Store roundtrip is tested separately.
+function recoveryMemory() {
+  let value = { credentials: auth(), operations: { previous: { phase: 'unknown' } }, plans: { previous: { kept: true } }, setup: null }, locked = false;
+  return { owner: owner(), read: async () => structuredClone(value), write: async state => { value = structuredClone(state); },
+    lock: async action => { assert.equal(locked, false); locked = true; try { return await action(); } finally { locked = false; } } };
+}
+test('auth recovery persists one reviewed revoke/issuance and encrypted pair before read-back on both account modes', async t => {
+  for (const mode of ['client', 'agency']) {
+    const store = await fixture(t), state = await store.read();
+    state.credentials.mode = mode; state.credentials.agency_client = mode === 'agency' ? 'synthetic-agency-user' : '';
+    state.operations.previous = { phase: 'unknown', planId: 'kept' }; state.plans.kept = { kept: true }; await store.write(state);
+    const before = structuredClone(state), calls = [];
+    const fetcher = async (url, options) => {
+      calls.push([url.pathname, options.method]); assert.equal(url.origin, 'https://ads.vk.com'); assert.equal(options.redirect, 'error');
+      const saved = await store.read(), record = saved.authRecoveryOperations['restore-once'];
+      if (url.pathname.endsWith('token/delete.json')) {
+        assert.equal(record.phase, 'revoke_unknown'); assert.equal(options.headers.Authorization, undefined);
+        assert.equal(options.body.get('client_id'), 'synthetic-client'); assert.equal(options.body.get('client_secret'), 'synthetic-only-secret');
+        assert.equal(options.body.get('username'), mode === 'agency' ? 'synthetic-agency-user' : null);
+        return mode === 'agency' ? new Response(null, { status: 204 }) : json({ ignored_private_text: 'synthetic-only-secret' });
+      }
+      if (url.pathname.endsWith('token.json')) {
+        assert.equal(record.phase, 'mint_unknown');
+        assert.equal(options.body.get('grant_type'), mode === 'agency' ? 'agency_client_credentials' : 'client_credentials');
+        assert.equal(options.body.has('refresh_token'), false);
+        return json({ access_token: 'synthetic-recovered-access', refresh_token: 'synthetic-recovered-refresh', expires_in: 86400 });
+      }
+      assert.equal(options.method, 'GET'); assert.equal(record.phase, 'grant_saved');
+      assert.equal(saved.credentials.refresh_token, 'synthetic-recovered-refresh');
+      return json({ items: [], count: 0 });
+    };
+    const recovery = new AuthRecovery(store, { fetcher }), plan = await recovery.plan();
+    assert.equal(calls.length, 0); assert.doesNotMatch(JSON.stringify(plan), /synthetic-client|synthetic-only-secret|synthetic-agency-user/);
+    const result = await recovery.apply(plan.planId, plan.planHash, 'restore-once', 'revoke-all-user-grants');
+    assert.equal(result.phase, 'verified'); assert.equal(calls.length, 4);
+    assert.deepEqual(await recovery.apply(plan.planId, plan.planHash, 'restore-once', 'revoke-all-user-grants'), result);
+    assert.equal(calls.length, 4); await assert.rejects(recovery.apply(plan.planId, plan.planHash, 'another-op', 'revoke-all-user-grants'), { code: 'auth_recovery_plan_already_used' });
+    const saved = await store.read(); assert.deepEqual(saved.operations, before.operations); assert.deepEqual(saved.plans, before.plans);
+    assert.equal(saved.credentials.refresh_token, 'synthetic-recovered-refresh'); assertAuthRecoveryIdle(saved);
+    assert.doesNotMatch(await fs.readFile(path.join(store.dir, 'state.enc'), 'utf8'), /synthetic-recovered-access|synthetic-recovered-refresh/);
+    assert.doesNotMatch(JSON.stringify(result), /synthetic-only-secret|synthetic-recovered-access|synthetic-recovered-refresh/);
+  }
+});
+test('auth recovery rejects missing approval, changed credentials, expired and foreign plans before HTTP', async t => {
+  let now = 1800000000000; t.mock.method(Date, 'now', () => now);
+  const store = recoveryMemory(); let calls = 0;
+  const recovery = new AuthRecovery(store, { fetcher: async () => { calls++; throw Error('no IO'); } }), plan = await recovery.plan();
+  await assert.rejects(recovery.apply(plan.planId, plan.planHash, 'restore', ''), { code: 'confirmation_required' });
+  const other = { ...store, owner: { ...store.owner, binding: 'b'.repeat(64) } };
+  await assert.rejects(new AuthRecovery(other).apply(plan.planId, plan.planHash, 'restore', 'revoke-all-user-grants'), { code: 'auth_recovery_plan_invalid' });
+  const state = await store.read(); state.credentials.client_secret = 'synthetic-replacement'; await store.write(state);
+  await assert.rejects(recovery.apply(plan.planId, plan.planHash, 'restore', 'revoke-all-user-grants'), { code: 'credentials_changed' });
+  state.credentials = auth(); await store.write(state); now += 31 * 60 * 1000;
+  await assert.rejects(recovery.apply(plan.planId, plan.planHash, 'restore', 'revoke-all-user-grants'), { code: 'auth_recovery_plan_invalid' });
+  assert.equal(calls, 0); assert.equal(Object.keys((await store.read()).authRecoveryOperations || {}).length, 0);
+});
+test('unknown auth revocation is durable and fences retries, ordinary OAuth and another plan', async () => {
+  for (const status of ['network', 429, 503, 202]) {
+    const store = recoveryMemory(), before = await store.read(); let calls = 0;
+    const options = { fetcher: async () => { calls++; if (status === 'network') throw Error('private'); return json({ private: 'synthetic-only-secret' }, status); } };
+    const recovery = new AuthRecovery(store, options), plan = await recovery.plan();
+    const result = await recovery.apply(plan.planId, plan.planHash, 'unknown-revoke', 'revoke-all-user-grants');
+    assert.equal(result.phase, 'revoke_unknown'); assert.equal(calls, 1);
+    const restarted = new AuthRecovery(store, options);
+    assert.deepEqual(await restarted.apply(plan.planId, plan.planHash, 'unknown-revoke', 'revoke-all-user-grants'), result);
+    await assert.rejects(restarted.plan(), { code: 'auth_recovery_unresolved' });
+    await assert.rejects(restarted.check('unknown-revoke'), { code: 'auth_recovery_outcome_unknown' });
+    await assert.rejects(accountApi(store, before.credentials, options), { code: 'auth_recovery_unresolved' });
+    const saved = await store.read(); assert.deepEqual(saved.credentials, before.credentials); assert.deepEqual(saved.operations, before.operations);
+    assert.equal(calls, 1); assert.doesNotMatch(JSON.stringify(result), /synthetic-only-secret|private/);
+  }
+});
+test('a rejected revoke never mints and a failed issuance never repeats or erases old evidence', async () => {
+  for (const rejected of [true, false]) {
+    const store = recoveryMemory(), before = await store.read(); const calls = [];
+    const recovery = new AuthRecovery(store, { fetcher: async url => {
+      calls.push(url.pathname);
+      return url.pathname.endsWith('delete.json') ? json({}, rejected ? 403 : 200) : json({ error: 'token_limit_exceeded' }, 403);
+    } });
+    const plan = await recovery.plan(), result = await recovery.apply(plan.planId, plan.planHash, 'failed-recovery', 'revoke-all-user-grants');
+    assert.equal(result.phase, rejected ? 'revoke_rejected' : 'mint_unknown'); assert.equal(calls.length, rejected ? 1 : 2);
+    await recovery.apply(plan.planId, plan.planHash, 'failed-recovery', 'revoke-all-user-grants'); assert.equal(calls.length, rejected ? 1 : 2);
+    const saved = await store.read(); assert.deepEqual(saved.credentials, before.credentials); assert.deepEqual(saved.operations, before.operations);
+  }
+});
+test('failed recovery read-back keeps the new pair and check is GET-only', async () => {
+  const store = recoveryMemory(); let readsFail = true; const calls = [];
+  const options = { sleep: async () => {}, fetcher: async (url, options) => {
+    calls.push([url.pathname, options.method]);
+    if (url.pathname.endsWith('delete.json')) return json({});
+    if (url.pathname.endsWith('token.json')) return json({ access_token: 'synthetic-new-access', refresh_token: 'synthetic-new-refresh', expires_in: 86400 });
+    return readsFail ? json({}, 503) : json({ items: [], count: 0 });
+  } };
+  const recovery = new AuthRecovery(store, options), plan = await recovery.plan();
+  const result = await recovery.apply(plan.planId, plan.planHash, 'read-failed', 'revoke-all-user-grants');
+  assert.equal(result.phase, 'grant_saved'); assert.equal((await store.read()).credentials.refresh_token, 'synthetic-new-refresh');
+  readsFail = false; const count = calls.length;
+  assert.equal((await new AuthRecovery(store, options).check('read-failed')).phase, 'verified');
+  assert.deepEqual(calls.slice(count).map(c => c[1]), ['GET', 'GET']); assert.equal(calls.filter(c => c[1] === 'POST').length, 2);
+});
+test('failure to persist a newly issued pair keeps the mint fence after restart', async () => {
+  const store = recoveryMemory(), originalWrite = store.write; let posts = 0;
+  store.write = async state => {
+    if (Object.values(state.authRecoveryOperations || {}).some(r => r.phase === 'grant_saved')) throw new Fault('native_storage_unavailable');
+    return originalWrite(state);
+  };
+  const options = { fetcher: async url => { posts++; return url.pathname.endsWith('delete.json') ? json({})
+    : json({ access_token: 'synthetic-not-persisted', refresh_token: 'synthetic-not-persisted-refresh', expires_in: 86400 }); } };
+  const recovery = new AuthRecovery(store, options), plan = await recovery.plan();
+  await assert.rejects(recovery.apply(plan.planId, plan.planHash, 'save-failed', 'revoke-all-user-grants'), { code: 'native_storage_unavailable' });
+  assert.equal((await new AuthRecovery(store, options).status('save-failed')).phase, 'mint_unknown');
+  await recovery.apply(plan.planId, plan.planHash, 'save-failed', 'revoke-all-user-grants'); assert.equal(posts, 2);
+  await assert.rejects(accountApi(store, (await store.read()).credentials, options), { code: 'auth_recovery_unresolved' });
+});
+test('auth recovery never revokes a usable cache or hides OAuth inside an expired read-back check', async t => {
+  let now = 1800000000000; t.mock.method(Date, 'now', () => now);
+  const store = recoveryMemory(), initial = await store.read(); let calls = 0;
+  initial.credentials = { ...auth(), access_token: 'synthetic-usable', expires_at: now + 86400000 }; await store.write(initial);
+  const options = { sleep: async () => {}, fetcher: async url => {
+    calls++;
+    if (url.pathname.endsWith('delete.json')) return json({});
+    if (url.pathname.endsWith('token.json')) return json({ access_token: 'synthetic-new', refresh_token: 'synthetic-refresh', expires_in: 86400 });
+    return json({}, 503);
+  } };
+  const recovery = new AuthRecovery(store, options);
+  await assert.rejects(recovery.plan(), { code: 'auth_recovery_not_needed' }); assert.equal(calls, 0);
+  initial.credentials = auth(); await store.write(initial);
+  const plan = await recovery.plan(); assert.equal((await recovery.apply(plan.planId, plan.planHash, 'expires-later', 'revoke-all-user-grants')).phase, 'grant_saved');
+  const count = calls; now += 2 * 86400000;
+  await assert.rejects(recovery.check('expires-later'), { code: 'auth_recovery_access_expired' }); assert.equal(calls, count);
+});
 test('host identity requires an exact selected local account; metadata cannot choose a path', () => {
   const o = owner(), env = { TRELIO_SKILL_ID: 'vk-ads', TRELIO_SKILL_COMPANY_ID: o.company, TRELIO_SKILL_MEMBER_ID: o.member,
     TRELIO_SKILL_ACCOUNT_JSON: JSON.stringify({ id: o.account, providerRef: null, companyBinding: o.binding, name: '../../elsewhere' }) };
