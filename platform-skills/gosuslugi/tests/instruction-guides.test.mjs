@@ -1,3 +1,4 @@
+import { stripAgentSkillCatalogMetadata } from "../../tools/skill-source-metadata.mjs";
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
@@ -10,13 +11,16 @@ const root = new URL('../', import.meta.url);
 const hash = text => crypto.createHash('sha256').update(text).digest('hex');
 
 test('short main instructions fit publication budget and the complete current contract matches its pinned map', async () => {
-  const main = await fs.readFile(new URL('SKILL.md', root), 'utf8');
+  // Catalog-only fields were never part of the pinned operational contract.
+  // Reconstruct the same instruction projection used by publication, without
+  // changing historical hashes or removing any original safety text.
+  const main = stripAgentSkillCatalogMetadata(await fs.readFile(new URL('SKILL.md', root), 'utf8'));
   assert.ok(Buffer.byteLength(main.trim()) <= 16384);
   const map = JSON.parse(await fs.readFile(new URL('references/instruction-map.json', root), 'utf8'));
   const recovered = [];
   for (const section of map.sections) {
     const body = (await fs.readFile(new URL(section.file, root), 'utf8')).replace(/\r\n?/g, '\n');
-    let exact = section.file === 'SKILL.md' ? body.split(/^## /m)[0] : body;
+    let exact = section.file === 'SKILL.md' ? stripAgentSkillCatalogMetadata(body).split(/^## /m)[0] : body;
     for (const rewrite of section.relocatedLinks ?? []) exact = exact.replaceAll(rewrite.to, rewrite.from);
     exact += section.sourceSuffix ?? '';
     assert.equal(hash(exact), section.sha256, section.heading);
