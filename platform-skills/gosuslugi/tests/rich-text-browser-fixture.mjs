@@ -149,6 +149,25 @@ export async function richTextBrowserSmoke(portal) {
       main.innerHTML='<div contenteditable="true" aria-label="Password"></div><div contenteditable="false">Не редактируется</div>';
     });
     assert.equal((await snapshot()).controls.some(control => control.type === 'contenteditable'), false, 'secret-labelled and readonly hosts have no refs');
+    await portal.page.locator('main').evaluate(main => {
+      main.innerHTML='<label for="native-text">Текст поля</label><input id="native-text">';
+      const field=main.querySelector('input');field.pattern='[A-Za-z —]+';field.maxLength=40;
+      window.nativeInputs=0;field.oninput=()=>window.nativeInputs++;
+    });
+    const native = (await snapshot()).controls.find(control => control.tag === 'input');
+    assert.deepEqual(native.inputConstraints, { pattern: '[A-Za-z —]+', maxLength: 40 });
+    await assert.rejects(portal.action({ action: 'fill', ref: native.ref, text: 'Text – text' }), /input_pattern_rejected/);
+    assert.equal(await portal.page.evaluate(() => window.nativeInputs), 0, 'unsupported punctuation is rejected before touching the real field');
+    await portal.action({ action: 'fill', ref: native.ref, text: 'Text — text' });
+    assert.equal(await portal.page.locator('#native-text').inputValue(), 'Text — text', 'the same unchanged ref permits a corrected, not-yet-dispatched input');
+    const changed = (await snapshot()).controls.find(control => control.tag === 'input');
+    await portal.page.locator('#native-text').evaluate(node => node.maxLength=5);
+    await assert.rejects(portal.action({ action: 'fill', ref: changed.ref, text: 'ABC' }), /fresh_snapshot_required/);
+    const limited = (await snapshot()).controls.find(control => control.tag === 'input');
+    const events=await portal.page.evaluate(() => window.nativeInputs);
+    await assert.rejects(portal.action({ action: 'fill', ref: limited.ref, text: 'ABCDEF' }), /input_length_rejected/);
+    assert.equal(await portal.page.evaluate(() => window.nativeInputs), events);
+    await portal.action({ action: 'fill', ref: limited.ref, text: 'ABC' });
     await portal.page.goto('https://esia.gosuslugi.ru/login/');
     await assert.rejects(snapshot(), /authentication_is_private/, 'adding editing hosts cannot expose an auth document');
   } finally {

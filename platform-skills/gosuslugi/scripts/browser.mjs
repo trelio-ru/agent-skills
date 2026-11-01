@@ -97,6 +97,18 @@ function pageControl(node, expected = null) {
   const meta = { tag: node.tagName.toLowerCase(), type: node.getAttribute('type') || '',
     label: (node.getAttribute('aria-label') || node.labels?.[0]?.textContent ||
       (node.tagName === 'INPUT' ? '' : node.textContent) || '').trim().slice(0, 160) };
+  if (['input', 'textarea'].includes(meta.tag)) {
+    // Publish only constraints actually declared by this field, never a portal-
+    // wide character allowlist. HTML pattern belongs to INPUT, not textarea or
+    // Quill. Binding it into metadata also invalidates refs after a rule change.
+    const textInput = meta.tag === 'input' && ['text', 'search', 'tel', 'url', 'email', 'password'].includes(node.type);
+    const pattern = textInput ? node.getAttribute('pattern') : null;
+    const inputConstraints = {
+      ...(pattern !== null && pattern.length <= 2048 ? { pattern } : {}),
+      ...((textInput || meta.tag === 'textarea') && Number.isInteger(node.maxLength) && node.maxLength >= 0 ? { maxLength: node.maxLength } : {}),
+    };
+    if (Object.keys(inputConstraints).length) meta.inputConstraints = inputConstraints;
+  }
   // The FSSP wizard names a category with an infinitive ("Подать …"). That
   // preparatory choice is not a submission, but the generic dangerous-label
   // filter also matches it. Recognize only this exact category on its official
@@ -162,6 +174,17 @@ function editableText(node, kind) {
   };
   const text = [...node.childNodes].map(read).join('');
   return text.endsWith('\n') ? text.slice(0, -1) : text;
+}
+
+function nativePatternAccepts(node, text) {
+  if (node.tagName !== 'INPUT' || !node.hasAttribute('pattern')) return true;
+  // A detached clone uses the browser's own HTML pattern semantics, including
+  // Unicode sets, without changing the real field, firing input/invalid events
+  // or calling a service. Backend-only and undeclared rules remain unknown.
+  const probe = node.cloneNode(false);
+  probe.removeAttribute('id'); probe.removeAttribute('form'); probe.disabled = false;
+  probe.value = text;
+  return !probe.validity.patternMismatch;
 }
 
 export async function installPopupGuard(context) {
@@ -542,8 +565,14 @@ export class Portal {
       const editor = fresh.binding?.kind === 'contenteditable';
       requireThat((editor || ['input', 'textarea'].includes(target.meta.tag)) && !/password|file|hidden|submit|button/.test(target.meta.type) &&
         typeof packet.text === 'string' && packet.text.length <= 10000, 'input_not_allowed');
-      this.controls.clear(); await this.permit();
       const text = packet.text.replace(/\r\n?/g, '\n');
+      const maximum = fresh.inputConstraints?.maxLength;
+      requireThat(maximum === undefined || text.length <= maximum, 'input_length_rejected');
+      await this.permit();
+      requireThat(await target.element.evaluate(nativePatternAccepts, text), 'input_pattern_rejected');
+      // Preflight rejection has made no input attempt and retains the ref.
+      // Consume it only when dispatch is imminent; never repeat a sent fill.
+      this.controls.clear(); await this.permit();
       // Playwright's native fill dispatches browser input events. Setting
       // innerHTML/textContent or calling Quill.setText would bypass the site's
       // form integration and could leave a visually filled but empty petition.

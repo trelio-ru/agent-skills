@@ -43,6 +43,24 @@ try {
   owned = await launchOwnedBrowser({ playwright: await loadPlaywright(config.root), permit });
   const browserPid = owned.server.process().pid;
   assertBrowserInBackground(browserPid);
+  if (config.scene === 'rich-text') {
+    // Keep the expanded editor/constraint suite in its own original one-minute
+    // native lease. More regressions must not relax the watchdog or make the
+    // unrelated authentication fixture race the same deadline.
+    const portal = new Portal(owned.browser, permit, { onPhase: () => {}, persist: async () => {} });
+    portal.context = await owned.browser.newContext({ viewport: null, serviceWorkers: 'block' });
+    await installPopupGuard(portal.context);
+    await portal.context.route('**/*', route => route.abort());
+    portal.page = await portal.context.newPage();
+    await checkpoint('rich_text_input');
+    await richTextBrowserSmoke(portal);
+    assertBrowserInBackground(browserPid, 'rich-text input');
+    const completed = cleanup => fs.writeFile(config.file,
+      JSON.stringify({ ok: true, openings: 0, browserPid, phase: 'ready', cleanup }), { mode: 0o600 });
+    const fallback = setTimeout(async () => { await completed('native_fallback'); process.exit(0); }, 2000);
+    await portal.close(); await owned.browser.close(); await owned.server.close();
+    clearTimeout(fallback); await completed('graceful'); process.exit(0);
+  }
   await checkpoint('inactive_window_creation');
   const focusContext = await owned.browser.newContext({ viewport: null });
   await focusContext.newPage();
@@ -134,9 +152,6 @@ else{throw Error('must not double-submit segmented code')}};</script></body></ht
   await checkpoint('fssp_category_navigation');
   await petitionCategoryBrowserSmoke(portal);
   assertBrowserInBackground(browserPid, 'FSSP category navigation');
-  await checkpoint('rich_text_input');
-  await richTextBrowserSmoke(portal);
-  assertBrowserInBackground(browserPid, 'rich-text input');
   await checkpoint('explicit_role_choice');
   await portal.page.goto('https://roles.gosuslugi.ru/roles');
   assert.equal(await portal.authenticate(credentials, 'manual'), false);

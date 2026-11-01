@@ -364,6 +364,9 @@ exact origin/path, native non-submit button, отсутствие полей, п
 Один textarea fixture не доказывает rich-text ввод. `contenteditable` ref
 связан с actual editing host/owner; текст не становится label/metadata,
 `inputVerified` подтверждает только ввод, mismatch не разрешает его повтор.
+Символы проверяй по правилам конкретного поля: native pattern/maxLength до
+input, скрытые backend validators по фактической валидации. Наблюдавшийся
+отказ одного вида тире не становится общим алфавитом всех форм Госуслуг.
 Подсказка ручного восстановления должна содержать официальный маршрут из
 trusted source и сохраняться в закрытом статусе; provider text не задаёт её URL.
 Нормальный cleanup и аварийный выход используют одну bounded projection receipt.

@@ -668,6 +668,15 @@ Dedicated hosted/self-hosted workflow делает эту подготовку �
 Native auth/origin/permit, опасные кнопки и финальная подача сохраняют прежние
 границы; iframe/generic browser fallback не добавляются.
 
+Для native полей snapshot отдаёт только реально объявленные maxLength и
+INPUT pattern (bounded 2048 symbols) в `inputConstraints`. Fill до dispatch
+проверяет длину и pattern на detached clone через native `validity.patternMismatch`:
+нет записи в source field, input/invalid event или сетевого запроса. Отказ
+`input_length_rejected`/`input_pattern_rejected` сохраняет ещё не отправленный
+ref; изменение правил требует нового snapshot. Общая таблица символов,
+эвристический ASCII-only запрет и скрытая замена текста не вводятся. Quill,
+textarea и backend-only правила не объявляются проверенными HTML pattern.
+
 В exact форме ФССП `https://www.gosuslugi.ru/600367/1/form` выбор категории
 «Подать ходатайство или объяснение» не считается финальной подачей. Узкое
 исключение из dangerous-label gate требует единственную видимую enabled
