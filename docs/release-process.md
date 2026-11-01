@@ -44,15 +44,29 @@ node ops/scripts/publish_agent_skill_release.mjs \
 
 ## Telegram MTProto
 
-Его общий код и синтетические тесты публичны. Реальная Telegram application
-identity не переносится в этот репозиторий, его secrets или публичные artifacts.
-Public tag не собирает пакет с таким input. Production artifact по-прежнему
-собирается в приватном release-контуре из проверенного снимка общего source;
-guarded publication явно указывает исходный приватный repository. Это отдельная
-сборочная граница, а не разрешение вести две независимо изменяемые реализации.
-Перед release сверяются файлы runtime, инструкции и manifest с exact public SHA.
-Provider tests должны выполняться и в private contour: новые helpers вне
-копируемого provider tree не становятся неявной зависимостью snapshot.
+Код и полные provider tests выполняются в этом публичном репозитории на
+Linux/macOS/Windows. После зелёного exact PR SHA tagged job повторно проверяет
+эти три успешных jobs и source-boundary gate, затем сохраняет один
+`telegram-mtproto-<version>.skilltmpl`. Повторной private копии source и полного
+provider suite не требуется; historical private tags и artifacts неизменяемы.
+
+Builder с `--template-release-inputs` создаёт формат
+`trelio-agent-skill-package-template/v1`. Он сохраняет все source-backed файлы
+байт в байт и только descriptor `telegram_application_identity_v1` для exact
+`telegram-app-credentials.json` (0644). Значение environment input даже не
+читается. В public GitHub нет реальной пары, repository secret или готового
+пакета с ней. Template не является installable/signed runtime.
+
+Guarded backend publisher проверяет template и его исходный digest, затем в
+защищённом серверном процессе добавляет application identity, проверяет обычный
+`trelio-agent-skill-package/v1` и подписывает exact final bytes. План связывает
+public template digest, fingerprint серверного input и final package digest;
+смена любого из них требует нового плана. Модель и local publisher получают
+только hashes и metadata, без identity либо materialized package bytes.
+Backend должен поддерживать этот flow и иметь настроенный protected input до
+первого выпуска public template. Старые installable packages и их provenance
+не переписываются. Проверки materialization/signing принадлежат backend;
+они не повторяют Telegram browser/native provider suites.
 
 Application identity намеренно извлекаема получателями установленного package;
 это не разрешает публиковать её в GitHub. Личные sessions, OTP, пароли и keys

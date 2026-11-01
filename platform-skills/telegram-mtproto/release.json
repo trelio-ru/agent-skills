@@ -48,6 +48,7 @@
       {
         "sourceEnvironment": "TRELIO_TELEGRAM_APP_CREDENTIAL_JSON",
         "releaseInputExposure": "package-recipient",
+        "backendBinding": "telegram_application_identity_v1",
         "path": "telegram-app-credentials.json",
         "mode": 420
       },

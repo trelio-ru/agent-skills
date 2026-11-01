@@ -93,8 +93,9 @@ node platform-skills/tools/check-public-source.mjs
 ```
 
 [Порядок выпуска](docs/release-process.md) сохраняет production signing на
-backend. Telegram application identity и сборка содержащего её artifact остаются
-в приватном release-контуре. Корпоративные source и старые artifacts сохраняются
+backend. Telegram CI сохраняет credential-free `.skilltmpl`; backend добавляет
+application identity перед подписью final package. Полные provider tests
+выполняются только здесь, сервер отдельно проверяет materialization/signing. Корпоративные source и старые artifacts сохраняются
 приватными. Лицензии сторонних компонентов лежат рядом с их исходниками;
 отдельная новая лицензия на весь проект этим переносом не вводится.
 

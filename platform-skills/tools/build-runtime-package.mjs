@@ -13,6 +13,10 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 export const PACKAGE_FORMAT = "trelio-agent-skill-package/v1";
+// A template is deliberately not an installable package. Only the trusted
+// backend can materialize its explicitly supported input before signing v1.
+export const PACKAGE_TEMPLATE_FORMAT = "trelio-agent-skill-package-template/v1";
+const TELEGRAM_APPLICATION_BINDING = "telegram_application_identity_v1";
 const STABLE_VERSION = /^\d+\.\d+\.\d+$/u;
 const SKILL_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const COMPANY_PRIVATE_SKILL_ID = /^(company-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})-([a-z0-9]+(?:-[a-z0-9]+)*)$/u;
@@ -474,16 +478,17 @@ const readReleaseDefinition = (skillDirectory) => {
  */
 export const buildRuntimePackage = (
   rawSkillDirectory,
-  { environment = process.env } = {},
+  { environment = process.env, templateReleaseInputs = false } = {},
 ) => {
   const skillDirectory = path.resolve(rawSkillDirectory);
   const definition = readReleaseDefinition(skillDirectory);
   const seenPackagePaths = new Set();
+  const releaseInputs = [];
   const files = definition.runtime.files.map((rawFile, index) => {
     const file = assertObject(rawFile, `runtime.files[${index}]`);
     assertExactKeys(
       file,
-      new Set(["source", "sourceEnvironment", "releaseInputExposure", "path", "mode"]),
+      new Set(["source", "sourceEnvironment", "releaseInputExposure", "backendBinding", "path", "mode"]),
       `runtime.files[${index}]`,
     );
     const hasRepositorySource = Object.hasOwn(file, "source");
@@ -500,6 +505,14 @@ export const buildRuntimePackage = (
       throw new Error(
         `runtime.files[${index}].releaseInputExposure must explicitly equal package-recipient only for sourceEnvironment.`,
       );
+    }
+    if (Object.hasOwn(file, "backendBinding") && (
+      !hasEnvironmentSource || file.backendBinding !== TELEGRAM_APPLICATION_BINDING
+      || definition.release.skillId !== "telegram-mtproto"
+      || file.path !== "telegram-app-credentials.json" || file.mode !== 0o644
+      || file.sourceEnvironment !== "TRELIO_TELEGRAM_APP_CREDENTIAL_JSON"
+    )) {
+      throw new Error("Unsupported backend release input binding.");
     }
     const packagePath = validatePackagePath(
       file.path,
@@ -542,6 +555,16 @@ export const buildRuntimePackage = (
       if (!RELEASE_INPUT_ENVIRONMENT_KEY.test(sourceEnvironment)) {
         throw new Error(`runtime.files[${index}].sourceEnvironment is invalid.`);
       }
+      if (templateReleaseInputs) {
+        if (file.backendBinding !== TELEGRAM_APPLICATION_BINDING) {
+          throw new Error("A package template requires an explicit supported backendBinding.");
+        }
+        // Do not even access environment[sourceEnvironment] here. Public CI
+        // must be incapable of copying an accidentally present value into its
+        // artifact or diagnostic. Only a bounded value-free binding travels.
+        releaseInputs.push({binding: file.backendBinding, path: packagePath, mode: file.mode});
+        return null;
+      }
       const releaseInput = environment[sourceEnvironment];
       if (typeof releaseInput !== "string" || releaseInput.length === 0) {
         throw new Error(
@@ -566,20 +589,24 @@ export const buildRuntimePackage = (
       sha256: sha256(bytes),
       contentBase64: bytes.toString("base64"),
     };
-  });
+  }).filter(Boolean);
 
+  if (templateReleaseInputs && releaseInputs.length !== 1) {
+    throw new Error("A package template requires exactly one supported backend release input.");
+  }
   if (!seenPackagePaths.has(definition.entrypointPath.toLocaleLowerCase("en-US"))) {
     throw new Error("runtime.entrypoint.path is missing from runtime.files.");
   }
   const entrypointFile = files.find((file) => file.path === definition.entrypointPath);
-  if (definition.runtime.entrypoint.interpreter === "executable" && entrypointFile?.mode !== 0o755) {
+  if (!entrypointFile) throw new Error("A release input cannot be the runtime entrypoint.");
+  if (definition.runtime.entrypoint.interpreter === "executable" && entrypointFile.mode !== 0o755) {
     throw new Error("An executable entrypoint must use mode 0755.");
   }
 
   // Property order and compact JSON are fixed so identical source produces
   // identical package bytes and therefore the same package SHA-256 everywhere.
   const runtimePackage = {
-    format: PACKAGE_FORMAT,
+    format: templateReleaseInputs ? PACKAGE_TEMPLATE_FORMAT : PACKAGE_FORMAT,
     skill: {
       id: definition.release.skillId,
       runtimeVersion: definition.runtime.version,
@@ -593,6 +620,7 @@ export const buildRuntimePackage = (
       ? { browserSession: definition.browserSession }
       : {}),
     files,
+    ...(templateReleaseInputs ? {releaseInputs} : {}),
   };
   // The final LF is part of the canonical package bytes. Besides keeping the
   // artifact a normal text file, it reproduces already published packages
@@ -618,6 +646,7 @@ export const buildRuntimePackage = (
       ...(runtimePackage.browserSession
         ? { browserSession: runtimePackage.browserSession }
         : {}),
+      ...(templateReleaseInputs ? {releaseInputs} : {}),
       files: files.map(({ contentBase64: _contentBase64, ...file }) => ({
         ...file,
         sizeBytes: Buffer.from(contentBase64For(file, runtimePackage), "base64").length,
@@ -636,6 +665,7 @@ const parseArguments = (argv) => {
     skillDirectory: "",
     outputPath: "",
     check: false,
+    templateReleaseInputs: false,
     expectedSkillVersion: "",
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -643,6 +673,7 @@ const parseArguments = (argv) => {
     if (argument === "--skill-dir") options.skillDirectory = argv[++index] || "";
     else if (argument === "--output") options.outputPath = argv[++index] || "";
     else if (argument === "--check") options.check = true;
+    else if (argument === "--template-release-inputs") options.templateReleaseInputs = true;
     else if (argument === "--expect-skill-version") {
       options.expectedSkillVersion = argv[++index] || "";
     } else {
@@ -658,7 +689,7 @@ const parseArguments = (argv) => {
 
 const run = () => {
   const options = parseArguments(process.argv.slice(2));
-  const result = buildRuntimePackage(options.skillDirectory);
+  const result = buildRuntimePackage(options.skillDirectory, {templateReleaseInputs: options.templateReleaseInputs});
   if (
     options.expectedSkillVersion
     && result.skillVersion !== options.expectedSkillVersion

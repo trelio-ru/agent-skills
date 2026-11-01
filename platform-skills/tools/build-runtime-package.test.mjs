@@ -418,3 +418,39 @@ test("personal accounts need an enforcing host and cannot bind company secrets",
     assert.throws(() => buildRuntimePackage(directory));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// Exercise the real Telegram inventory: public CI emits exactly the reviewed
+// source bytes, while accidental ambient identity input is never dereferenced.
+test("Telegram template is deterministic and cannot contain release input bytes", () => {
+  const root = fileURLToPath(new URL("../telegram-mtproto", import.meta.url));
+  const environment = new Proxy({}, {get() { throw new Error("release environment was read"); }});
+  const first = buildRuntimePackage(root, {templateReleaseInputs: true, environment});
+  const second = buildRuntimePackage(root, {templateReleaseInputs: true, environment});
+  assert.deepEqual(first.packageBytes, second.packageBytes);
+  const template = JSON.parse(first.packageBytes);
+  assert.equal(template.format, "trelio-agent-skill-package-template/v1");
+  assert.deepEqual(template.releaseInputs, [{binding: "telegram_application_identity_v1",
+    path: "telegram-app-credentials.json", mode: 420}]);
+  assert.equal(template.files.some(file => file.path === "telegram-app-credentials.json"), false);
+  const ordinary = JSON.parse(buildRuntimePackage(root, {environment: {
+    TRELIO_TELEGRAM_APP_CREDENTIAL_JSON: '{"api_id":"12345","api_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+  }}).packageBytes);
+  assert.deepEqual(template.files, ordinary.files.filter(file => file.path !== "telegram-app-credentials.json"));
+  assert.doesNotMatch(first.packageBytes.toString(), /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|api_hash|api_id/u);
+});
+
+test("templates refuse missing, misplaced or unknown backend bindings", t => {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "trelio-template-policy-"));
+  t.after(() => fs.rmSync(temporaryRoot, {recursive: true, force: true}));
+  const directory = writeFixture(temporaryRoot);
+  assert.throws(() => buildRuntimePackage(directory, {templateReleaseInputs: true}), /exactly one supported/u);
+  const file = path.join(directory, "release.json");
+  const definition = JSON.parse(fs.readFileSync(file, "utf8"));
+  definition.runtime.files.push({sourceEnvironment: "FIXTURE_DISTRIBUTABLE_INPUT",
+    releaseInputExposure: "package-recipient", path: "input.json", mode: 420});
+  fs.writeFileSync(file, JSON.stringify(definition));
+  assert.throws(() => buildRuntimePackage(directory, {templateReleaseInputs: true}), /explicit supported backendBinding/u);
+  definition.runtime.files[1].backendBinding = "telegram_application_identity_v1";
+  fs.writeFileSync(file, JSON.stringify(definition));
+  assert.throws(() => buildRuntimePackage(directory, {templateReleaseInputs: true}), /Unsupported backend release input binding/u);
+});

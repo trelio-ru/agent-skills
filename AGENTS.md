@@ -463,8 +463,10 @@ clean merged worktree и ветку. Новая лицензия без реше
 
 `Public source boundary` и check-public-source.mjs проверяют tracked snapshot
 перед каждым push. Корпоративные исходники не копируются даже как fixtures.
-Публикация исходников не разрешает перенос application identity; Telegram
-artifact собирается только в отдельном private release-контуре.
+Публикация исходников не разрешает перенос application identity. Telegram CI
+собирает только credential-free `.skilltmpl`, не читая release environment.
+Backend добавляет exact supported input перед подписью; template не может
+устанавливаться как обычный package. Контракт — docs/release-process.md.
 
 Новый Node provider регистрирует ci.json внутри своей папки; подготовка и
 полный тестовый entrypoint принадлежат provider. Изменения такой регистрации

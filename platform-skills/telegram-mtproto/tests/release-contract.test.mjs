@@ -8,9 +8,8 @@ import test from "node:test";
 import { buildRuntimePackage } from "../../tools/build-runtime-package.mjs";
 
 const repositoryRoot = new URL("../../../", import.meta.url);
-// The complete provider tree is vendored into the private identity build.
-// Keep corpus assembly in this provider test: a new public-only helper outside
-// that tree would make the exact reviewed snapshot fail in its release contour.
+// Keep corpus assembly provider-owned. The public template and the backend
+// materialization must deliver the same complete reviewed instruction corpus.
 // The shared artifact contract above independently verifies the original hashes.
 const skillRoot = new URL("../", import.meta.url);
 const guideMap = JSON.parse(await readFile(new URL("scripts/instruction-guides/map.json", skillRoot), "utf8"));
@@ -128,6 +127,7 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
   assert.deepEqual(identityDeclarations[0], {
     sourceEnvironment: "TRELIO_TELEGRAM_APP_CREDENTIAL_JSON",
     releaseInputExposure: "package-recipient",
+    backendBinding: "telegram_application_identity_v1",
     path: "telegram-app-credentials.json",
     mode: 420,
   });

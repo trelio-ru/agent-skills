@@ -241,9 +241,9 @@ jobs:
 
   tagged-package:
     name: Retain tagged skill release
-    # Telegram source is public, but its application-identity build stays in
-    # the private release contour; public artifacts must never embed it.
-    if: startsWith(github.ref, 'refs/tags/skill-') && !startsWith(github.ref, 'refs/tags/skill-telegram-mtproto-')
+    # Public Telegram templates contain no application identity. The backend
+    # materializes the final ordinary package immediately before signing.
+    if: startsWith(github.ref, 'refs/tags/skill-')
     # Release artifacts follow the same GitHub-first policy as PR checks.
     # The explicit fallback is temporary and requires confirmed hosted quota /
     # billing exhaustion; an unset variable must never queue a local runner.
@@ -284,7 +284,7 @@ jobs:
           echo "skill_version=$skill_version" >> "$GITHUB_OUTPUT"
           echo "release_kind=$release_kind" >> "$GITHUB_OUTPUT"
       - name: Verify exact tagged source already passed pull-request gates
-        if: contains(fromJSON('["t-bank", "whatsapp-web"]'), steps.tag.outputs.skill_directory_id)
+        if: contains(fromJSON('["t-bank", "whatsapp-web", "telegram-mtproto"]'), steps.tag.outputs.skill_directory_id)
         uses: actions/github-script@v7
         with:
           script: |
@@ -299,8 +299,10 @@ jobs:
               core.setFailed('tagged_source_is_not_reachable_from_default_branch');
               return;
             }
-            const required = ['${{ steps.tag.outputs.skill_directory_id }}' === 't-bank'
-              ? 'T-Bank cross-platform security' : 'WhatsApp browser compatibility'];
+            const skill = '${{ steps.tag.outputs.skill_directory_id }}';
+            const required = skill === 'telegram-mtproto'
+              ? ['Platform skill runtimes', 'Public source boundary']
+              : [skill === 't-bank' ? 'T-Bank cross-platform security' : 'WhatsApp browser compatibility'];
             const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
               ...context.repo,
               event: 'pull_request',
@@ -314,6 +316,21 @@ jobs:
               core.setFailed(`tagged_source_missing_green_pr_gate: ${missing.join(', ')}`);
               return;
             }
+            if (skill === 'telegram-mtproto') {
+              // A green empty selection cannot prove Telegram OS coverage.
+              // Reuse only all three jobs in this exact successful PR attempt.
+              const run = runs.find(run => run.name === 'Platform skill runtimes');
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+                ...context.repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100,
+              });
+              for (const os of ['ubuntu-latest', 'macos-latest', 'windows-latest']) {
+                const matches = jobs.filter(job => job.name === `${skill} (${os})`);
+                if (matches.length !== 1 || matches[0].conclusion !== 'success') {
+                  core.setFailed(`tagged_source_missing_telegram_os_gate: ${os}`);
+                  return;
+                }
+              }
+            }
             core.info(`Reused exact green PR evidence for ${context.sha}.`);
       - name: Prepare registered provider source for the signed package
         if: steps.tag.outputs.release_kind == 'runtime'
@@ -321,12 +338,19 @@ jobs:
           node platform-skills/tools/prepare-provider.mjs
           --skill ${{ steps.tag.outputs.skill_directory_id }} --mode prepare-package
       - name: Build exact package bytes
-        if: steps.tag.outputs.release_kind == 'runtime'
+        if: steps.tag.outputs.release_kind == 'runtime' && steps.tag.outputs.skill_id != 'telegram-mtproto'
         run: >-
           node platform-skills/tools/build-runtime-package.mjs
           --skill-dir platform-skills/${{ steps.tag.outputs.skill_directory_id }}
           --expect-skill-version ${{ steps.tag.outputs.skill_version }}
           --output ${{ runner.temp }}/${{ steps.tag.outputs.skill_id }}-${{ steps.tag.outputs.skill_version }}.skillpkg
+      - name: Build credential-free Telegram package template
+        if: steps.tag.outputs.skill_id == 'telegram-mtproto'
+        run: >-
+          node platform-skills/tools/build-runtime-package.mjs
+          --skill-dir platform-skills/telegram-mtproto --template-release-inputs
+          --expect-skill-version ${{ steps.tag.outputs.skill_version }}
+          --output ${{ runner.temp }}/telegram-mtproto-${{ steps.tag.outputs.skill_version }}.skilltmpl
       # Declarative releases have no executable package by design. Bind the tag
       # to the same exact skill/version identity before retaining its manifest.
       - name: Validate tagged Remote MCP identity
@@ -352,7 +376,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.tag.outputs.skill_id }}-${{ steps.tag.outputs.skill_version }}
-          path: ${{ runner.temp }}/${{ steps.tag.outputs.skill_id }}-${{ steps.tag.outputs.skill_version }}.skillpkg
+          path: ${{ runner.temp }}/${{ steps.tag.outputs.skill_id }}-${{ steps.tag.outputs.skill_version }}.${{ steps.tag.outputs.skill_id == 'telegram-mtproto' && 'skilltmpl' || 'skillpkg' }}
           if-no-files-found: error
       - name: Retain declarative Remote MCP manifest
         if: steps.tag.outputs.release_kind == 'remote_mcp'
