@@ -354,6 +354,11 @@ review; настройка не меняет credentials, company bindings ил�
 `review-role` той же auth-сессии. Загрузка карточек и ожидание после одного
 клика не становятся ручным выбором; ошибка чужой command surface не доказывает
 challenge. Осмотр не возвращает auth DOM/имена/поля и не повторяет вход.
+Подготовительный выбор категории ФССП отличай от финальной подачи по
+[контракту формы](platform-skills/gosuslugi/references/portal-applications.md):
+exact origin/path, native non-submit button, отсутствие полей, полный экран
+и actual container binding повторно проверяются перед кликом. Нельзя снимать
+общий dangerous-label gate по одному слову «Подать» или разрешать отправку.
 Подсказка ручного восстановления должна содержать официальный маршрут из
 trusted source и сохраняться в закрытом статусе; provider text не задаёт её URL.
 Нормальный cleanup и аварийный выход используют одну bounded projection receipt.

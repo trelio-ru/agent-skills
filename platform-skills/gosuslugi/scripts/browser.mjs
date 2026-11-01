@@ -72,6 +72,29 @@ function pageControl(node, expected = null) {
   const meta = { tag: node.tagName.toLowerCase(), type: node.getAttribute('type') || '',
     label: (node.getAttribute('aria-label') || node.labels?.[0]?.textContent ||
       (node.tagName === 'INPUT' ? '' : node.textContent) || '').trim().slice(0, 160) };
+  // The FSSP wizard names a category with an infinitive ("Подать …"). That
+  // preparatory choice is not a submission, but the generic dangerous-label
+  // filter also matches it. Recognize only this exact category on its official
+  // form, before any visible form fields exist. Never infer navigation merely
+  // from type=button: final submission controls can have that type too.
+  const fullLabel = (node.getAttribute('aria-label') || node.textContent || '').trim().replace(/\s+/g, ' ');
+  if (location.origin === 'https://www.gosuslugi.ru' && location.pathname === '/600367/1/form' &&
+      meta.tag === 'button' && node.type === 'button' && fullLabel === 'Подать ходатайство или объяснение' &&
+      visible(node) && enabled(node)) {
+    const scope = node.closest('main,[role="main"]') || document.body;
+    const choices = [...scope.querySelectorAll('button')].filter(element => visible(element) && enabled(element) &&
+      (element.getAttribute('aria-label') || element.textContent || '').trim().replace(/\s+/g, ' ') === fullLabel);
+    const fields = [...scope.querySelectorAll('input:not([type="hidden"]),textarea,select,[contenteditable]:not([contenteditable="false"])')];
+    const contextText = scope.innerText;
+    if (choices.length === 1 && !fields.some(visible) && contextText.length <= 16000) {
+      // Preserve both the actual container and its complete rendered screen in
+      // private RAM. A review screen, inserted field, duplicate choice or moved
+      // button invalidates the snapshot even if its short label stays the same.
+      if (expected === 'binding') return { scope };
+      if (expected && expected.scope !== scope) return null;
+      return { ...meta, binding: { kind: 'fssp-petition-category', contextText } };
+    }
+  }
   if (!node.matches('[role="option"],.select__option[id^="react-select-"]')) return meta;
   if (!visible(node) || !enabled(node) || node.closest('a,button,input,textarea,select,[role="button"]')) return null;
   let owner, list, kind;
@@ -428,11 +451,11 @@ export class Portal {
       if (!meta) { await element.dispose(); continue; }
       if (/password|hidden|file/.test(meta.type) || /парол|одноразов|TOTP|SMS|смс/i.test(meta.label)) { await element.dispose(); continue; }
       const ref = `${this.snapshotId}:${controls.length + 1}`;
-      // Binding details remain in process memory; only the option role and
-      // redacted display label are useful to the agent choosing a field value.
+      // Binding details, including the category screen, remain private RAM;
+      // the agent only needs the option role and redacted display label.
       const { binding, ...publicMeta } = meta;
-      // Retain actual owner/list identity as well as metadata, so reparenting an
-      // existing option into a replacement widget with identical IDs is stale.
+      // Retain the actual screen or owner/list nodes as well as metadata, so
+      // moving a control into an identical replacement container is stale.
       const bindingHandle = binding ? await element.evaluateHandle(pageControl, 'binding') : null;
       this.controls.set(ref, { element, meta, bindingHandle, url: this.page.url() }); controls.push({ ref, ...publicMeta, label: redactOutput(meta.label) });
     }
@@ -450,10 +473,11 @@ export class Portal {
     requireThat(await target.element.evaluate(node => node.isConnected), 'fresh_snapshot_required');
     const fresh = await target.element.evaluate(pageControl, target.bindingHandle);
     requireThat(fresh && JSON.stringify(fresh) === JSON.stringify(target.meta), 'fresh_snapshot_required');
-    if (fresh.role === 'option') requireThat(await target.element.isVisible() && await target.element.isEnabled(), 'fresh_snapshot_required');
+    if (fresh.binding) requireThat(await target.element.isVisible() && await target.element.isEnabled(), 'fresh_snapshot_required');
     const label = fresh.label;
     if (packet.action === 'click') {
-      requireThat(!/отправ|подпис|оплат|подат|заказ|удал|подтверд|соглас|войти|парол|восстанов/i.test(label) &&
+      const categoryNavigation = fresh.binding?.kind === 'fssp-petition-category';
+      requireThat((categoryNavigation || !/отправ|подпис|оплат|подат|заказ|удал|подтверд|соглас|войти|парол|восстанов/i.test(label)) &&
         !['submit', 'image'].includes(target.meta.type), 'manual_confirmation_required');
       // target=_blank opens a native tab before Playwright can observe it.
       // The existing ownership policy rejects that tab, so reject the click

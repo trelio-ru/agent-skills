@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.5.11 объявляет signed host browser-session class
+Runtime 3.5.13 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -636,6 +636,17 @@ label/type gate сохраняются; Enter, произвольный JS и fo
 устаревшие refs, подмену владельца, disabled/orphan controls и отсутствие подачи.
 
 ### Транспорт формы
+
+В exact форме ФССП `https://www.gosuslugi.ru/600367/1/form` выбор категории
+«Подать ходатайство или объяснение» не считается финальной подачей. Узкое
+исключение из dangerous-label gate требует единственную видимую enabled
+native кнопку `type=button`, полную точную подпись и отсутствие видимых
+input/textarea/select/contenteditable в рабочем контейнере. Snapshot хранит
+полный bounded rendered text и actual container identity только в RAM;
+dispatch повторно сверяет их и расходует refs до клика. Смена экрана, типа,
+доступности, состава полей, дублирование или перенос кнопки требуют нового
+snapshot. Другие URL/подписи, submit/image и финальные действия сохраняют gate;
+новой отправки, согласия, Enter или generic browser fallback нет.
 
 `page --navigate PUBLIC_HTTPS_URL` и `page --click SNAPSHOT_REF` не читают stdin
 и передаются штатным typed action через `parameters.arguments`. Для заполнения
