@@ -1,0 +1,4 @@
+interface:
+  display_name: "ИИ-Консьерж от Гига / Сбер"
+  short_description: "Звонки, бронь и поручения через Telegram или MAX"
+  default_prompt: "Используй $giga-concierge, чтобы выполнить моё поручение через ИИ-Консьержа в подключённом Telegram или MAX."

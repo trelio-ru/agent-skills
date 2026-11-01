@@ -462,6 +462,11 @@ Gosuslugi использует сценарную карту, остальные
 с настоящим CLI без identity/credentials, включая Python isolated mode.
 Markdown-навыки без package содержат полный компактный контракт в SKILL.md;
 сокращение проверяет каждый прежний safety/evidence/approval/replay сценарий.
+`giga-concierge` использует существующий Telegram/MAX через его текущий signed
+контракт: нет собственного connection/runtime либо автоматической установки
+зависимости. Exact bot/account и исходный диалог сохраняются; timeout не
+разрешает повтор звонка/брони или смену мессенджера. Source и live readiness
+различаются; полный контракт находится в platform-skills/giga-concierge/SKILL.md.
 Почта России сохраняет критерии завершения в начале SKILL.md: самопроверка всех
 треков и названий после reload выполняется до смены навыка/cleanup. Непроверенное
 переименование остаётся явным незавершённым шагом и переносится через checkpoint;

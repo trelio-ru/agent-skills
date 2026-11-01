@@ -21,6 +21,10 @@ const PROVIDERS = Object.freeze({
   // guards without inventing Node preparation or browser installation jobs.
   "google-ai-search": { owner: "general", matrix: null },
   "yandex-search": { owner: "general", matrix: null },
+  // Concierge composes already signed messenger skills and ships no executable.
+  // Its source still needs the shared instruction gate; a fake Node runtime or
+  // provider preparation job would misrepresent the dependency and its readiness.
+  "giga-concierge": { owner: "general", matrix: null },
   "gas-pravosudie": {
     owner: "general",
     matrix: {
