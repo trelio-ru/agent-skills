@@ -42,6 +42,68 @@ test('source projection rejects malformed selected metadata rather than exposing
   await assert.rejects(sources(api, 'contacts', 2), { code: 'audience_source_type_unsupported' });
 });
 
+test('counter relations resolve public source_id, not opaque object_id or internal registration id', async () => {
+  const { api, calls } = fixture(url => {
+    if (url.pathname.endsWith('/segments/10.json')) return { id: 10, relations_count: 3 };
+    if (url.pathname.endsWith('/relations.json')) return { items: [
+      { id: 1, object_id: 30, object_type: 'remarketing_counter', params: { source_id: 7, goal_id: '', left: 30, right: 0, type: 'positive' } },
+      { id: 2, object_id: 31, object_type: 'remarketing_counter', params: { source_id: '7', goal_id: 'jse:signup', type: 'negative' } },
+      { id: 3, object_id: 30, object_type: 'remarketing_counter', params: { source_id: 8, type: 'positive', people: ['private'] } },
+    ] };
+    assert.equal(url.pathname, '/api/v2/remarketing/counters.json');
+    assert.equal(url.searchParams.get('offset'), '0'); assert.equal(url.searchParams.has('limit'), false);
+    return { count: 2, items: [{ id: 70, counter_id: '7', status: 'active', working: true, users: ['private'] },
+      { id: 80, counter_id: 8, working: false }] };
+  });
+  const result = await audience(api, 10), [first, same, other] = result.relations.items;
+  assert.equal(first.object_id, 30); assert.equal(first.source.id, 70); assert.equal(first.source.counter_id, '7');
+  assert.equal(first.sourceMetadataState, 'resolved'); assert.equal(first.source.working, true);
+  assert.deepEqual(first.params, { source_id: 7, goal_id: '', left: 30, right: 0, type: 'positive' });
+  assert.equal(first.paramsProjectionComplete, true); assert.deepEqual(same.source, first.source);
+  assert.equal(other.source.id, 80); assert.equal(other.paramsProjectionComplete, false);
+  assert.ok(!JSON.stringify(result).includes('private')); assert.equal(calls.length, 4);
+});
+
+test('counter source resolution preserves partial, ambiguous, absent and malformed inventory states', async () => {
+  for (const [page, expected] of [
+    [{ items: [{ id: 70, counter_id: 7 }] }, 'counter_sources_incomplete'],
+    [{ count: 2, items: [{ id: 70, counter_id: 7 }, { id: 71, counter_id: '7' }] }, 'counter_source_not_registered_or_ambiguous'],
+    [{ count: 1, items: [{ id: 30, counter_id: 30 }] }, 'counter_source_not_registered_or_ambiguous'],
+    [{ count: 1, items: [{ id: 70, counter_id: [7] }] }, 'response_invalid'],
+  ]) {
+    const { api, calls } = fixture(url => {
+      if (url.pathname.endsWith('/segments/10.json')) return { id: 10, relations_count: 1 };
+      if (url.pathname.endsWith('/relations.json')) return { items: [{ id: 1, object_id: 30, object_type: 'remarketing_counter', params: { source_id: 7 } }] };
+      assert.equal(url.pathname, '/api/v2/remarketing/counters.json'); return page;
+    });
+    const relation = (await audience(api, 10)).relations.items[0];
+    assert.equal(relation.sourceMetadataState, expected); assert.equal(Object.hasOwn(relation, 'source'), false);
+    assert.equal(calls.length, 3);
+  }
+});
+
+test('missing or nonscalar counter source_id never falls back to object_id or a source request', async () => {
+  for (const params of [{}, { source_id: null }, { source_id: [7] }]) {
+    const { api, calls } = fixture(url => url.pathname.endsWith('/segments/10.json') ? { id: 10, relations_count: 1 } :
+      { items: [{ id: 1, object_id: 30, object_type: 'remarketing_counter', params }] });
+    const relation = (await audience(api, 10)).relations.items[0];
+    assert.equal(relation.sourceMetadataState, 'source_reference_invalid'); assert.equal(calls.length, 2);
+  }
+});
+
+test('counter source match requires all inventory pages and preserves the registration namespace', async () => {
+  const { api, calls } = fixture(url => {
+    if (url.pathname.endsWith('/segments/10.json')) return { id: 10, relations_count: 1 };
+    if (url.pathname.endsWith('/relations.json')) return { items: [{ id: 1, object_id: 30, object_type: 'remarketing_counter', params: { source_id: 7 } }] };
+    assert.equal(url.pathname, '/api/v2/remarketing/counters.json');
+    return { count: 2, limit: 1, items: url.searchParams.get('offset') === '0' ? [{ id: 7, counter_id: 70 }] : [{ id: 70, counter_id: 7 }] };
+  });
+  const relation = (await audience(api, 10)).relations.items[0];
+  assert.equal(relation.sourceMetadataState, 'resolved'); assert.equal(relation.source.id, 70);
+  assert.equal(relation.source.counter_id, 7); assert.equal(calls.length, 4);
+  assert.deepEqual(calls.slice(2).map(v => v.searchParams.get('offset')), ['0', '1']);
+});
+
 test('source lookup is bounded and per-source permission failure remains explicit', async () => {
   const { api, calls } = fixture(url => {
     if (url.pathname.endsWith('/segments/10.json')) return { id: 10, pass_condition: 1, relations_count: 22 };

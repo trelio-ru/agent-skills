@@ -1,6 +1,6 @@
 # Аудитория, площадки и оптимизация
 
-Документ описывает команды runtime 1.4.2. Все перечисленные здесь диагностические
+Документ описывает команды runtime 1.6.1. Все перечисленные здесь диагностические
 команды выполняют только чтение API. Существующие plan/apply операции создания
 и обновления рекламы сохраняют свой контракт записи из workflow.md.
 
@@ -49,6 +49,25 @@ relation.object_type определяет тип источника; object_id �
 что источник пуст или отсутствует.
 Неописанные параметры источника не выводятся; paramsProjectionComplete=false
 явно отмечает неполное описание условия и запрещает считать его разобранным.
+
+Для remarketing_counter независимы relation.object_id (opaque объект связи),
+RemarketingCounter.id (регистрация источника) и RemarketingCounter.counter_id
+(публичный счётчик Top@Mail.ru). Диагностика сопоставляет только scalar
+params.source_id с counter_id в полном bounded каталоге, максимум 5000 строк.
+Один match возвращает safe metadata регистрации; ноль/несколько дают
+counter_source_not_registered_or_ambiguous, неполный каталог —
+counter_sources_incomplete. Отсутствующий/невалидный source_id даёт
+source_reference_invalid без запроса по object_id или догадки по имени.
+Cache связывается с публичным ID. Состояние working/status оценивается отдельно
+от успешного сопоставления и не доказывает событие регистрации либо заказ.
+
+Проверенный 2 ноября 2026 [SegmentParams](https://ads.vk.com/doc/api/info/SegmentParams)
+описывает positive/negative и интервал в днях left>right, но не задаёт семантику
+пустого goal_id для remarketing_counter. left=30/right=0 задаёт окно 30 дней;
+пустая строка сохраняется точно и не переименовывается автоматически в pageView.
+Подтверждение «посетителей сайта» из exact UI сегмента — самостоятельное
+основание, а paramsProjectionComplete означает только полноту проекции полей,
+не доказательство интерпретации неописанного условия или реальных событий.
 
 Списки пользователей возвращают entries_count/ids_count/matched_ids_count,
 когда API их предоставил. users_count означает число людей с доступом к
@@ -128,6 +147,18 @@ truncated и sourceMetadataState сохраняются. Без count нельз
 число источников; изменение count или повтор ID во время обхода возвращает
 collection_changed. Размеры списка и правил не доказывают, что аудитория
 подходит офферу или что в неё попадали реальные показы.
+
+## Ограничение частоты
+
+В [AdGroup](https://ads.vk.com/doc/api/object/AdGroup), проверенном 2 ноября 2026,
+описаны uniq_shows_limit и banner_uniq_shows_limit (integer), а также
+uniq_shows_period с day/week/month/eternity. Это readable/writable поля группы,
+уже поддержанные обычным scoped plan/apply. Поля frequency у AdGroup нет:
+запрашивай точные поля через get --entity groups --id ID --fields
+id,uniq_shows_limit,uniq_shows_period,banner_uniq_shows_limit. Не заменяй отказ
+unknown_resource_fields незаметным предположением об отсутствии ограничения.
+Missing поле — пробел чтения, не 0. Доступность значений зависит от пакета/API;
+изменение лимита требует своего поручения и не входит в чтение диагностики.
 
 ## Размещения
 

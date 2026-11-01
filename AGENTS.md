@@ -170,6 +170,12 @@ Source counter id и internal relation id различаются; priced_goal с
 имена площадок; partial coverage остаётся явным. Недокументированные device/pad breakdowns
 не заменяются totals и не угадываются. Existing group/banner plan/apply writes
 не объявляются read-only из-за добавления диагностических команд.
+Counter relation lookup использует scalar params.source_id → Counter.counter_id
+в полном уникальном каталоге; relation.object_id и Counter.id не взаимозаменяемы.
+Missing/partial/ambiguous metadata остаются явными. Пустой goal_id не получает
+угаданную pageView-семантику; полнота проекции полей не подтверждает её смысл.
+Ограничения частоты читаются по uniq_shows_limit/uniq_shows_period и
+banner_uniq_shows_limit; поле frequency не подставляется вместо контракта AdGroup.
 Search phrase rules читаются по explicit params.source_id, не внутреннему
 object_id/названию. Положительные и stop-фразы остаются per-phrase; unknown
 параметры, bare expires unit и expansion не интерпретируются. Metadata snapshot

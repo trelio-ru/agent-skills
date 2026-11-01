@@ -160,6 +160,25 @@ export async function vkGroupSourceByPublicId(api, publicId) {
   check(found.length === 1, 'vk_group_source_not_registered_or_ambiguous');
   return found[0];
 }
+async function counterSourceByPublicId(api, publicId) {
+  // A segment relation points at a remarketing object, not the registered
+  // Counter.id. Only params.source_id names its public Top@Mail.ru counter.
+  // Match that namespace against the complete projected inventory: a partial
+  // page or a second registration must never select a plausible wrong source.
+  const page = await sources(api, 'counters', undefined, 5000), target = id(publicId);
+  check(!page.truncated, 'counter_sources_incomplete');
+  const found = page.items.filter(source => {
+    // Counter IDs are scalar signed integers in the provider schema. Reject
+    // malformed representations, including [123] coercing to 123, before they
+    // can hide an ambiguous registration. Nonpositive IDs cannot match target.
+    const value = source.counter_id;
+    check(['number', 'string'].includes(typeof value) && /^-?(?:0|[1-9]\d{0,9})$/.test(String(value)) &&
+      Math.abs(Number(value)) <= 2147483647, 'response_invalid');
+    return Number(value) === target;
+  });
+  check(found.length === 1, 'counter_source_not_registered_or_ambiguous');
+  id(found[0].id); return found[0];
+}
 export async function segments(api, maximum = 500) {
   const page = await collection(api, '/api/v2/remarketing/segments.json', { fields: SEGMENT_FIELDS.join(',') }, maximum);
   return { ...page, items: page.items.map(v => project(v, SEGMENT_FIELDS)) };
@@ -177,12 +196,10 @@ export async function audience(api, segmentId) {
     const type = Object.hasOwn(family, item.object_type) ? family[item.object_type] : undefined;
     item.sourceMetadataState = 'type_not_supported';
     if (!type) continue;
-    // Search phrases and VK communities expose a separate params.source_id.
-    // In particular a VK relation.object_id is not the registered source.id:
-    // it remains an opaque relation object reference. Match the public group
-    // id against source.object_id in a complete inventory, never by name or
-    // by an assumed equivalence of these independent integer namespaces.
-    const pointer = ['search-phrases', 'vk-groups'].includes(type) ? item.params?.source_id : item.object_id;
+    // These families expose a separate params.source_id. Counter and VK group
+    // references are public IDs, while source.id identifies their registration.
+    // Keep relation.object_id opaque; it cannot replace a missing reference.
+    const pointer = ['search-phrases', 'vk-groups', 'counters'].includes(type) ? item.params?.source_id : item.object_id;
     let sourceId;
     try { sourceId = id(pointer); } catch { item.sourceMetadataState = 'source_reference_invalid'; continue; }
     const key = `${type}:${sourceId}`;
@@ -190,9 +207,10 @@ export async function audience(api, segmentId) {
       if (cache.size >= 20) { item.sourceMetadataState = 'lookup_limit'; continue; }
       try {
         const source = type === 'vk-groups' ? await vkGroupSourceByPublicId(api, sourceId) :
+          type === 'counters' ? await counterSourceByPublicId(api, sourceId) :
           type === 'segments' ? project(await api.request('GET', `/api/v2/remarketing/segments/${id(item.object_id)}.json`,
           { query: { fields: SEGMENT_FIELDS.join(',') } }), SEGMENT_FIELDS) : await sources(api, type, sourceId);
-        check(id(type === 'vk-groups' ? source.object_id : source.id) === sourceId, 'readback_mismatch');
+        check(id(type === 'vk-groups' ? source.object_id : type === 'counters' ? source.counter_id : source.id) === sourceId, 'readback_mismatch');
         cache.set(key, { source, sourceMetadataState: 'resolved' });
       } catch (error) { cache.set(key, { sourceMetadataState: error.code || 'source_read_failed' }); }
     }
