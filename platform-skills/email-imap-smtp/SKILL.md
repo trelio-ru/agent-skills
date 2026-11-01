@@ -1,6 +1,9 @@
 ---
 name: email-imap-smtp
 description: Choose connected mailboxes, configure IMAP/SMTP and per-mailbox signatures, search/read/save messages and attachments, and prepare/send new messages or threaded replies including reply-all with authorization in the current operator conversation through Trelio's signed runtime.
+metadata:
+  catalog_title: "Электронная почта через IMAP/SMTP"
+  catalog_description: "Поиск, чтение, вложения и подтверждаемая отправка почты через обычные IMAP/SMTP-серверы."
 ---
 
 # Электронная почта через IMAP/SMTP

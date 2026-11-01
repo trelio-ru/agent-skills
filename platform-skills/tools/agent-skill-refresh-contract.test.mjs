@@ -1,3 +1,4 @@
+import { stripAgentSkillCatalogMetadata } from "./skill-source-metadata.mjs";
 import { reportInstructionBudget } from "./report-instruction-budget.mjs";
 import { fileURLToPath } from "node:url";
 import { readSkillInstructions } from "./read-skill-instructions.mjs";
@@ -107,7 +108,7 @@ test("provider instructions keep history and unused workflow detail out of the h
     (await readCurrentSkillInstructions()).map(({ skillId, source }) => [skillId, source]),
   );
   for (const [skillId, maximumBytes] of [["t-bank", 15500]]) {
-    assert.ok(Buffer.byteLength(await readFile(new URL(`${skillId}/SKILL.md`, platformSkillsDirectory)), "utf8") <= maximumBytes,
+    assert.ok(Buffer.byteLength(stripAgentSkillCatalogMetadata(await readFile(new URL(`${skillId}/SKILL.md`, platformSkillsDirectory), "utf8")), "utf8") <= maximumBytes,
       `${skillId}: move supporting detail into references before raising the context budget`);
   }
 });
@@ -167,7 +168,8 @@ test("Post keeps completion questions and action boundaries in its main text", a
   // No package/reference loader exists for these Markdown surfaces. Their
   // entire contract must survive the same duplicated transport hazard.
   for (const skill of ['consultant-plus', 'russian-post-registered-mail']) {
-    const main = await readFile(new URL(`${skill}/SKILL.md`, platformSkillsDirectory), 'utf8');
+    // Model delivery projects out catalog-only fields before the unchanged envelope guard.
+    const main = stripAgentSkillCatalogMetadata(await readFile(new URL(`${skill}/SKILL.md`, platformSkillsDirectory), 'utf8'));
     const data = { instructions: main, context: 'x'.repeat(4096) };
     assert.ok(Buffer.byteLength(JSON.stringify({ structuredContent: data,
       content: [{ type: 'text', text: JSON.stringify(data) }] })) <= 40000);

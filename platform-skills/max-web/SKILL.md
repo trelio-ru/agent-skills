@@ -1,6 +1,9 @@
 ---
 name: max-web
 description: Search, passively read, download from, and safely mutate exact MAX chats through a dedicated local browser profile and Trelio's signed runtime. Use for MAX dialogs, contacts, messages, files, reactions, groups, login, or sending documents to Goskey through its official bot.
+metadata:
+  catalog_title: "MAX"
+  catalog_description: "Поиск, чтение и управляемая отправка сообщений и файлов через локальную web-сессию MAX."
 ---
 
 # MAX

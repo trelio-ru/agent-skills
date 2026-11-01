@@ -1,6 +1,9 @@
 ---
 name: 1c-edo
 description: Safely search, inspect, list attachments for, and download incoming or outgoing electronic documents from a company's 1C EDO through Trelio's signed read-only runtime. Use when the user asks for a 1C ЭДО document, invoice, УПД, incoming/outgoing EDO record, its attachment, or help connecting their personal 1C access.
+metadata:
+  catalog_title: "1С ЭДО"
+  catalog_description: "Read-only поиск, просмотр и безопасное скачивание входящих и исходящих документов 1С ЭДО через личный доступ сотрудника."
 ---
 
 # 1С ЭДО

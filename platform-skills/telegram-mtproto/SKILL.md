@@ -1,6 +1,9 @@
 ---
 name: telegram-mtproto
 description: Remove saved local connections; create basic groups and add selected people to groups and supergroups; read unread mentions/reactions and cloud drafts; manage personal folders, dialog pins and explicit read state; diagnose safe failures; quote exact original passages, send reviewed long-text series, archive chats and change personal mute deadlines; inspect chat permissions, choose the displayed sender and delete one personally authored message with explicit scope; manage Telegram cloud drafts, silent delivery, link previews, media replacement, forum topics and invite lifecycles; work with reactions, polls, pins and join requests; read and search chats, posts, threads and albums; count subscribers and inspect channel analytics, post views, forwards, comments and reactions; send albums, forward originals, reply, transcribe voice messages and manage scheduled delivery through Trelio's signed personal MTProto runtime. Use for Telegram correspondence, files, audiences, resumable archive-scoped period exports and dialog inventories, login, and local send-policy setup when this catalog transport is selected.
+metadata:
+  catalog_title: "Telegram"
+  catalog_description: "Поиск, чтение, вложения и управляемая отправка сообщений через личную MTProto-сессию."
 ---
 
 # Telegram

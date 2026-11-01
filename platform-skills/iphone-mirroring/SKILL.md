@@ -1,6 +1,9 @@
 ---
 name: iphone-mirroring
 description: "Control a paired physical iPhone through Apple's iPhone Mirroring app on a local Mac: screenshots, clicks, long presses, scrolling, text and system navigation. Not for iOS Simulator, Finder sync or QuickTime capture."
+metadata:
+  catalog_title: "Видеоповтор iPhone"
+  catalog_description: "Управление уже сопряжённым физическим iPhone через системное приложение «Видеоповтор iPhone» на локальном Mac: диагностика подключения, снимки экрана, клики, прокрутка и системная навигация."
 ---
 
 # Видеоповтор iPhone

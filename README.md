@@ -97,3 +97,25 @@ backend. Telegram application identity и сборка содержащего е
 в приватном release-контуре. Корпоративные source и старые artifacts сохраняются
 приватными. Лицензии сторонних компонентов лежат рядом с их исходниками;
 отдельная новая лицензия на весь проект этим переносом не вводится.
+
+## Метаданные каталога
+
+В `SKILL.md` технический `description` описывает выбор навыка агентом.
+Короткие человекочитаемые название и описание Trelio хранятся отдельно в том же
+frontmatter:
+
+```yaml
+metadata:
+  catalog_title: "Название навыка"
+  catalog_description: "Краткое русское описание для карточки"
+```
+
+Publisher читает только эту explicit пару при exact совпадении `name` с ID
+навыка (для company-private — с catalog slug). H1 и технический `description`
+не являются fallback: старые исходники без пары сохраняют текущую карточку.
+Canonical reader/projection — public `platform-skills/tools/skill-source-metadata.mjs`.
+Browser/backend/host/private tools получают generated exact copy; отдельной YAML
+реализации нет. Display-only пара исключается до byte guard/encryption и не
+повторяется в model instructions; technical description/body остаются прежними.
+Изменения переносятся вместе с новой публикацией и проверяются read-back;
+редактирование source не переписывает текущую карточку или immutable tags.

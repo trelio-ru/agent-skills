@@ -1,6 +1,9 @@
 ---
 name: whatsapp-web
 description: Read, search, send and manage WhatsApp messages, media, chats and groups through a local protocol client or a separately paired browser with screenshots and clicks. Use for WhatsApp work and QR login in Trelio.
+metadata:
+  catalog_title: "WhatsApp"
+  catalog_description: "Чаты, контакты, поиск, вложения и операции сообщений WhatsApp через отдельное связанное устройство. QR-вход, зашифрованная локальная сессия без подтверждений ОС. Версия 1.0 для macOS; история ограничена синхронизацией устройства."
 ---
 
 # WhatsApp

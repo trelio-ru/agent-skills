@@ -1,6 +1,9 @@
 ---
 name: dodostats-drinkitstats
 description: Analyze saved DodoStats and DrinkitStats revenue snapshots through Trelio's declarative read-only Remote MCP skill. Use for data availability, location lookup, monthly revenue summaries and time series, revenue rankings, or explicit location comparisons for Dodo Pizza and Drinkit.
+metadata:
+  catalog_title: "DodoStats / DrinkitStats"
+  catalog_description: "Read-only анализ выручки Dodo и Drinkit по сохранённым снимкам: доступность данных, поиск точек, сводки, динамика, рейтинги и сравнение локаций."
 ---
 
 # DodoStats / DrinkitStats

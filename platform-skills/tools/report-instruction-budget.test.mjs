@@ -30,3 +30,10 @@ test('full envelope budget is independent of instruction bytes and never reads b
   assert.ok(instructionEnvelopeFixtureBytes(instructions, definition) > 40000);
   assert.ok(instructionEnvelopeFixtureBytes('small', definition) < 40000);
 });
+
+
+test('catalog presentation is excluded from the model envelope without changing instruction content', () => {
+  const instruction = '---\nname: fixture\ndescription: Technical discovery\n---\n\n# Actual instructions';
+  const source = instruction.replace('\n---\n', '\nmetadata:\n  catalog_title: Human title\n  catalog_description: Human description\n---\n');
+  assert.equal(instructionEnvelopeFixtureBytes(source), instructionEnvelopeFixtureBytes(instruction));
+});

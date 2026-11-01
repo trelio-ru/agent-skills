@@ -1,3 +1,4 @@
+import { stripAgentSkillCatalogMetadata } from "./skill-source-metadata.mjs";
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,6 +12,7 @@ export const INSTRUCTIONS_MAX_BYTES = 16 * 1024;
  * 4 KiB context allowance; it does not replace the live final-envelope guard.
  */
 export const instructionEnvelopeFixtureBytes = (instructions, definition = null) => {
+  instructions = stripAgentSkillCatalogMetadata(instructions);
   const descriptor = definition?.runtime;
   const runtime = descriptor ? {
     format: PACKAGE_FORMAT,
@@ -35,7 +37,7 @@ export const reportInstructionBudget = async (root, { skillIds } = {}) => {
     let text;
     try { text = await fs.readFile(path.join(root, entry.name, 'SKILL.md'), 'utf8'); }
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-    const bytes = Buffer.byteLength(text.trim(), 'utf8');
+    const bytes = Buffer.byteLength(stripAgentSkillCatalogMetadata(text).trim(), 'utf8');
     let definition = null;
     try { definition = JSON.parse(await fs.readFile(path.join(root, entry.name, 'release.json'), 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }

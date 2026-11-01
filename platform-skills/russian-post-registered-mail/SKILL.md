@@ -1,6 +1,9 @@
 ---
 name: russian-post-registered-mail
 description: Prepare, send and track Russian Post electronic registered letters, rename new or sent tracking cards and preserve evidence through the official browser UI. Automatic ESIA login belongs to the current Gosuslugi skill.
+metadata:
+  catalog_title: "Заказные письма Почты России"
+  catalog_description: "Готовит, оплачивает, отправляет и отслеживает электронные заказные письма через zakaznoe.pochta.ru с ЕСИА, сохраняет трек-номер, чек, копию письма и доказательства доставки. Используй для официальных отправлений Почты России."
 ---
 
 # Электронные заказные письма Почты России

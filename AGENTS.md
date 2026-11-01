@@ -14,6 +14,9 @@ Signed human-input setup uses the existing protected provider login only:
 It never adds login to taskCommands, imports a human session or supplies secrets.
 See [setup contract](docs/agent-skill-connections.md#signed-human-input-setup).
 
+Метаданные каталога: [explicit поля в SKILL.md](README.md#метаданные-каталога).
+Сохраняй technical description и body; human copy берётся из catalog_title/catalog_description.
+
 Этот репозиторий содержит только общие provider-инструкции, runtime-код,
 синтетические тесты и безопасные инструменты разработки. Корпоративные навыки,
 реальные данные компаний, credentials, sessions, application identity и signing

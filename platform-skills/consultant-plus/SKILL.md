@@ -1,6 +1,9 @@
 ---
 name: consultant-plus
 description: Research Russian law, court practice, forms and commentary in the user's authenticated cloud.consultant.ru browser; verify editions and preserve exact sources as DOCX, PDF or Unicode text. Use for access setup, lookup, edition checks, exports or an explicitly selected independent public source.
+metadata:
+  catalog_title: "КонсультантПлюс"
+  catalog_description: "Поиск, проверка редакций и сохранение российских правовых источников через пользовательскую browser-сессию cloud.consultant.ru."
 ---
 
 # КонсультантПлюс

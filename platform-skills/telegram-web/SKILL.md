@@ -1,6 +1,9 @@
 ---
 name: telegram-web
 description: Search, read, download from, and safely mutate exact Telegram Web K chats through a dedicated local browser profile and Trelio's signed runtime. Use for Telegram Web dialogs, messages, files, reactions, groups, or local login when this catalog transport is selected.
+metadata:
+  catalog_title: "Telegram Web"
+  catalog_description: "Поиск, чтение и управляемое общение через отдельный локальный профиль Telegram Web."
 ---
 
 # Telegram Web
