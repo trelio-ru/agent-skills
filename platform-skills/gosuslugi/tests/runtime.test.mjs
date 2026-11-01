@@ -662,6 +662,40 @@ test('start reuses the running exact lease; new calls cannot renew or use a prev
   await atomicWrite(leaseFile, JSON.stringify({ ...lease, expiresAt: now - 1 }), helper); await assert.rejects(run(['start', '--confirm']), /expired_guard_still_running/);
   await atomicWrite(leaseFile, JSON.stringify({ ...lease, runtimeVersion: '0.0.0' }), helper); await assert.rejects(run(['start', '--confirm']), /stop_previous_runtime/);
 });
+test('status and wait deliver the exact same-session resume without restarting or renewing the native lease', { skip: !supported }, async t => {
+  const env = { TRELIO_CONFIG_HOME: nativeRoot, TRELIO_SKILL_ID: 'gosuslugi', TRELIO_SKILL_COMPANY_ID: identity.company, TRELIO_SKILL_MEMBER_ID: identity.member };
+  const original = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]])); Object.assign(process.env, env);
+  t.after(() => { for (const [key, value] of Object.entries(original)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  const directory = storageDirectory(nativeRoot, identity); await ensurePrivateDirectory(directory, helper);
+  const now = Date.now(), lease = { leaseId: crypto.randomUUID(), runtimeVersion: RUNTIME_VERSION,
+    guardPid: process.pid, startedAt: now, expiresAt: now + LEASE_MS };
+  let resumed = false; const packets = [];
+  const server = http.createServer(async (req, res) => {
+    let text = ''; for await (const chunk of req) text += chunk;
+    const packet = JSON.parse(text); packets.push(packet);
+    if (packet.command === 'resume') resumed = true;
+    res.end(JSON.stringify({ sessionId: lease.leaseId, expiresAt: lease.expiresAt,
+      ...(resumed ? { phase: 'ready', portalReady: true } : { phase: 'review_required',
+        error: 'auth_submit_ambiguous', failureStage: 'portal_authentication', authRecovery: 'resume_available',
+        review: { pageKind: 'official_auth', origin: 'https://esia.gosuslugi.ru' } }) }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.close(); server.closeAllConnections(); });
+  const leaseFile = path.join(directory, 'lease.json');
+  await atomicWrite(leaseFile, JSON.stringify(lease), helper);
+  await atomicWrite(path.join(directory, 'control.json'), JSON.stringify({ leaseId: lease.leaseId,
+    port: server.address().port, token: crypto.randomBytes(32).toString('hex') }), helper);
+  const status = await run(['status', '--session', lease.leaseId]);
+  const waiting = await run(['wait', '--session', lease.leaseId, '--after-phase', 'review_required']);
+  assert.deepEqual(status.continuation.arguments, ['resume', '--session', lease.leaseId]);
+  assert.deepEqual(waiting.continuation.arguments, status.continuation.arguments);
+  assert.equal(packets.length, 2, 'wait observes immediately, without dispatching resume itself');
+  assert.ok(packets.every(packet => packet.command === 'status'));
+  assert.equal((await run(waiting.continuation.arguments)).phase, 'ready');
+  assert.deepEqual(packets.at(-1), { command: 'resume', sessionId: lease.leaseId });
+  assert.deepEqual(JSON.parse(await fs.readFile(leaseFile, 'utf8')), lease);
+});
+
 test('a ready normal session accepts one exact delegated authorization without replacing its lease', { skip: !supported }, async t => {
   const env = { TRELIO_CONFIG_HOME: nativeRoot, TRELIO_SKILL_ID: 'gosuslugi', TRELIO_SKILL_COMPANY_ID: identity.company, TRELIO_SKILL_MEMBER_ID: identity.member };
   const original = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]])); Object.assign(process.env, env);
@@ -859,7 +893,7 @@ test('a submitted local form returns configured through wait after cleanup, with
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
   assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.24.0');
-  assert.equal(release.release.version, '4.5.14');
+  assert.equal(release.release.version, '4.5.15');
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: 'protected-snapshot',

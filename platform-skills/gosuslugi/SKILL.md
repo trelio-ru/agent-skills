@@ -91,5 +91,5 @@ https://www.gosuslugi.ru/679557/1/form . Срок бери только из `re
 Команды выполняются только через текущий `runtimeExecution.localAction`,
 не через source или старый package. Правила reuse/refresh и начала одной сессии
 находятся в обязательном документе `runtime`; допуск и кэш host не меняй.
-Pending продолжай exact `continuation.arguments` той же операции, без нового
-входа и обязательного сообщения «заполнил».
+Выполняй `continuation.arguments` без вопроса. При `authRecovery=resume_available`
+это один `resume` прежней сессии, без нового входа и повтора ввода/submit.

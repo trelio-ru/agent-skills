@@ -269,7 +269,7 @@ export async function run(args, statusTimeoutMs = 30000) {
     }
     throw new RuntimeError('shutdown_not_confirmed');
   }
-  return command === 'review-role' ? withSessionContinuation(result) : result;
+  return ['status', 'review-role'].includes(command) ? withSessionContinuation(result) : result;
 }
 
 if (process.argv[1] && await fs.realpath(process.argv[1]).catch(() => '') === fileURLToPath(import.meta.url)) {

@@ -357,6 +357,10 @@ review; настройка не меняет credentials, company bindings ил�
 `review-role` той же auth-сессии. Загрузка карточек и ожидание после одного
 клика не становятся ручным выбором; ошибка чужой command surface не доказывает
 challenge. Осмотр не возвращает auth DOM/имена/поля и не повторяет вход.
+`auth_submit_ambiguous` ordinary portal продолжай без вопроса только по live
+`authRecovery=resume_available` и exact continuation того же session ID.
+Один resume сохраняет unlocked record/sent-флаги/deadline; exhausted, closed,
+credential gate и failed delegated transaction не открывают автоматический цикл.
 Подготовительный выбор категории ФССП отличай от финальной подачи по
 [контракту формы](platform-skills/gosuslugi/references/portal-applications.md):
 exact origin/path, native non-submit button, отсутствие полей, полный экран

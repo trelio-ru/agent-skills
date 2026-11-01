@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "sourceVersion": "4.5.14",
-  "originalSha256": "19d43d38775c4bd3a5427af53902e3048918242f9d82c63c8cb0dfc09ae6dd7e",
+  "sourceVersion": "4.5.15",
+  "originalSha256": "a6ac8c3198dd62c10565e6f2b64a8b63ba7dddbae4f4c45b05a188f5eb176abb",
   "sections": [
     {
       "heading": "---",
@@ -26,8 +26,8 @@
     {
       "heading": "## Защищённый runtime",
       "file": "references/runtime-commands.md",
-      "sha256": "acf69ade61e3a50c00b9a7cd1aa3179794d0cda1ac213d913e9fdaf5d9441541",
-      "bytes": 15942,
+      "sha256": "9f4cd6facc7a71a0d770365d8687e2e0f13446db046bcaee5e4ae40a3d1e2ac4",
+      "bytes": 17404,
       "sourceSuffix": "\n"
     },
     {
@@ -67,8 +67,8 @@
     {
       "heading": "## Авторизация",
       "file": "references/portal-authorization.md",
-      "sha256": "13fb04832c006aaafcc1a51556387ee3334769e479b238d414d5f91a44f190a8",
-      "bytes": 1676,
+      "sha256": "5d61a4eb05d8c3ada7b80f0db7a64d2df34aa0281dac90948b6a46a6b48d2878",
+      "bytes": 2392,
       "sourceSuffix": "\n"
     },
     {

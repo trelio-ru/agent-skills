@@ -42,6 +42,24 @@ test('all login guides reuse user authority for standard disclosure while preser
   }
 });
 
+test('portal ambiguity guides require immediate same-session continuation while retaining real human and external-failure boundaries', async () => {
+  const guides = (await getInstructionGuides()).guides;
+  for (const name of ['runtime', 'portalAuth']) {
+    const text = (await fs.readFile(guides[name].path, 'utf8')).replace(/\s+/gu, ' ');
+    assert.match(text, /auth_submit_ambiguous/u);
+    assert.match(text, /authRecovery=resume_available/u);
+    assert.match(text, /(?:сразу продолжай|сразу выполни)/u);
+    assert.match(text, /без вопроса/u);
+    assert.match(text, /resume_exhausted/u);
+    assert.match(text, /sent-флаги/u);
+    assert.match(text, /failed.*authorize/u);
+  }
+  const main = await fs.readFile(new URL('SKILL.md', root), 'utf8');
+  assert.match(main, /authRecovery=resume_available/u);
+  assert.match(main, /CAPTCHA, SMS\/push/u);
+  assert.match(main, /не повторяй пароль или submit/u);
+});
+
 test('guides work before identity, browser binding or native credential access', async () => {
   assert.deepEqual(parseArguments(['guides']), { command: 'guides', options: {} });
   assert.throws(() => parseArguments(['guides', '--input-file', '/private/file']));

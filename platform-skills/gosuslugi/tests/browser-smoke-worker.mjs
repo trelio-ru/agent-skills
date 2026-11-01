@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import { loadPlaywright, launchOwnedBrowser, installPopupGuard, Portal } from '../scripts/browser.mjs';
 import { createPrompt } from '../scripts/prompt.mjs';
 import { guardianConfig } from '../scripts/core.mjs';
+import { portalAuthResumeState } from '../scripts/auth-safety.mjs';
+import { withSessionContinuation } from '../scripts/session-wait.mjs';
 import { staticAssetsSmoke } from './static-assets-fixture.mjs';
 import { optionBrowserSmoke } from './option-browser-fixture.mjs';
 import { petitionCategoryBrowserSmoke } from './petition-category-browser-fixture.mjs';
@@ -121,8 +123,14 @@ try {
       loginEntries++;
       await route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html lang="ru"><body><h1>Синтетическая ЕСИА</h1>
 <form id="f"><p>Можно выбрать вход по одноразовому коду</p><input id="login" type="tel"><button>Продолжить</button></form>
-<script>let step=0;const f=document.getElementById('f');f.onsubmit=e=>{e.preventDefault();
-if(step===0){if(document.getElementById('login').value!=='+70000000000')throw Error('synthetic login');f.innerHTML='<label>Пароль<input id="new-password-component" type="text"></label><button>Войти</button>';step=1}
+<script>let step=0;const f=document.getElementById('f');
+// Advance on the last login character, before the runtime queries the old
+// submit button. This reproduces a real pre-click ambiguity without replaying
+// credentials or giving the test access to any real account.
+f.oninput=()=>{if(step===0&&document.getElementById('login').value==='+70000000000'){
+f.innerHTML='<label>Пароль<input id="new-password-component" type="text"></label>';step=1}};
+f.onsubmit=e=>{e.preventDefault();
+if(step===0){throw Error('login must already advance')}
 else if(step===1){if(document.getElementById('new-password-component').value!=='synthetic-password-only')throw Error('synthetic password');
 f.innerHTML='<p>Введите код из SMS</p>'+Array.from({length:6},()=>'<input type="tel" autocomplete="one-time-code">').join('')+'<button>Подтвердить</button>';
 f.oninput=()=>{const fields=[...f.querySelectorAll('input')];for(const field of fields)field.value=field.value.slice(-1);
@@ -136,6 +144,15 @@ else{throw Error('must not double-submit segmented code')}};</script></body></ht
   portal.page = await portal.context.newPage(); await portal.page.goto('https://www.gosuslugi.ru/404');
   assert.equal((await portal.inspectAuth()).challenge, 'none', 'phone input is not an OTP request');
   await checkpoint('public_entry_and_authentication');
+  await assert.rejects(portal.authenticate(credentials), /auth_submit_ambiguous/);
+  assert.equal(portal.loginSent, true); assert.equal(portal.passwordSent, false);
+  const resumeState = { sessionId: config.recoverySessionId, expiresAt: config.recoveryExpiresAt, phase: 'review_required',
+    error: 'auth_submit_ambiguous', failureStage: 'portal_authentication', review: portal.reviewContext() };
+  resumeState.authRecovery = portalAuthResumeState(resumeState, { hasRecord: true });
+  assert.deepEqual(withSessionContinuation(resumeState).continuation.arguments, ['resume', '--session', config.recoverySessionId]);
+  // The normal continuation acts on this SAME Portal and browser, preserving
+  // loginSent. No new prompt/unlock or login input may be needed to finish it.
+  await portal.page.locator('#f').evaluate(form => form.insertAdjacentHTML('beforeend', '<button>Войти</button>'));
   assert.equal(await portal.authenticate(credentials), true); assert.equal(phase, 'ready');
   assert.equal(loginEntries, 1); assert.equal(portal.loginEntryClicked, true);
   assert.equal(portal.roleChoiceClicked, true); assert.equal(portal.selectedRoleKind, 'personal');

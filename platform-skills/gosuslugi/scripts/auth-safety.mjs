@@ -1,4 +1,16 @@
-import { requireThat, RuntimeError, serviceHttpFailure, UUID } from './core.mjs';
+import { authOrigin, requireThat, RuntimeError, serviceHttpFailure, UUID } from './core.mjs';
+
+// This is a continuation of the live ordinary portal, not a new login or a
+// retry of a credential/submit operation. Only the owning worker knows that
+// the unlocked record and the original sent flags still exist. Its one-use
+// marker must not survive cleanup or authorize a failed external transaction.
+export function portalAuthResumeState(state, { hasRecord = false, busy = false, used = false, now = Date.now() } = {}) {
+  if (!hasRecord || busy || state.phase !== 'review_required' || state.error !== 'auth_submit_ambiguous' ||
+      state.failureStage !== 'portal_authentication' || state.authorization || state.credentialGate ||
+      state.manualReason || state.roleChoiceRequired || state.review?.pageKind !== 'official_auth' ||
+      !authOrigin(state.review.origin) || !Number.isSafeInteger(state.expiresAt) || state.expiresAt <= now) return null;
+  return used ? 'resume_exhausted' : 'resume_available';
+}
 
 // Recovery is a human verification flow, not another automatic login. Keep
 // its public address in trusted source: an auth page or old status file must

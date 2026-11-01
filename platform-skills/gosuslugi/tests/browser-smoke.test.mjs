@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { bootstrapBrowser } from '../scripts/browser.mjs';
@@ -31,10 +32,13 @@ async function runBrowserSmoke(scene) {
     // 25-second lease killed slow hosted Macs before Playwright could report a
     // result. Keep a hard synthetic minute; production's deadline is unchanged
     // and crash/expiry guarantees are covered by separate native tests.
+    const startedAt = Date.now(), leaseId = crypto.randomUUID();
     const guard = spawn(helper, ['guard', process.execPath, fileURLToPath(new URL('browser-smoke-worker.mjs', import.meta.url)), '60000'],
       { detached: true, windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
     const exited = new Promise(resolve => guard.once('exit', resolve));
-    guard.stdin.end(`${JSON.stringify({ root, file, scene })}\n`); await exited;
+    // Production lease keys are validated as a full 30-minute CLI envelope.
+    // Keep synthetic evidence separate, without weakening that native check.
+    guard.stdin.end(`${JSON.stringify({ root, file, scene, recoverySessionId: leaseId, recoveryExpiresAt: startedAt + 60000 })}\n`); await exited;
     const result = JSON.parse(await fs.readFile(file, 'utf8'));
     assert.equal(result.ok, true, result.diagnostic); assert.equal(result.openings, scene === 'rich-text' ? 0 : 1); assert.equal(result.phase, 'ready');
     assert.ok(Number.isInteger(result.browserPid) && result.browserPid > 1);

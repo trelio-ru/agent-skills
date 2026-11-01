@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.14",
-    "summary": "Исправлено заполнение Quill и обычных редактируемых блоков с проверкой текста. Объявленные ограничения поля проверяются до ввода."
+    "version": "4.5.15",
+    "summary": "Исправлено продолжение входа после неоднозначного выбора кнопки: та же сессия возобновляется без лишнего вопроса и повторного ввода данных."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.14",
+    "version": "3.5.15",
     "minimumHostVersion": "3.24.0",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",

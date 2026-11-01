@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { accountBlock, accountRecoveryHelp, ACCOUNT_RECOVERY_URL, activeCredentialGate, AuthorizationAttempt, authorizationFailure, closedDiagnostics,
-  credentialGate, recoveredCredentialGate } from '../scripts/auth-safety.mjs';
+  credentialGate, recoveredCredentialGate, portalAuthResumeState } from '../scripts/auth-safety.mjs';
+import { waitForSessionChange, withSessionContinuation } from '../scripts/session-wait.mjs';
 import { decryptRecord, encryptRecord, RuntimeError } from '../scripts/core.mjs';
 import { EsiaAuthorizer } from '../scripts/esia-authorizer.mjs';
 import { Portal } from '../scripts/browser.mjs';
@@ -14,6 +15,43 @@ const blockedText = 'Доступ временно заблокирован\nВ�
 const credentials = { login: '+70000000000', password: 'synthetic-password', totp: 'JBSWY3DPEHPK3PXP' };
 const request = { origin: 'https://service.example.org', sessionId: crypto.randomUUID(), requestId: crypto.randomUUID(),
   token: 'synthetic-private-bearer', callback: 'https://service.example.org/callback?code=synthetic-private-code' };
+
+test('live portal submit ambiguity immediately continues the same session once, without a human acknowledgement', async () => {
+  const state = { sessionId: crypto.randomUUID(), expiresAt: Date.now() + 60000, phase: 'review_required',
+    error: 'auth_submit_ambiguous', failureStage: 'portal_authentication',
+    review: { pageKind: 'official_auth', origin: 'https://esia.gosuslugi.ru' } };
+  assert.equal(portalAuthResumeState(state), null, 'only the worker with its live unlocked record can offer recovery');
+  const available = { ...state, authRecovery: portalAuthResumeState(state, { hasRecord: true }) };
+  assert.deepEqual(withSessionContinuation(available).continuation.arguments, ['resume', '--session', state.sessionId]);
+  let reads = 0;
+  const result = await waitForSessionChange(async () => { reads++; return available; }, {
+    '--session': state.sessionId, '--after-phase': 'review_required', '--timeout-seconds': '30',
+  }, { sleep: async () => assert.fail('an actionable continuation must not wait for input or a phase change') });
+  assert.equal(reads, 1); assert.equal(result.expiresAt, state.expiresAt);
+  assert.deepEqual(result.continuation.arguments, ['resume', '--session', state.sessionId]);
+  const exhausted = { ...state, authRecovery: portalAuthResumeState(state, { hasRecord: true, used: true }) };
+  assert.equal(exhausted.authRecovery, 'resume_exhausted');
+  assert.equal(withSessionContinuation(exhausted).continuation, undefined);
+  assert.equal(closedDiagnostics(available).authRecovery, undefined, 'a saved receipt never revives the unlocked session');
+});
+
+test('portal resume recovery never applies to a refusal, challenge, expired lease, external transaction or click outcome', () => {
+  const state = { sessionId: crypto.randomUUID(), expiresAt: Date.now() + 60000, phase: 'review_required',
+    error: 'auth_submit_ambiguous', failureStage: 'portal_authentication',
+    review: { pageKind: 'official_auth', origin: 'https://esia.gosuslugi.ru' } };
+  for (const patch of [{ phase: 'closed' }, { phase: 'user_required' }, { expiresAt: Date.now() - 1 },
+    { error: 'provider_result_unknown' }, { error: 'credentials_rejected' }, { failureStage: 'authorization' },
+    { credentialGate: { reason: 'account_temporarily_blocked', retryAt: null } },
+    { authorization: { status: 'failed' } }, { authorization: { status: 'pending' } },
+    { manualReason: 'challenge_required' }, { roleChoiceRequired: true },
+    { review: { pageKind: 'official_public', origin: 'https://www.gosuslugi.ru' } },
+    { review: { pageKind: 'official_auth', origin: 'https://esia.gosuslugi.ru.evil.example' } }]) {
+    assert.equal(portalAuthResumeState({ ...state, ...patch }, { hasRecord: true }), null);
+    assert.notEqual(withSessionContinuation({ ...state, ...patch, authRecovery: 'resume_available' })
+      .continuation?.arguments[0], 'resume');
+  }
+  assert.equal(portalAuthResumeState(state, { hasRecord: true, busy: true }), null);
+});
 
 test('account recovery is a fixed human flow and never applies to other login failures', () => {
   const help = accountRecoveryHelp('account_temporarily_blocked');

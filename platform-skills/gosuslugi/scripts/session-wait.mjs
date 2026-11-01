@@ -1,7 +1,16 @@
 import { performance } from 'node:perf_hooks';
 import { requireThat } from './core.mjs';
+import { portalAuthResumeState } from './auth-safety.mjs';
 
 const COMPLETE = new Set(['ready', 'configured', 'forgotten', 'authorized', 'closed', 'failed', 'authorization_failed']);
+
+function authRecoveryState(state) {
+  // Only a fresh worker-issued marker permits this model-facing continuation.
+  // Revalidate the scope and deadline here as well: a stale/closed receipt,
+  // external failure or a similarly named provider error cannot grant resume.
+  if (!['resume_available', 'resume_exhausted'].includes(state.authRecovery)) return null;
+  return portalAuthResumeState(state, { hasRecord: true, used: state.authRecovery === 'resume_exhausted' });
+}
 
 export function validateWaitOptions(options) {
   requireThat(/^[a-f0-9-]{36}$/.test(options['--session'] || ''), 'exact_session_required');
@@ -41,7 +50,7 @@ export async function waitForSessionChange(readStatus, options, {
     const changed = state.phase !== afterPhase;
     const complete = COMPLETE.has(state.phase);
     const timedOut = !changed && !complete && now() >= deadline;
-    if (changed || complete || timedOut) {
+    if (changed || complete || timedOut || authRecoveryState(state)) {
       return withSessionContinuation({ ...state, wait: { changed, timedOut } });
     }
     await sleep(Math.min(500, Math.max(0, deadline - now())));
@@ -54,6 +63,12 @@ export function withSessionContinuation(state) {
   // continuation of the same exact procedure, never permission to restart it.
   requireThat(state?.sessionId && /^[a-z][a-z_]{0,63}$/.test(state.phase || ''), 'local_state_invalid');
   if (COMPLETE.has(state.phase)) return state;
+  const recovery = authRecoveryState(state);
+  if (recovery === 'resume_available') return { ...state, continuation: {
+    arguments: ['resume', '--session', state.sessionId] } };
+  // Repeated ambiguity needs bounded diagnosis, not an endless wait/resume
+  // cycle or an invented request for fingerprint/password/manual login.
+  if (recovery === 'resume_exhausted') return state;
   if (state.phase === 'user_required' && state.roleChoiceRequired &&
     state.authorization?.status === 'user_required') {
     // The next step is an independent fresh inspection, not a human question.

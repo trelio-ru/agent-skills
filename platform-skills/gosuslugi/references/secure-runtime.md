@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.5.14 объявляет signed host browser-session class
+Runtime 3.5.15 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -140,6 +140,23 @@ runtime возвращает `review_required`, а не выдуманный р�
 Делегированный `user_required` возвращает только bounded `manualReason` из
 фиксированного enum; текст auth page, scopes, идентичность и поля формы наружу
 не выходят.
+Для ordinary portal `auth_submit_ambiguous` означает неоднозначность выбора
+кнопки до её click, а не подтверждённую отправку либо отказ credentials.
+Только живой worker с unlocked record, исходной неистёкшей lease, незанятым
+Portal и `official_auth` review выдаёт `authRecovery=resume_available`.
+`status` и `wait` возвращают точный `continuation.arguments=[resume,--session,ID]`;
+агент выполняет его сразу без вопроса пользователю. Даже при неизменившейся
+phase `wait` возвращает этот actionable результат сразу, а не через 30 секунд.
+Resume использует тот же Portal/context/record и sent-флаги: без нового start,
+OS unlock, повторного ввода уже отправленного логина/пароля/OTP и submit.
+Маркер расходуется до ответа/возобновления worker, повторная неоднозначность
+получает `resume_exhausted` без автоматического continuation. Status/wait сами
+не возобновляют auth. При реальном challenge/gate, потере record, expiry,
+внешней transaction либо terminal failure маркер отсутствует. Closed projection
+его отбрасывает; сохранённый receipt не подтверждает живую разблокировку.
+Это не универсальный retry любого auth error: после одного продолжения
+проверяется готовность либо точный blocker, без бесконечного resume-цикла.
+
 Одна и та же неизвестная публичная страница передаётся модели после короткой
 стабилизации, а не после общего 90-секундного auth timeout. Сезонные баннеры и
 новые промежуточные страницы поэтому не требуют обновления selector-ов: модель

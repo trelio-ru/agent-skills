@@ -10,7 +10,7 @@ import { loadPlaywright, launchOwnedBrowser, Portal, loginRole, reusableRoleStor
 import { boundedJson, createPrompt } from './prompt.mjs';
 import { EsiaAuthorizer } from './esia-authorizer.mjs';
 import { validatedAuthorizationRequest } from './transport.mjs';
-import { accountRecoveryHelp, activeCredentialGate, AuthorizationAttempt, authorizationFailure, credentialGate, recoveredCredentialGate } from './auth-safety.mjs';
+import { accountRecoveryHelp, activeCredentialGate, AuthorizationAttempt, authorizationFailure, credentialGate, recoveredCredentialGate, portalAuthResumeState } from './auth-safety.mjs';
 
 // Only this native-supervised process opens the encrypted record/key. During
 // delegated login, bounded input values also pass through the private browser
@@ -37,6 +37,7 @@ let stopping = false, config, server, owned, portal, localPage, localContext, pr
 let delegatedAuthorization = null, delegatedPortal = null, delegatedLoginRole = 'personal';
 let busy = false, finalError = null, finalHttpFailure = {}, reviewContext = null;
 let authorizationAttempt = null, portalReady = false, failureStage = null, stoppedCredentialGate = null;
+let portalAuthResumeUsed = false;
 const activeAuthorization = () => config.authorization || delegatedAuthorization;
 const activeAuthorizer = () => config.authorization ? portal : delegatedPortal || portal;
 const sameAuthorization = (left, right) => ['schema', 'sessionId', 'requestId', 'origin', 'company', 'member',
@@ -49,7 +50,7 @@ const token = crypto.randomBytes(32).toString('hex');
 const state = () => {
   const gate = getCredentialGate();
   const recovery = accountRecoveryHelp(activeAuthorizer()?.manualReason) ?? accountRecoveryHelp(gate?.reason);
-  return { sessionId: config.leaseId, phase, expiresAt: config.expiresAt,
+  const result = { sessionId: config.leaseId, phase, expiresAt: config.expiresAt,
   portalReady,
   loginRole: delegatedAuthorization ? delegatedLoginRole : loginRole(config.loginRole),
   roleChoiceRequired: Boolean(activeAuthorizer()?.roleChoiceRequired),
@@ -75,6 +76,11 @@ const state = () => {
     failed: 'Операция остановлена. Проверьте безопасный код ошибки, не повторяйте отправку автоматически.' })[phase] || null,
   ...(finalError ? { error: finalError, ...serviceHttpFailure({ ...finalHttpFailure, code: finalError }),
     ...(failureStage ? { failureStage } : {}) } : {}) };
+  const authRecovery = portalAuthResumeState(result, { hasRecord: Boolean(record), busy, used: portalAuthResumeUsed });
+  if (authRecovery) Object.assign(result, { authRecovery, requiredAction: authRecovery === 'resume_available'
+    ? 'Сразу выполните continuation.arguments: один resume этой же сессии без вопроса пользователю. Сохранены прежние sent-флаги и разблокировка; новый start, ввод уже отправленных данных и повтор submit запрещены.'
+    : 'Одно штатное продолжение уже выполнено; автоматический цикл resume остановлен. Проверьте безопасный код и состояние той же сессии. Не запускайте новый вход и не просите ручной шаг без распознанного challenge.' });
+  return result;
 };
 async function setPhase(next) {
   const changed = phase !== next;
@@ -425,6 +431,10 @@ try {
           busy = true;
           try { await acknowledgeAccountRecovery(); } finally { busy = false; }
         }
+        // Consume before scheduling work or replying: losing this local reply
+        // must not offer another automatic recovery. Keep the SAME Portal,
+        // record, sent flags and native deadline; no key/vault read occurs.
+        if (state().authRecovery === 'resume_available') portalAuthResumeUsed = true;
         finalError = null; finalHttpFailure = {}; reviewContext = null;
         respond(200, { ...state(), phase: 'authenticating' });
         if (delegatedPortal) void authenticateDelegated(); else void authenticate();
