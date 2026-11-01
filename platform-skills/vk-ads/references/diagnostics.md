@@ -1,6 +1,6 @@
 # Аудитория, площадки и оптимизация
 
-Документ описывает команды runtime 1.6.1. Все перечисленные здесь диагностические
+Документ описывает команды runtime 1.6.2. Все перечисленные здесь диагностические
 команды выполняют только чтение API. Существующие plan/apply операции создания
 и обновления рекламы сохраняют свой контракт записи из workflow.md.
 
@@ -60,6 +60,17 @@ counter_sources_incomplete. Отсутствующий/невалидный sour
 source_reference_invalid без запроса по object_id или догадки по имени.
 Cache связывается с публичным ID. Состояние working/status оценивается отдельно
 от успешного сопоставления и не доказывает событие регистрации либо заказ.
+
+[RemarketingCounters](https://ads.vk.com/doc/api/resource/RemarketingCounters)
+описывает непагинированный GET всех добавленных счётчиков с items без count.
+Только для этого ресурса выполняется один bounded запрос без offset/limit;
+отсутствие count при таком полном ответе оставляет count=null, truncated=false.
+Обрезание выбранным --limit, противоречивый total или неожиданная пагинация
+не подтверждают полноту. Другие коллекции сохраняют прежние строгие проверки.
+sources --type counters --id ID выбирает внутреннюю регистрацию из этого
+каталога. Её ID не отправляется в single-resource URL: официальный
+[RemarketingCounter](https://ads.vk.com/doc/api/resource/RemarketingCounter)
+использует там публичный counter_id, отличный от возвращаемого id регистрации.
 
 Проверенный 2 ноября 2026 [SegmentParams](https://ads.vk.com/doc/api/info/SegmentParams)
 описывает positive/negative и интервал в днях left>right, но не задаёт семантику
@@ -141,9 +152,10 @@ bounded устанавливает truncated=true. globalStopPhraseScope=source_
 границу коллекций; сам по себе он не означает разобранные все правила.
 Unknown поля и relation.paramsProjectionComplete остаются независимыми.
 
-Пагинация использует штатный размер endpoint и bounded offset; count,
-truncated и sourceMetadataState сохраняются. Без count нельзя утверждать
-полноту. Для relations точное relations_count сегмента может подтвердить
+Пагинированные ресурсы используют штатный размер endpoint и bounded offset;
+count, truncated и sourceMetadataState сохраняются. Без count нельзя утверждать
+их полноту; непагинированный RemarketingCounters описан отдельно выше.
+Для relations точное relations_count сегмента может подтвердить
 число источников; изменение count или повтор ID во время обхода возвращает
 collection_changed. Размеры списка и правил не доказывают, что аудитория
 подходит офферу или что в неё попадали реальные показы.

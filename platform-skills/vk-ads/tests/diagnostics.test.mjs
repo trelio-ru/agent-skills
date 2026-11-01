@@ -51,7 +51,7 @@ test('counter relations resolve public source_id, not opaque object_id or intern
       { id: 3, object_id: 30, object_type: 'remarketing_counter', params: { source_id: 8, type: 'positive', people: ['private'] } },
     ] };
     assert.equal(url.pathname, '/api/v2/remarketing/counters.json');
-    assert.equal(url.searchParams.get('offset'), '0'); assert.equal(url.searchParams.has('limit'), false);
+    assert.equal(url.searchParams.has('offset'), false); assert.equal(url.searchParams.has('limit'), false);
     return { count: 2, items: [{ id: 70, counter_id: '7', status: 'active', working: true, users: ['private'] },
       { id: 80, counter_id: 8, working: false }] };
   });
@@ -66,7 +66,7 @@ test('counter relations resolve public source_id, not opaque object_id or intern
 
 test('counter source resolution preserves partial, ambiguous, absent and malformed inventory states', async () => {
   for (const [page, expected] of [
-    [{ items: [{ id: 70, counter_id: 7 }] }, 'counter_sources_incomplete'],
+    [{ count: 2, items: [{ id: 70, counter_id: 7 }] }, 'counter_sources_incomplete'],
     [{ count: 2, items: [{ id: 70, counter_id: 7 }, { id: 71, counter_id: '7' }] }, 'counter_source_not_registered_or_ambiguous'],
     [{ count: 1, items: [{ id: 30, counter_id: 30 }] }, 'counter_source_not_registered_or_ambiguous'],
     [{ count: 1, items: [{ id: 70, counter_id: [7] }] }, 'response_invalid'],
@@ -91,17 +91,42 @@ test('missing or nonscalar counter source_id never falls back to object_id or a 
   }
 });
 
-test('counter source match requires all inventory pages and preserves the registration namespace', async () => {
+test('documented nonpaginated counters without count resolve metadata and exact internal registration safely', async () => {
   const { api, calls } = fixture(url => {
     if (url.pathname.endsWith('/segments/10.json')) return { id: 10, relations_count: 1 };
     if (url.pathname.endsWith('/relations.json')) return { items: [{ id: 1, object_id: 30, object_type: 'remarketing_counter', params: { source_id: 7 } }] };
     assert.equal(url.pathname, '/api/v2/remarketing/counters.json');
-    return { count: 2, limit: 1, items: url.searchParams.get('offset') === '0' ? [{ id: 7, counter_id: 70 }] : [{ id: 70, counter_id: 7 }] };
+    assert.equal(url.searchParams.has('offset'), false); assert.equal(url.searchParams.has('limit'), false);
+    return { items: [{ id: 7, counter_id: 70 }, { id: 70, counter_id: 7 }] };
   });
   const relation = (await audience(api, 10)).relations.items[0];
   assert.equal(relation.sourceMetadataState, 'resolved'); assert.equal(relation.source.id, 70);
-  assert.equal(relation.source.counter_id, 7); assert.equal(calls.length, 4);
-  assert.deepEqual(calls.slice(2).map(v => v.searchParams.get('offset')), ['0', '1']);
+  assert.equal(relation.source.counter_id, 7); assert.equal(calls.length, 3);
+  const exact = await sources(api, 'counters', 70);
+  assert.equal(exact.id, 70); assert.equal(exact.counter_id, 7); assert.equal(calls.length, 4);
+  const limited = await sources(api, 'counters', undefined, 1);
+  assert.equal(limited.items.length, 1); assert.equal(limited.count, null); assert.equal(limited.truncated, true);
+  const full = await sources(api, 'counters');
+  assert.equal(full.items.length, 2); assert.equal(full.count, null); assert.equal(full.truncated, false);
+});
+
+test('counter-specific completeness never accepts unexpected pagination, duplicate ids or incorrect totals', async () => {
+  for (const page of [{ limit: 1, items: [{ id: 70, counter_id: 7 }] },
+    { offset: 1, items: [{ id: 70, counter_id: 7 }] }, { count: 2, items: [{ id: 70, counter_id: 7 }] }]) {
+    const { api, calls } = fixture(() => page);
+    const result = await sources(api, 'counters'); assert.equal(result.truncated, true);
+    await assert.rejects(sources(api, 'counters', 70), { code: 'counter_sources_incomplete' });
+    assert.equal(calls.length, 2); assert.ok(calls.every(url => url.pathname.endsWith('/counters.json')));
+  }
+  const duplicates = fixture(() => ({ items: [{ id: 70, counter_id: 7 }, { id: '70', counter_id: 8 }] }));
+  await assert.rejects(sources(duplicates.api, 'counters'), { code: 'collection_changed' });
+  const invalid = fixture(() => ({ count: 0, items: [{ id: 70, counter_id: 7 }] }));
+  await assert.rejects(sources(invalid.api, 'counters'), { code: 'collection_changed' });
+  const tooLarge = fixture(() => ({ items: Array.from({ length: 5001 }, (_, i) => ({ id: i + 1, counter_id: i + 1 })) }));
+  await assert.rejects(sources(tooLarge.api, 'counters'), { code: 'response_invalid' });
+  const notCalled = fixture(() => { throw Error('must not reach provider'); });
+  await assert.rejects(sources(notCalled.api, 'counters', [70]), { code: 'object_id_invalid' });
+  assert.equal(notCalled.calls.length, 0);
 });
 
 test('source lookup is bounded and per-source permission failure remains explicit', async () => {

@@ -172,6 +172,10 @@ Source counter id и internal relation id различаются; priced_goal с
 не объявляются read-only из-за добавления диагностических команд.
 Counter relation lookup использует scalar params.source_id → Counter.counter_id
 в полном уникальном каталоге; relation.object_id и Counter.id не взаимозаменяемы.
+RemarketingCounters имеет документированный непагинированный items без count:
+один bounded GET без offset/limit, с проверкой IDs, обрезания и неожиданной
+пагинации. Generic collection остальных ресурсов не ослабляется. Exact --id
+регистрации выбирается из того же каталога, не подставляется в URL counter_id.
 Missing/partial/ambiguous metadata остаются явными. Пустой goal_id не получает
 угаданную pageView-семантику; полнота проекции полей не подтверждает её смысл.
 Ограничения частоты читаются по uniq_shows_limit/uniq_shows_period и

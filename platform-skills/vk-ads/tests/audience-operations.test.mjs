@@ -61,7 +61,7 @@ function fixture() {
       throw Error('Unexpected mutation');
     }
     if (url.pathname.endsWith('/ad_groups/1.json')) return json(model.group);
-    if (url.pathname.endsWith('/counters/70.json')) return json(model.counter);
+    if (url.pathname.endsWith('/counters.json')) return json({ items: [model.counter] });
     if (url.pathname.endsWith('/counters/7/goals.json')) return json({ items: [model.goal] });
     if (url.pathname.endsWith('/users_lists/100.json')) {
       if (model.denied) return json({}, 403); return json(model.userList);

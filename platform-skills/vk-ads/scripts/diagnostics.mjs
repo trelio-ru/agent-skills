@@ -167,17 +167,37 @@ async function counterSourceByPublicId(api, publicId) {
   // page or a second registration must never select a plausible wrong source.
   const page = await sources(api, 'counters', undefined, 5000), target = id(publicId);
   check(!page.truncated, 'counter_sources_incomplete');
-  const found = page.items.filter(source => {
-    // Counter IDs are scalar signed integers in the provider schema. Reject
-    // malformed representations, including [123] coercing to 123, before they
-    // can hide an ambiguous registration. Nonpositive IDs cannot match target.
-    const value = source.counter_id;
-    check(['number', 'string'].includes(typeof value) && /^-?(?:0|[1-9]\d{0,9})$/.test(String(value)) &&
-      Math.abs(Number(value)) <= 2147483647, 'response_invalid');
-    return Number(value) === target;
-  });
+  const found = page.items.filter(source => Number(source.counter_id) === target);
   check(found.length === 1, 'counter_source_not_registered_or_ambiguous');
   id(found[0].id); return found[0];
+}
+async function counterSources(api, maximum) {
+  // RemarketingCounters documents one nonpaginated response containing ALL
+  // registered counters, with no count/offset/limit in its example. Generic
+  // collection() deliberately cannot prove that contract for other resources.
+  // Do not invent pagination here or issue a single-resource GET using the
+  // registration id: that endpoint is keyed by the separate public counter_id.
+  check(Number.isInteger(maximum) && maximum > 0 && maximum <= 5000, 'list_limit_invalid');
+  const definition = sourceDefinition('counters');
+  const page = await api.request('GET', `${definition.route}.json`, { query: { fields: definition.fields.join(',') } });
+  check(Array.isArray(page.items) && page.items.length <= 5000, 'response_invalid');
+  const items = page.items.map(v => project(v, definition.fields)), seen = new Set();
+  for (const source of items) {
+    const registration = id(source.id), value = source.counter_id;
+    check(!seen.has(registration), 'collection_changed'); seen.add(registration);
+    // Reject coercible containers such as [123], including on unrelated rows:
+    // they could otherwise conceal a duplicate public counter registration.
+    check(['number', 'string'].includes(typeof value) && /^-?(?:0|[1-9]\d{0,9})$/.test(String(value)) &&
+      Math.abs(Number(value)) <= 2147483647, 'response_invalid');
+  }
+  const count = countOf(page.count);
+  check(count === null || items.length <= count, 'collection_changed');
+  // Unexpected pagination metadata means the provider contract has changed.
+  // Only an explicit total covering the entire response can prove completeness
+  // then; a short page alone never silently becomes the full inventory.
+  const complete = count !== null ? count === items.length && (page.offset === undefined || countOf(page.offset) === 0) :
+    !Object.hasOwn(page, 'limit') && !Object.hasOwn(page, 'offset');
+  return { items: items.slice(0, maximum), count, truncated: !complete || items.length > maximum };
 }
 export async function segments(api, maximum = 500) {
   const page = await collection(api, '/api/v2/remarketing/segments.json', { fields: SEGMENT_FIELDS.join(',') }, maximum);
@@ -225,6 +245,17 @@ export async function audience(api, segmentId) {
       interpretation: 'Rules and source references only; not a list of people' } };
 }
 export async function sources(api, type, objectId, maximum = 500) {
+  if (type === 'counters') {
+    // Preserve the existing CLI/goal-plan contract: --id selects the internal
+    // registration id. Resolve it from this authoritative collection instead
+    // of sending that id to the public-counter single-resource endpoint.
+    const selectedId = objectId === undefined ? undefined : id(objectId);
+    const page = await counterSources(api, selectedId === undefined ? maximum : 5000);
+    if (objectId === undefined) return page;
+    check(!page.truncated, 'counter_sources_incomplete');
+    const found = page.items.filter(source => id(source.id) === selectedId);
+    check(found.length === 1, 'counter_source_not_registered_or_ambiguous'); return found[0];
+  }
   if (type === 'search-phrases') return objectId === undefined ? searchPhraseLists(api, maximum) : searchPhrases(api, objectId);
   if (type === 'vk-groups') {
     const page = await vkGroupSources(api, maximum, objectId);
