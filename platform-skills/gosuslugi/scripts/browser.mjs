@@ -78,7 +78,7 @@ function pageControl(node, expected = null) {
     const owner = node.closest('epgu-cf-ui-html-input,.ql-container') || node.parentElement;
     const labelIds = (node.getAttribute('aria-labelledby') || '').trim().split(/\s+/).filter(Boolean);
     const labels = labelIds.length <= 8 ? labelIds.map(id => document.getElementById(id)) : [];
-    const labelled = labels.length && labels.every(element => element && !element.isContentEditable &&
+    const labelled = labels.length && labels.every(element => element && !element.closest('[contenteditable]') &&
       !element.querySelector('input,textarea,select,[contenteditable]')) ? labels.map(element => element.textContent || '').join(' ') : '';
     // Never use editable text as its label. It may contain the entire petition;
     // snapshots expose field identity only, just as they do for native inputs.
@@ -90,6 +90,10 @@ function pageControl(node, expected = null) {
       binding: { kind: 'contenteditable', mode: node.getAttribute('contenteditable'),
         editor: node.matches('.ql-editor') && node.parentElement?.matches('.ql-container') ? 'quill' : 'plain' } };
   }
+  // The control selector also finds anchors/buttons inside restored rich text.
+  // They are editor content, not independent controls: their labels would leak
+  // existing petition text even though the body snapshot removes editing hosts.
+  if (node.closest('[contenteditable]') || node.querySelector('[contenteditable]')) return null;
   const meta = { tag: node.tagName.toLowerCase(), type: node.getAttribute('type') || '',
     label: (node.getAttribute('aria-label') || node.labels?.[0]?.textContent ||
       (node.tagName === 'INPUT' ? '' : node.textContent) || '').trim().slice(0, 160) };

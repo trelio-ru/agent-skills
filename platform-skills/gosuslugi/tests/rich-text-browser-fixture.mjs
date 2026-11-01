@@ -131,6 +131,21 @@ export async function richTextBrowserSmoke(portal) {
     const freshPlain = (await snapshot()).controls.find(control => control.type === 'contenteditable');
     assert.deepEqual(await portal.action({ action: 'fill', ref: freshPlain.ref, text: 'Обычный текст\nНовая строка' }), { inputVerified: true });
     await portal.page.locator('main').evaluate(main => {
+      main.innerHTML='<div contenteditable="true" aria-label="Обычный редактор">'+
+        '<a href="/help">Содержимое ходатайства в ссылке</a><button>Содержимое ходатайства в кнопке</button>'+
+        '<span contenteditable="false"><a href="/help">Содержимое readonly-вставки</a></span></div>';
+    });
+    const privateContent = await snapshot();
+    assert.equal(privateContent.controls.length, 1, 'editor children are never independent navigation controls');
+    assert.doesNotMatch(JSON.stringify(privateContent), /Содержимое/, 'restored links and readonly islands cannot leak through control labels');
+    await portal.page.locator('main').evaluate(main => {
+      const root=main.firstElementChild, label=root.querySelector('[contenteditable="false"]');
+      label.id='private-label';root.removeAttribute('aria-label');root.setAttribute('aria-labelledby',label.id);
+    });
+    assert.equal((await snapshot()).controls[0].label, 'Редактор текста', 'aria-labelledby cannot disclose a readonly island inside the editor');
+    await portal.page.locator('main').evaluate(main => main.firstElementChild.setAttribute('role', 'button'));
+    assert.equal((await snapshot()).controls.length, 0, 'a clickable mixed container is neither an editor nor a safe content label');
+    await portal.page.locator('main').evaluate(main => {
       main.innerHTML='<div contenteditable="true" aria-label="Password"></div><div contenteditable="false">Не редактируется</div>';
     });
     assert.equal((await snapshot()).controls.some(control => control.type === 'contenteditable'), false, 'secret-labelled and readonly hosts have no refs');

@@ -643,7 +643,9 @@ host (DIV/P/SECTION), в том числе `.ql-editor` Quill внутри `.ql-
 Runtime проверяет official non-auth page, фактическую editable/visible/enabled
 область, readonly/disabled/inert, неизменность label/mode и actual owner node.
 Вложенные editable descendants, readonly islands и page-wide BODY/MAIN не
-становятся отдельными целями. Label берётся из aria/placeholder либо fixed
+становятся отдельными целями. Ссылки/кнопки внутри editing host и его readonly
+islands не получают generic refs и не раскрывают текст через control labels.
+Label берётся из aria/placeholder либо fixed
 fallback, никогда из уже введённого текста; auth/secret labels исключены.
 
 После однократного native Playwright fill runtime проверяет полный plain text
