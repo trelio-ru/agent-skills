@@ -69,6 +69,27 @@ function pageControl(node, expected = null) {
   const visible = element => Boolean(element?.isConnected && element.getClientRects().length &&
     getComputedStyle(element).visibility !== 'hidden' && !element.closest('[hidden],[inert],[aria-hidden="true"]'));
   const enabled = element => !element.closest('[disabled],[aria-disabled="true"],.select__option--is-disabled,.select__control--is-disabled');
+  if (node.hasAttribute('contenteditable')) {
+    // Quill exposes a DIV editing host rather than an input/textarea. Reference
+    // only the actual, enabled editing root: descendants, readonly islands and
+    // page-wide editable documents must not become alternative input targets.
+    if (!['DIV', 'P', 'SECTION'].includes(node.tagName) || !node.isContentEditable || node.parentElement?.isContentEditable ||
+        !visible(node) || !enabled(node) || node.closest('[readonly],[aria-readonly="true"],a,button,[role="button"]')) return null;
+    const owner = node.closest('epgu-cf-ui-html-input,.ql-container') || node.parentElement;
+    const labelIds = (node.getAttribute('aria-labelledby') || '').trim().split(/\s+/).filter(Boolean);
+    const labels = labelIds.length <= 8 ? labelIds.map(id => document.getElementById(id)) : [];
+    const labelled = labels.length && labels.every(element => element && !element.isContentEditable &&
+      !element.querySelector('input,textarea,select,[contenteditable]')) ? labels.map(element => element.textContent || '').join(' ') : '';
+    // Never use editable text as its label. It may contain the entire petition;
+    // snapshots expose field identity only, just as they do for native inputs.
+    const label = (node.getAttribute('aria-label') || labelled || node.getAttribute('data-placeholder') || 'Редактор текста').trim().slice(0, 160);
+    if (/password|one.time.code|\botp\b|totp|парол|одноразов|sms|смс/i.test(label + ' ' + (node.getAttribute('autocomplete') || ''))) return null;
+    if (expected === 'binding') return { owner };
+    if (expected && expected.owner !== owner) return null;
+    return { tag: node.tagName.toLowerCase(), type: 'contenteditable', role: 'textbox', label,
+      binding: { kind: 'contenteditable', mode: node.getAttribute('contenteditable'),
+        editor: node.matches('.ql-editor') && node.parentElement?.matches('.ql-container') ? 'quill' : 'plain' } };
+  }
   const meta = { tag: node.tagName.toLowerCase(), type: node.getAttribute('type') || '',
     label: (node.getAttribute('aria-label') || node.labels?.[0]?.textContent ||
       (node.tagName === 'INPUT' ? '' : node.textContent) || '').trim().slice(0, 160) };
@@ -121,6 +142,22 @@ function pageControl(node, expected = null) {
   if (expected === 'binding') return { owner, list };
   if (expected && (expected.owner !== owner || expected.list !== list)) return null;
   return { ...meta, role: 'option', binding: { kind, ownerId: owner.id, listId: list.id, optionId: node.id } };
+}
+
+// Read back only in private runtime memory. Quill's paragraphs each represent
+// one line and its last line terminator is implicit; innerText adds extra blank
+// lines for P elements and therefore cannot verify the caller's exact text.
+function editableText(node, kind) {
+  if (kind !== 'quill') return node.innerText.replace(/\r\n?/g, '\n');
+  const read = current => {
+    if (current.nodeType === Node.TEXT_NODE) return current.data;
+    if (current.nodeType !== Node.ELEMENT_NODE || current.matches('.ql-ui')) return '';
+    if (current.tagName === 'BR') return '\n';
+    const text = [...current.childNodes].map(read).join('');
+    return /^(P|DIV|LI|BLOCKQUOTE|PRE|H[1-6])$/.test(current.tagName) && !text.endsWith('\n') ? text + '\n' : text;
+  };
+  const text = [...node.childNodes].map(read).join('');
+  return text.endsWith('\n') ? text.slice(0, -1) : text;
 }
 
 export async function installPopupGuard(context) {
@@ -443,7 +480,7 @@ export class Portal {
       copy.querySelectorAll('script,style,input,textarea,select,[contenteditable],noscript').forEach(node => node.remove());
       return (copy.textContent || '').replace(/\s+/g, ' ').slice(0, 16000);
     });
-    const elements = await this.page.locator('button,a,input,textarea,select,[role="button"],[role="option"],.select__option[id^="react-select-"]').elementHandles();
+    const elements = await this.page.locator('button,a,input,textarea,select,[contenteditable],[role="button"],[role="option"],.select__option[id^="react-select-"]').elementHandles();
     const controls = [];
     for (const element of elements.slice(0, 400)) {
       if (!await element.isVisible()) { await element.dispose(); continue; }
@@ -476,6 +513,7 @@ export class Portal {
     if (fresh.binding) requireThat(await target.element.isVisible() && await target.element.isEnabled(), 'fresh_snapshot_required');
     const label = fresh.label;
     if (packet.action === 'click') {
+      requireThat(fresh.type !== 'contenteditable', 'input_not_allowed');
       const categoryNavigation = fresh.binding?.kind === 'fssp-petition-category';
       requireThat((categoryNavigation || !/отправ|подпис|оплат|подат|заказ|удал|подтверд|соглас|войти|парол|восстанов/i.test(label)) &&
         !['submit', 'image'].includes(target.meta.type), 'manual_confirmation_required');
@@ -497,10 +535,27 @@ export class Portal {
       if (after > before) throw new RuntimeError('popup_requires_manual');
       if (clickError) throw clickError;
     } else if (packet.action === 'fill') {
-      requireThat(['input', 'textarea'].includes(target.meta.tag) && !/password|file|hidden|submit|button/.test(target.meta.type) &&
+      const editor = fresh.binding?.kind === 'contenteditable';
+      requireThat((editor || ['input', 'textarea'].includes(target.meta.tag)) && !/password|file|hidden|submit|button/.test(target.meta.type) &&
         typeof packet.text === 'string' && packet.text.length <= 10000, 'input_not_allowed');
       this.controls.clear(); await this.permit();
-      await target.element.fill(packet.text);
+      const text = packet.text.replace(/\r\n?/g, '\n');
+      // Playwright's native fill dispatches browser input events. Setting
+      // innerHTML/textContent or calling Quill.setText would bypass the site's
+      // form integration and could leave a visually filled but empty petition.
+      await target.element.fill(text);
+      if (editor) {
+        let verified = false;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await this.permit();
+          if (this.page.url() !== target.url || !await target.element.evaluate(node => node.isConnected)) break;
+          if (await target.element.evaluate(editableText, fresh.binding.editor) === text) { verified = true; break; }
+          // Observe delayed editor normalization without repeating the input.
+          await this.page.waitForTimeout(50);
+        }
+        requireThat(verified, 'input_result_unverified');
+        return { inputVerified: true };
+      }
     } else throw new RuntimeError('unknown_page_action');
     this.controls.clear();
   }

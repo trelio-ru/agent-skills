@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "sourceVersion": "4.5.13",
-  "originalSha256": "6b4b72a46923bf15cd8051b0fb948b0af2c41ff0cef58e83cc1242e65b5e3b0b",
+  "sourceVersion": "4.5.14",
+  "originalSha256": "2b4ceb23ca10862787f3dcf02fab593a708a8fa708ee8c220fdbda79dda965ee",
   "sections": [
     {
       "heading": "---",
@@ -88,8 +88,8 @@
     {
       "heading": "## Заявления на Госуслугах",
       "file": "references/portal-applications.md",
-      "sha256": "45cd1111c67c5146e357f1e0637f6460767d544b3a1b04aecbe7c0de817ea8b0",
-      "bytes": 2537,
+      "sha256": "5ccb9e809fbf5f37a0f1174500de25a67accfd1ad8613442f03a447e88e0bb32",
+      "bytes": 4460,
       "sourceSuffix": "\n"
     },
     {

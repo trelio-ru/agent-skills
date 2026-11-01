@@ -10,6 +10,7 @@ import { guardianConfig } from '../scripts/core.mjs';
 import { staticAssetsSmoke } from './static-assets-fixture.mjs';
 import { optionBrowserSmoke } from './option-browser-fixture.mjs';
 import { petitionCategoryBrowserSmoke } from './petition-category-browser-fixture.mjs';
+import { richTextBrowserSmoke } from './rich-text-browser-fixture.mjs';
 
 // Explicit synthetic GUI regression. Every provider request is intercepted;
 // this file neither opens a real account nor touches an existing browser profile.
@@ -133,6 +134,9 @@ else{throw Error('must not double-submit segmented code')}};</script></body></ht
   await checkpoint('fssp_category_navigation');
   await petitionCategoryBrowserSmoke(portal);
   assertBrowserInBackground(browserPid, 'FSSP category navigation');
+  await checkpoint('rich_text_input');
+  await richTextBrowserSmoke(portal);
+  assertBrowserInBackground(browserPid, 'rich-text input');
   await checkpoint('explicit_role_choice');
   await portal.page.goto('https://roles.gosuslugi.ru/roles');
   assert.equal(await portal.authenticate(credentials, 'manual'), false);

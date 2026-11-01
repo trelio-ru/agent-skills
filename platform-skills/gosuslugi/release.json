@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.13",
-    "summary": "Исправлен выбор категории «Подать ходатайство или объяснение» в форме ФССП без ослабления защиты финальной отправки."
+    "version": "4.5.14",
+    "summary": "Исправлено заполнение редактора ходатайства: поддерживаются Quill и обычные редактируемые блоки с проверкой введённого текста."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.13",
+    "version": "3.5.14",
     "minimumHostVersion": "3.24.0",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",

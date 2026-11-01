@@ -469,7 +469,13 @@ try {
       try {
         if (packet.command === 'snapshot') {
           respond(200, await portal.snapshot(redactAuthSecrets));
-        } else if (packet.command === 'page') { await portal.action(packet); await save(await portal.storage()); respond(200, { ok: true }); }
+        } else if (packet.command === 'page') {
+          const result = await portal.action(packet);
+          await save(await portal.storage());
+          // Only this content-free read-back flag leaves the adapter. Petition
+          // text and editor HTML never become a command response or a log.
+          respond(200, { ok: true, ...(result?.inputVerified === true ? { inputVerified: true } : {}) });
+        }
         else throw new RuntimeError('unknown_command');
       } finally { busy = false; }
     } catch (error) { respond(400, { error: error instanceof RuntimeError ? error.code : 'operation_result_unknown',

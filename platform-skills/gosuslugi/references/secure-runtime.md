@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.5.13 объявляет signed host browser-session class
+Runtime 3.5.14 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -636,6 +636,35 @@ label/type gate сохраняются; Enter, произвольный JS и fo
 устаревшие refs, подмену владельца, disabled/orphan controls и отсутствие подачи.
 
 ### Транспорт формы
+
+`snapshot` включает отдельный доступный top-level `contenteditable` editing
+host (DIV/P/SECTION), в том числе `.ql-editor` Quill внутри `.ql-container`.
+Это обычный `fill`, без нового action, произвольного JS или editor API.
+Runtime проверяет official non-auth page, фактическую editable/visible/enabled
+область, readonly/disabled/inert, неизменность label/mode и actual owner node.
+Вложенные editable descendants, readonly islands и page-wide BODY/MAIN не
+становятся отдельными целями. Label берётся из aria/placeholder либо fixed
+fallback, никогда из уже введённого текста; auth/secret labels исключены.
+
+После однократного native Playwright fill runtime проверяет полный plain text
+в памяти. Для Quill block paragraphs и единственный implicit terminal newline
+учитываются отдельно от `innerText`; пустые абзацы, Unicode и буквальный HTML
+не теряются. CRLF нормализуется в LF. Bounded наблюдение нормализации не
+повторяет ввод; mismatch/потеря страницы возвращают `input_result_unverified`
+с уже израсходованным ref. Успех выдаёт только `inputVerified=true` после
+обычного сохранения encrypted storage. Флаг не доказывает сохранение заявления
+либо его отправку. Текст/HTML не включаются в metadata/response/errors.
+
+Headed regression использует настоящий Quill 2.0.3 из locked test-only fixture,
+соответствующий публичному `sf-portal-st/main.ba6704cc9f35425f.js` и компоненту
+`epgu-cf-ui-html-input`. Он проверяет user text-change → form model →
+«Продолжить» → review → restored synthetic draft, а не одну визуальную вставку.
+Перед локальным browser smoke либо общим source executor выполни
+`npm ci --prefix platform-skills/gosuslugi/tests/fixtures/quill --ignore-scripts`.
+Dedicated hosted/self-hosted workflow делает эту подготовку отдельным шагом;
+отсутствие fixture dependency завершает тест ошибкой до запуска браузера.
+Native auth/origin/permit, опасные кнопки и финальная подача сохраняют прежние
+границы; iframe/generic browser fallback не добавляются.
 
 В exact форме ФССП `https://www.gosuslugi.ru/600367/1/form` выбор категории
 «Подать ходатайство или объяснение» не считается финальной подачей. Узкое

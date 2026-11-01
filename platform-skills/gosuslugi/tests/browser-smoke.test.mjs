@@ -20,6 +20,11 @@ function browserAlive(pid) {
 
 test('real headed browser: one local form, optional TOTP, actual SMS challenge and same browser through authentication',
   { skip: !['darwin', 'win32'].includes(process.platform), timeout: 180000 }, async () => {
+    // Preparation is explicit and stays outside the guarded browser lifetime.
+    // A missing real editor dependency must fail, never skip its regression.
+    await fs.access(new URL('fixtures/quill/node_modules/quill/dist/quill.js', import.meta.url)).catch(() => {
+      throw Error('Install the locked editor fixture: npm ci --prefix platform-skills/gosuslugi/tests/fixtures/quill --ignore-scripts');
+    });
     const root = process.env.TRELIO_GOSUSLUGI_SYNTHETIC_ROOT || await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'gosuslugi-browser-test-'));
     await bootstrapBrowser(root); const helper = await nativeHelper(root), file = path.join(root, 'smoke-result.json');
     await fs.rm(file, { force: true });

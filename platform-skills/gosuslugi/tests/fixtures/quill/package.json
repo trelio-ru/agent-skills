@@ -1,0 +1,7 @@
+{
+  "name": "gosuslugi-rich-text-fixture",
+  "private": true,
+  "dependencies": {
+    "quill": "2.0.3"
+  }
+}

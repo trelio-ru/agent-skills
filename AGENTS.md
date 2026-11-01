@@ -359,6 +359,11 @@ challenge. Осмотр не возвращает auth DOM/имена/поля �
 exact origin/path, native non-submit button, отсутствие полей, полный экран
 и actual container binding повторно проверяются перед кликом. Нельзя снимать
 общий dangerous-label gate по одному слову «Подать» или разрешать отправку.
+Редактор ходатайства проверяй на настоящем Quill той же версии, что публичный
+компонент портала: native fill → user change → form model → переход → review.
+Один textarea fixture не доказывает rich-text ввод. `contenteditable` ref
+связан с actual editing host/owner; текст не становится label/metadata,
+`inputVerified` подтверждает только ввод, mismatch не разрешает его повтор.
 Подсказка ручного восстановления должна содержать официальный маршрут из
 trusted source и сохраняться в закрытом статусе; provider text не задаёт её URL.
 Нормальный cleanup и аварийный выход используют одну bounded projection receipt.

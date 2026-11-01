@@ -708,7 +708,8 @@ test('MCP-compatible page arguments deliver one private packet without stdin or 
   const packets = [];
   const server = http.createServer(async (req, res) => {
     let text = ''; for await (const chunk of req) text += chunk;
-    packets.push(JSON.parse(text)); res.end('{"ok":true}');
+    const packet = JSON.parse(text); packets.push(packet);
+    res.end(JSON.stringify({ ok: true, ...(packet.action === 'fill' ? { inputVerified: true } : {}) }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => { server.close(); server.closeAllConnections(); });
   await atomicWrite(path.join(directory, 'lease.json'), JSON.stringify(lease), helper);
@@ -718,7 +719,7 @@ test('MCP-compatible page arguments deliver one private packet without stdin or 
   // production writer correctly rejects that parent before creating the file.
   const file = path.join(directory, 'page-request.json'), packet = { action: 'fill', ref: '1:2', text: 'Синтетический текст' };
   await atomicWrite(file, JSON.stringify(packet), helper);
-  assert.deepEqual(await run(['page', '--session', lease.leaseId, '--input-file', file]), { ok: true });
+  assert.deepEqual(await run(['page', '--session', lease.leaseId, '--input-file', file]), { ok: true, inputVerified: true });
   assert.deepEqual(packets[0], { ...packet, command: 'page', sessionId: lease.leaseId });
   assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).text, packet.text, 'caller owns cleanup');
   const target = 'https://pos.gosuslugi.ru/form/?opaId=223643&fz59=false';
@@ -858,7 +859,7 @@ test('a submitted local form returns configured through wait after cleanup, with
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
   assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.24.0');
-  assert.equal(release.release.version, '4.5.13');
+  assert.equal(release.release.version, '4.5.14');
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: 'protected-snapshot',
