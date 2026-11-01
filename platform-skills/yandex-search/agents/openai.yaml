@@ -1,4 +1,6 @@
 interface:
-  display_name: "Yandex Search"
-  short_description: "Обычный поиск Яндекса с проверкой источников"
-  default_prompt: "Используй $yandex-search, чтобы найти информацию в обычной выдаче Яндекса в скрытой вкладке и дать проверенные ссылки."
+  display_name: "Яндекс: поиск и Алиса"
+  short_description: "Поиск и диалог с Алисой с уточнениями в одном чате"
+  default_prompt: "Используй $yandex-search: выбери поиск Яндекса или обсуждение с Алисой через браузер, при необходимости уточняй ответы в том же чате."
+policy:
+  allow_implicit_invocation: true
