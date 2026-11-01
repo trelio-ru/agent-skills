@@ -83,7 +83,20 @@ function targetingSet(value, fieldPath) {
   const values = Object.hasOwn(TARGETING_SETS, fieldPath) ? TARGETING_SETS[fieldPath] : undefined;
   return values && Array.isArray(value) && value.length <= values.length && new Set(value).size === value.length && value.every(v => values.includes(v));
 }
-function snapshot(value) {
+const CONTENT_FLAG_ROLES = ['icon_256x256', 'image_1080x607', 'image_600x600',
+  'video_landscape_30s', 'video_portrait_4_5_180s', 'video_portrait_9_16_180s'];
+const CONTENT_FLAGS = ['autogen_smartcrop', 'autogen_video', 'autogen_from_html', 'autogen_video_portrait'];
+function contentFlagSet(value, fieldPath) {
+  // VK returns these media-generation attributes in arbitrary order. Limit
+  // set semantics to observed direct media roles and known unique flags:
+  // variants, other roles/arrays, future flags and malformed types stay exact.
+  return CONTENT_FLAG_ROLES.some(role => fieldPath === `content.${role}.flags`) &&
+    Array.isArray(value) && value.length <= CONTENT_FLAGS.length && new Set(value).size === value.length &&
+    value.every(flag => CONTENT_FLAGS.includes(flag));
+}
+// Pure export supports offline checks of already-read snapshots, without
+// credentials, provider I/O, a live plan/apply or a second comparison algorithm.
+export function snapshot(value) {
   const copy = structuredClone(value);
   if (targetingSet(copy?.targetings?.sex, 'targetings.sex')) copy.targetings.sex = [...copy.targetings.sex].sort();
   const local = copy?.targetings?.geo?.local_geo;
@@ -94,6 +107,16 @@ function snapshot(value) {
   const targeting = copy?.targetings;
   if (targeting && !Array.isArray(targeting) && Object.hasOwn(targeting, 'segments') &&
     Array.isArray(targeting.segments) && targeting.segments.length === 0) delete targeting.segments;
+  if (copy?.content && typeof copy.content === 'object' && !Array.isArray(copy.content)) {
+    for (const role of CONTENT_FLAG_ROLES) {
+      const media = copy.content[role];
+      if (media && typeof media === 'object' && !Array.isArray(media) && contentFlagSet(media.flags, `content.${role}.flags`)) {
+        // Replace this role object, too: shared JS fixture/input references
+        // must not canonicalize an unknown sibling role through object aliasing.
+        copy.content[role] = { ...media, flags: [...media.flags].sort() };
+      }
+    }
+  }
   // Compare the entire snapshot, including extra/missing keys and types. The
   // subset readback matcher is intentionally unsuitable for stale-state CAS.
   return stable(copy);
@@ -112,7 +135,10 @@ export function matches(actual, expected, field = '', fieldPath = field) {
     return matches(actual[k], v, k, childPath);
   });
   if (Array.isArray(expected)) {
-    if (targetingSet(actual, fieldPath) && targetingSet(expected, fieldPath)) return actual.length === expected.length && expected.every(v => actual.includes(v));
+    if (targetingSet(actual, fieldPath) && targetingSet(expected, fieldPath) ||
+      contentFlagSet(actual, fieldPath) && contentFlagSet(expected, fieldPath)) {
+      return actual.length === expected.length && expected.every(v => actual.includes(v));
+    }
     return Array.isArray(actual) && stable(actual) === stable(expected);
   }
   if (typeof expected === 'number' || ['budget_limit', 'budget_limit_day', 'price', 'id', 'package_id', 'ad_plan_id'].includes(field)) {

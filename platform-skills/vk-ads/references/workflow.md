@@ -1,6 +1,6 @@
 # VK Ads API и сценарии
 
-Runtime 1.6.2, Node >=22, macOS/Windows. Фиксированный origin
+Runtime 1.6.3, Node >=22, macOS/Windows. Фиксированный origin
 `https://ads.vk.com`, redirect:error, v2 REST. Старый социальный VK API не
 используется. Иерархия: UI кампания = ad_plan, группа = ad_group (либо campaign
 в режиме совместимости), объявление = banner. Режим задаёт человек при
@@ -256,6 +256,10 @@ Raw message/body, credentials и
 из GET. Только этот пустой массив и отсутствующий ключ считаются эквивалентными
 при read-back и before/preflight. Непустые списки (включая их порядок), null,
 другие типы и отсутствие любого другого поля сохраняют строгую проверку.
+Direct content.<role>.flags у известных медиаролей допускает перестановку только
+уникальных известных autogen flags по [точным границам](security.md).
+ID, состав roles, типы и все variant fields остаются exact. Асинхронное
+добавление video variants требует fresh plan даже при прежнем content ID.
 Уже сохранённый `written_unverified` с этой причиной проверяется обычным
 `reconcile` по прежнему operation ID: только GET, без повторной отправки записи.
 

@@ -153,8 +153,12 @@ token/delete, mint fallback или reset. Username/user_id выбирают по
 частичный update и package-specific availability не заменяются догадкой.
 Read-back mismatch сообщает только static field identity без сравниваемых
 значений; подробность diagnostic не снимает unresolved-write fence.
-Только targetings.sex и targetings.geo.local_geo.loc_type допускают смену
+Для targetings.sex и targetings.geo.local_geo.loc_type допускается смена
 порядка уникальных male/female и home/work при read-back и before/preflight.
+Direct content flags известных image/video roles также сравниваются как наборы
+уникальных известных autogen flags по [контракту](platform-skills/vk-ads/references/security.md).
+Roles/IDs/variants/types и неизвестные/nested flags остаются exact; завершение
+генерации новых variants является реальным изменением и требует fresh plan.
 Состав, duplicates, неизвестные значения, остальные массивы и полный
 optimistic snapshot остаются exact. Только пустой targetings.segments и
 отсутствующий ключ segments эквивалентны после очистки фильтра; null, другие

@@ -31,7 +31,7 @@ revoked_token/token_limit_exceeded либо not_returned/not_recognized/not_avai
 отзыв токенов, reset или замену credentials. Старый receipt без стадии
 сохраняет отсутствие сведений; diagnostic не разрешает повтор OAuth-настройки
 или рекламной записи и не доказывает причину отказа VK.
-Read-back и полный before/preflight snapshot нормализуют только порядок
+Read-back и полный before/preflight snapshot нормализуют порядок
 уникальных male/female в targetings.sex и home/work в
 targetings.geo.local_geo.loc_type. Изменённый состав, duplicates, неизвестные
 значения, другие массивы и ключи/типы полного snapshot остаются exact.
@@ -39,6 +39,15 @@ targetings.geo.local_geo.loc_type. Изменённый состав, duplicates
 после очистки фильтра эквивалентен отсутствующему ключу segments. Непустой
 массив, null, прочие типы и остальные отсутствующие ключи остаются exact;
 before/preflight нормализует только копию, не сохранённый план или его hash.
+Отдельное узкое исключение: direct content.<role>.flags для icon_256x256,
+image_1080x607, image_600x600, video_landscape_30s, video_portrait_4_5_180s и
+video_portrait_9_16_180s сравниваются без порядка только при уникальных значениях
+из autogen_smartcrop/autogen_video/autogen_from_html/autogen_video_portrait.
+Состав, дубли, неизвестные флаги, типы, missing keys и flags внутри variants
+остаются exact. Полный snapshot сохраняет roles, IDs и все поля вариантов,
+включая URL/size/type. Async добавление транскодов — реальное изменение,
+не повод снимать конкурентную проверку. Копия не меняет payload/hash либо
+другую роль даже при shared JS references; публичная CLI-команда не добавляется.
 Восстановление старого receipt выполняется GET-only reconcile без replay.
 Отдельный [status recovery](status-recovery.md) допускает только новый scoped
 план active того же существующего parent ID при прежней launch authority.
