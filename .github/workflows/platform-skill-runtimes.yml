@@ -186,6 +186,11 @@ jobs:
           python -m pip install
           --disable-pip-version-check
           "tzdata>=2025.2,<2027"
+      - name: Install Telegram native parser regression dependency
+        if: matrix.skill == 'telegram-mtproto'
+        # Exercise actual SDK entities/UTF-16 offsets without account/network
+        # calls. A second hand-written Markdown parser is not compatibility QA.
+        run: python -m pip install --disable-pip-version-check -r platform-skills/telegram-mtproto/tests/requirements.txt
       - name: Run Python runtime regressions
         if: matrix.language == 'python'
         run: >-

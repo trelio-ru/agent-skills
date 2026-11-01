@@ -164,9 +164,26 @@ for skill in \
   telegram-mtproto
 do
   if has_skill "${skill}"; then
-    "${PYTHON_BINARY}" -m unittest discover \
+    test_python="${PYTHON_BINARY}"
+    dependency_root=""
+    if [[ -f "platform-skills/${skill}/tests/requirements.txt" ]]; then
+      # The explicit self-hosted lane must exercise the same real parser as
+      # hosted OS jobs. Never install into its system Python or a personal
+      # provider runtime/session: use one owned disposable dependency venv.
+      dependency_root="$(mktemp -d "${TMPDIR:-/tmp}/provider-regression-deps.XXXXXX")"
+      trap 'if [[ -n "${dependency_root}" ]]; then rm -rf -- "${dependency_root}"; fi' EXIT
+      "${PYTHON_BINARY}" -m venv "${dependency_root}"
+      test_python="${dependency_root}/bin/python"
+      "${test_python}" -m pip install --disable-pip-version-check -r "platform-skills/${skill}/tests/requirements.txt"
+    fi
+    "${test_python}" -m unittest discover \
       -s "platform-skills/${skill}/tests" \
       -p "test_*.py"
+    if [[ -n "${dependency_root}" ]]; then
+      rm -rf -- "${dependency_root}"
+      dependency_root=""
+      trap - EXIT
+    fi
   fi
 done
 

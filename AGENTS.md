@@ -43,6 +43,16 @@ outgoing rows retain peer/order/end checks but need no incoming coverage. Verify
 unknown result without writing; generic task/source read admission never grants ACK.
 Host-only owner `reply-reference` reuses SAME send/read-back with native private
 peer/owner/revision proof and stdin-only text; never add it to taskCommands.
+Its additive v2 private payload uses the SAME actual Telethon Markdown parser
+and native entities for send and read-only lost-result verification. V1 stays
+plain. Test real SDK UTF-16/TextUrl identity on every OS; equal label text with
+another URL is not a verified answer, and a negative read never permits replay.
+V2 may carry one host-admitted original document through the SAME private pipe:
+freeze regular bytes before upload, reject symlink/reparse ancestors, compare
+name/size/SHA-256 and stream-check exact provider bytes. One document+caption
+(1024 UTF-16) is one send; never split or upload again after an unknown result.
+Read-only verification needs no source path and may compare a historical v1
+literal body after upgrade; that compatibility flag cannot send a new message.
 Explicit monitor presence never forces offline or changes Telegram privacy.
 First-send `--conversation-reference` uses the SAME provider monitor scope;
 no hint failure may replay a positive send. [Contract](docs/agent-skill-connections.md#first-outgoing-routing).

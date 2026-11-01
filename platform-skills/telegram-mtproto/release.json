@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.15.3",
-    "summary": "Ошибки входа Telegram объясняются на локальной странице: номер, код и пароль можно исправить без перезапуска настройки, истёкший код – запросить заново"
+    "version": "2.16.0",
+    "summary": "Ответы цифрового ассистента показывают нативные ссылки и могут содержать исходный файл; потерянный результат проверяется без повторной отправки"
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.15.3",
+    "version": "2.16.0",
     "minimumHostVersion": "3.25.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

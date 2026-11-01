@@ -49,6 +49,9 @@ HOST_MEMBER_ID_ENV = "TRELIO_SKILL_MEMBER_ID"
 HOST_CONNECTION_ID_ENV = "TRELIO_SKILL_CONNECTION_ID"
 HOST_CONNECTION_CONFIG_ENV = "TRELIO_SKILL_CONNECTION_CONFIG_JSON"
 LEGACY_API_HASH_FILE_NAME = "api_hash"
+# Python dependency-cache schema, not the immutable skill/runtime release
+# identity from release.json. Compatible provider releases reuse this SDK venv
+# without migrating or reauthorizing the independent personal session.
 RUNTIME_VERSION = "1"
 POLICY_MODES = ("confirm", "read-only")
 # Windows Python does not ship the IANA timezone database used by export.
@@ -4835,16 +4838,33 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
     if exact_reference:
         validate_owner_reply_input(args)
     reference = message_reference(args)
-    text = read_owner_reply_input() if exact_reference else outgoing_text(args)
+    owner_payload = read_owner_reply_payload() if exact_reference else None
+    text = owner_payload["text"] if exact_reference else outgoing_text(args)
+    rich_owner = exact_reference and owner_payload.get("schemaVersion") == 2
+    document = owner_payload.get("document") if rich_owner else None
+    verify_message_id = getattr(args, "verify_message_id", None) if exact_reference else None
+    if verify_message_id is not None and (not rich_owner or type(verify_message_id) is not int
+            or not args.message_id < verify_message_id < 2**31):
+        raise TelegramRuntimeError("Exact rich-reply verification requires one later candidate.", code="TELEGRAM_OWNER_REPLY_INPUT_INVALID")
+    if rich_owner and owner_payload.get("legacyPlainVerification") and (verify_message_id is None or document is not None):
+        raise TelegramRuntimeError("Legacy comparison is read-only and text-only.", code="TELEGRAM_OWNER_REPLY_INPUT_INVALID")
     _functions, _types, utils, _events, markdown = import_telethon_workflows()
-    expected_text, _entities = (text, []) if exact_reference else markdown.parse(text)
+    expected_text, expected_entities = (text, []) if exact_reference and not rich_owner else markdown.parse(text)
+    if rich_owner and (not expected_text.strip() or len(expected_text.encode("utf-16-le")) // 2 > 4096
+            or len(expected_entities) > 1000):
+        raise TelegramRuntimeError("Rich reply exceeds its text/entity bound.", code="TELEGRAM_OWNER_REPLY_INPUT_INVALID")
+    # A document and its caption are ONE provider mutation. Never silently
+    # split an oversized answer into a text send followed by a second upload.
+    if document and len(expected_text.encode("utf-16-le")) // 2 > 1024:
+        raise TelegramRuntimeError("Document caption exceeds its bound.", code="TELEGRAM_OWNER_REPLY_INPUT_INVALID")
+    frozen_document = freeze_owner_reply_document(document) if document and verify_message_id is None else None
     selected_author = getattr(args, "send_as", None) is not None
     quoted = getattr(args, "quote_text", None) is not None
     if getattr(args, "quote_offset", None) is not None and not quoted:
         raise TelegramRuntimeError("--quote-offset requires --quote-text.")
     if not selected_author and not quoted and (getattr(args, "dry_run", False) or getattr(args, "approval_hash", None)):
         raise TelegramRuntimeError("--dry-run/--approval-hash on reply require --send-as or --quote-text.")
-    mode = assert_send_allowed(identity, confirmed=args.confirm) if not (selected_author or quoted) else None
+    mode = assert_send_allowed(identity, confirmed=args.confirm) if not (selected_author or quoted or verify_message_id is not None) else None
     schedule_at = parse_schedule_at(args.schedule_at) if args.schedule_at else None
     client = build_client(args, identity)
     started = False
@@ -4862,7 +4882,6 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
                     or observed.get("outgoing") is not False or observed.get("forwarded") is not False
                     or observed.get("viaBot") is not False):
                 raise TelegramRuntimeError("The exact private owner message changed or is unavailable.", code="TELEGRAM_OWNER_REPLY_UNAVAILABLE")
-            await publish_online_presence(client)
         # A reply to a channel post is a comment in its discussion group.
         # Sending to the broadcast peer would publish an unrelated channel post.
         if getattr(entity, "broadcast", False):
@@ -4874,17 +4893,96 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
         if selected_author:
             return await import_interaction_tools().explicit_send(client, entity, target, args, identity,
                        await client.get_me(), sys.modules[__name__], utils, markdown)
+        def owner_matches(message):
+            # The SAME SDK parser supplies both send and read-only comparison.
+            # A raw Markdown string is not equal to Telegram's rendered text;
+            # conversely equal labels with another TextUrl are not the same
+            # answer. No native entities or private bodies cross the receipt.
+            legacy_plain = (verify_message_id is not None and rich_owner
+                            and owner_payload.get("legacyPlainVerification") is True
+                            and getattr(message, "message", None) == text
+                            and not (getattr(message, "entities", None) or []))
+            if (getattr(message, "out", None) is not True
+                    or getattr(message, "reply_to_msg_id", None) != target.id
+                    or not legacy_plain and getattr(message, "message", None) != expected_text):
+                return False
+            if rich_owner and not legacy_plain and provider_content_digest(getattr(message, "entities", None) or []) != provider_content_digest(expected_entities):
+                return False
+            top = message_thread_id(target)
+            return top is None or message_thread_id(message) == top
+
+        def owner_receipt(protocol):
+            return {"schemaVersion": 2 if rich_owner else 1, "protocol": protocol,
+                    "reference": {"id": observed["id"], "revision": observed["revision"], "conversationKey": conversation_key},
+                    "replyToMessageId": target.id, "automaticRetryAllowed": False}
+
+        async def document_matches(message):
+            # The filename/size and the actual downloaded bytes must agree.
+            # A matching caption or a generic hasMedia flag is insufficient.
+            # Reads remain memory-only, bounded by native document size, and
+            # cannot upload or grant a retry after an unknown send.
+            if document is None:
+                return getattr(message, "media", None) is None
+            native = getattr(message, "document", None)
+            names = [getattr(a, "file_name", None) for a in getattr(native, "attributes", [])
+                     if type(a).__name__ == "DocumentAttributeFilename"]
+            if (native is None or getattr(native, "size", None) != document["sizeBytes"]
+                    or names != [document["fileName"]]):
+                return False
+            # Stream and hash instead of trusting download_media's unbounded
+            # BytesIO allocation. Even an inconsistent provider stops after
+            # the admitted size plus one bounded chunk, with no temp file.
+            count, digest = 0, hashlib.sha256()
+            stream = client.iter_download(native, request_size=65_536)
+            try:
+                async for chunk in stream:
+                    if not isinstance(chunk, (bytes, memoryview)) or len(chunk) > 65_536:
+                        return False
+                    count += len(chunk)
+                    if count > document["sizeBytes"]:
+                        return False
+                    digest.update(chunk)
+            finally:
+                await stream.close()
+            return count == document["sizeBytes"] and hmac.compare_digest(digest.hexdigest(), document["sha256"])
+
+        if verify_message_id is not None:
+            # Verification has no send, upload, presence, policy write or ACK.
+            # Missing/mismatching history remains negative evidence only; even
+            # verified=False cannot authorize the caller to resend the answer.
+            candidate = await client.get_messages(entity, ids=verify_message_id)
+            verified = False
+            if candidate is not None:
+                exact_provider_message(candidate, entity, verify_message_id, utils)
+                verified = owner_matches(candidate) and await document_matches(candidate)
+                if verified:
+                    import_authoring_tools().verify_delivery(candidate, args, sys.modules[__name__])
+            return {**owner_receipt("telegram-owner-reply-read/v2"), "verified": verified, "messageId": verify_message_id}
+
         options = {"reply_to": target.id, "file": args.file, "parse_mode": None if exact_reference else TELEGRAM_TEXT_PARSE_MODE,
                    **import_authoring_tools().delivery_options(args)}
+        if rich_owner:
+            # Parse exactly once, pass native entities to the existing SDK
+            # sender. It must not parse the rendered text a second time.
+            options["formatting_entities"] = expected_entities
+            if frozen_document is not None:
+                options["file"] = frozen_document
+                options["force_document"] = True
         if schedule_at is not None:
             assert_schedule_lead_time(schedule_at)
             options["schedule"] = schedule_at
+        if exact_reference:
+            await publish_online_presence(client)
         started = True
-        sent = await client.send_message(entity, text or None, **options)
+        sent = await client.send_message(entity, (expected_text if rich_owner else text) or None, **options)
         exact_provider_message(sent, entity, sent.id, utils)
         sent = await import_authoring_tools().delivery_readback(client, entity, sent, args, sys.modules[__name__])
         if not sent.out or getattr(sent, "reply_to_msg_id", None) != target.id or sent.message != expected_text:
             raise TelegramRuntimeError("The provider did not prove the exact reply target.")
+        if rich_owner and not owner_matches(sent):
+            raise TelegramRuntimeError("The provider did not prove exact reply formatting.")
+        if rich_owner and not await document_matches(sent):
+            raise TelegramRuntimeError("The provider did not prove exact reply document bytes.")
         top = message_thread_id(target)
         if top is not None and message_thread_id(sent) != top:
             raise TelegramRuntimeError("The provider did not prove the exact reply thread.")
@@ -4894,9 +4992,8 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
             # Only structural native evidence crosses the private host pipe.
             # The response cannot echo the answer, original text or recipient's
             # profile, and it grants neither processing nor read-history ACK.
-            return {"schemaVersion": 1, "protocol": "telegram-owner-reply/v1", "sent": True,
-                    "reference": {"id": observed["id"], "revision": observed["revision"], "conversationKey": conversation_key},
-                    "replyToMessageId": target.id, "messageId": sent.id, "automaticRetryAllowed": False}
+            return {**owner_receipt("telegram-owner-reply/v2" if rich_owner else "telegram-owner-reply/v1"),
+                    "sent": True, "messageId": sent.id}
         return {"sent": schedule_at is None, "scheduled": schedule_at is not None,
                 "scheduledAt": format_utc_datetime(schedule_at) if schedule_at else None,
                 "chat": public_entity(entity), "replyToMessageId": target.id,
@@ -4909,6 +5006,8 @@ async def command_reply_async(args: argparse.Namespace, identity: Identity) -> d
             raise
         raise TelegramRuntimeError("Cannot validate the Telegram reply target; nothing was sent.") from error
     finally:
+        if frozen_document is not None:
+            frozen_document.close()
         try:
             await client.disconnect()
         except Exception as error:
@@ -5308,8 +5407,9 @@ def validate_owner_reply_input(args: argparse.Namespace) -> None:
 
     The trusted host independently verifies the linked owner and durable
     one-attempt native receipt. CLI fields alone never supply that authority.
-    Source writes deliberately do not expose files, schedules, send-as, quote,
-    formatting or arbitrary neighboring history through this narrow command.
+    Source writes never accept CLI body/file/format selectors, schedules,
+    send-as, quote or arbitrary neighboring history. A signed host may supply
+    the versioned caption and one independently admitted file via private stdin.
     """
     validate_reference_read(args)
     owner = getattr(args, "expected_owner_id", None)
@@ -5320,17 +5420,82 @@ def validate_owner_reply_input(args: argparse.Namespace) -> None:
 
 
 def read_owner_reply_input() -> str:
-    """Bounded private stdin only; never argv, environment or a body file."""
+    """Compatibility accessor for the same bounded private stdin decoder."""
+    return read_owner_reply_payload()["text"]
+
+
+def read_owner_reply_payload() -> dict[str, Any]:
+    """Versioned private stdin only, preserving the legacy plain-text ABI.
+
+    Only the signed host may choose v2; no parser/recipient/path selector is
+    exposed to the model or ordinary task CLI. Old hosts keep v1 exactly.
+    """
     try:
         raw = sys.stdin.buffer.read(16_385)
         value = json.loads(raw.decode("utf-8", errors="strict")) if len(raw) <= 16_384 else None
-        text = value.get("text") if isinstance(value, dict) and set(value) == {"text"} else None
+        legacy = isinstance(value, dict) and set(value) == {"text"}
+        rich = (isinstance(value, dict) and set(value) in ({"schemaVersion", "format", "text"},
+                                                        {"schemaVersion", "format", "text", "document"},
+                                                        {"schemaVersion", "format", "text", "legacyPlainVerification"})
+                and type(value["schemaVersion"]) is int and value["schemaVersion"] == 2
+                and value["format"] == "telegram-markdown"
+                and ("legacyPlainVerification" not in value or value["legacyPlainVerification"] is True))
+        text = value.get("text") if legacy or rich else None
         if (not isinstance(text, str) or not text.strip()
-                or len(text.encode("utf-16-le", errors="strict")) // 2 > 4096):
+                or "\x00" in text or len(text.encode("utf-16-le", errors="strict")) // 2 > 4096):
             raise ValueError()
-        return text
+        if rich and "document" in value:
+            doc = value["document"]
+            if (not isinstance(doc, dict) or set(doc) not in ({"fileName", "sizeBytes", "sha256"},
+                                                             {"filePath", "fileName", "sizeBytes", "sha256"})
+                    or not isinstance(doc["fileName"], str) or not 1 <= len(doc["fileName"].encode("utf-8")) <= 255
+                    or any(c in doc["fileName"] for c in ("/", "\\")) or any(ord(c) < 32 for c in doc["fileName"])
+                    or doc["fileName"] in (".", "..")
+                    or type(doc["sizeBytes"]) is not int or not 0 <= doc["sizeBytes"] <= 20 * 1024 * 1024
+                    or not isinstance(doc["sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", doc["sha256"]) is None
+                    or "filePath" in doc and (not isinstance(doc["filePath"], str) or "\x00" in doc["filePath"]
+                                              or not Path(doc["filePath"]).is_absolute())):
+                raise ValueError()
+        return value
     except (ValueError, UnicodeError, OSError, AttributeError) as error:
         raise TelegramRuntimeError("A bounded private reply body is required.", code="TELEGRAM_OWNER_REPLY_INPUT_INVALID") from error
+
+
+def freeze_owner_reply_document(document: dict[str, Any]) -> io.BytesIO:
+    """Open only the host-admitted original, then upload an immutable RAM copy.
+
+    Local paths never become authority: the host binds ACL/head/source/receipt
+    and exact bytes first. Reject links and special files before opening, and
+    independently compare descriptor type, size and SHA-256 before any upload.
+    Replacing the pathname after this read cannot replace the frozen bytes.
+    """
+    try:
+        selected = Path(document["filePath"])
+        for part in (selected, *selected.parents):
+            info = part.lstat()
+            # Windows junctions are reparse points but not necessarily Python
+            # symlinks. The same refusal applies to every ancestor on all OSes.
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                raise ValueError()
+        before = selected.lstat()
+        if not stat.S_ISREG(before.st_mode) or before.st_size != document["sizeBytes"]:
+            raise ValueError()
+        fd = os.open(selected, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+        with os.fdopen(fd, "rb") as stream:
+            actual = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(actual.st_mode) or actual.st_size != document["sizeBytes"]
+                    or (before.st_dev, before.st_ino) != (actual.st_dev, actual.st_ino)):
+                raise ValueError()
+            body = stream.read(document["sizeBytes"] + 1)
+        if (len(body) != document["sizeBytes"]
+                or not hmac.compare_digest(hashlib.sha256(body).hexdigest(), document["sha256"])):
+            raise ValueError()
+        frozen = io.BytesIO(body)
+        frozen.name = document["fileName"]
+        return frozen
+    except (OSError, KeyError, ValueError, TypeError) as error:
+        raise TelegramRuntimeError("The admitted reply document is unavailable or changed.",
+                                   code="TELEGRAM_OWNER_REPLY_DOCUMENT_INVALID") from error
 
 
 async def publish_online_presence(client) -> bool:
@@ -7246,6 +7411,8 @@ def build_parser() -> argparse.ArgumentParser:
     reference_reply.add_argument("--expected-conversation-key", required=True)
     reference_reply.add_argument("--expected-owner-id", required=True)
     reference_reply.add_argument("--confirm", action="store_true")
+    reference_reply.add_argument("--verify-message-id", type=positive_message_id,
+                                 help="Read back one already attempted rich reply; never send again")
     reference_reply.set_defaults(message=None, message_file=None, file=None, schedule_at=None, silent=False, no_link_preview=True)
     reference_ack = commands.add_parser("ack-reference", help="Acknowledge only a fully committed native unread range, or reconcile without writing")
     reference_ack.add_argument("--chat", required=True)

@@ -67,6 +67,38 @@ exact User peer/original/revision/key, incoming sender ID, отсутствие 
 reference и native outgoing ID. Неизвестный результат не разрешает повтор.
 Этот ответ не создаёт задачу/Workspace Run и сам по себе не выполняет readHistory.
 
+Additive private v2 uses `{"schemaVersion":2,"format":"telegram-markdown","text":"…"}`
+under the SAME 16-KiB stdin bound and native owner/original admission. The SAME
+Telethon parser runs once; rendered text and native entities are sent together,
+then independently matched on exact history read-back. A label with another
+TextUrl is a mismatch, even when its visible text is equal. Old v1 payloads stay
+literal/plain so old hosts do not silently change their reconciliation ABI.
+`reply-reference --verify-message-id ID` accepts v2 only, rechecks that same
+owner/original/revision/conversation and reads ONE existing later candidate.
+It never sends/uploads, publishes presence, changes send policy or marks read.
+The structural `telegram-owner-reply-read/v2` receipt reports `verified` and
+`automaticRetryAllowed=false`; a missing/mismatching candidate never grants
+another send. The host must select this mode only from native verify admission.
+Native SDK parser regressions use the provider's test requirements on all
+hosted OS jobs; an explicit self-hosted lane uses a disposable isolated venv,
+not a personal runtime or system-Python installation.
+
+V2 accepts one optional `document` descriptor through that same private stdin:
+`filePath` (send only), original `fileName`, `sizeBytes` (0–20 MiB) and lowercase
+`sha256`. CLI paths/URLs never select this source. The trusted host must first
+admit the exact accepted file, original reply receipt and destination audience.
+The provider rejects links/reparse ancestors/special files, checks descriptor
+identity/size/digest and freezes the original bytes before any upload. It sends
+one forced document with native entities and a caption of at most 1024 UTF-16
+units; it never splits the response into two effects. Exact read-back checks
+the original filename/size and streams the provider bytes through SHA-256 with
+a bounded chunk/total budget, without a temporary file.
+Read-only verification takes the descriptor without `filePath`, so deleting a
+temporary source cannot cause an upload retry. Optional host-only
+`legacyPlainVerification:true` admits an exact historical literal v1 body only
+in text-only verification, never send or document mode. Neither compatibility
+comparison nor a failed document check grants retry authority.
+
 `monitor --online-presence` явно публикует native `UpdateStatusRequest(offline=False)`
 только после успешной авторизации, в процессе реальной проверки. Default monitor
 остаётся пассивным. Force-offline и изменение приватности не выполняются:

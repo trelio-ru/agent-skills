@@ -3,8 +3,10 @@ import asyncio
 import importlib.util
 import io
 import json
+import hashlib
 import pathlib
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace as NS
@@ -49,7 +51,7 @@ class OwnerReplies(unittest.TestCase):
         self.key = "telegram-conversation/v1." + "c" * 64
         self.enterContext(mock.patch.object(M, "reference_conversation_key", new=mock.AsyncMock(return_value=self.key)))
         self.presence = self.enterContext(mock.patch.object(M, "publish_online_presence", new=mock.AsyncMock(return_value=True)))
-        self.enterContext(mock.patch.object(M, "import_telethon_workflows", return_value=(
+        self.workflows = self.enterContext(mock.patch.object(M, "import_telethon_workflows", return_value=(
             NS(), NS(), NS(get_peer_id=peer_id), NS(), NS(parse=lambda value: (value, [])))))
 
     def args(self, **changes):
@@ -62,9 +64,162 @@ class OwnerReplies(unittest.TestCase):
         return args
 
     def run_reply(self, args=None, text="PRIVATE ANSWER"):
-        stream = NS(buffer=io.BytesIO(json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")))
+        return self.run_payload({"text": text}, args)
+
+    def run_payload(self, payload, args=None):
+        stream = NS(buffer=io.BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8")))
         with mock.patch.object(sys, "stdin", stream):
             return asyncio.run(M.command_reply_async(args or self.args(), self.identity))
+
+    def rich_payload(self):
+        # The actual SDK parser handles UTF-16 offsets, escaping and TextUrl;
+        # a hand-written test parser would reproduce the same implementation
+        # error instead of proving what the Telegram client will receive.
+        from telethon.extensions import markdown
+        text = "📎 [Текущий план](https://example.invalid/plan?a=1&b=2)"
+        expected, entities = markdown.parse(text)
+        self.sent.message, self.sent.entities = expected, entities
+        self.workflows.return_value = (NS(), NS(), NS(get_peer_id=peer_id), NS(), markdown)
+        return {"schemaVersion": 2, "format": "telegram-markdown", "text": text}, expected, entities
+
+    def document_payload(self):
+        payload, expected, entities = self.rich_payload()
+        root = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        source = root / "план.md"
+        body = "# ORIGINAL\nПроверенный файл 📎\n".encode()
+        source.write_bytes(body)
+        payload["document"] = {"filePath": str(source), "fileName": source.name,
+                               "sizeBytes": len(body), "sha256": hashlib.sha256(body).hexdigest()}
+        self.sent.document = NS(size=len(body), attributes=[tl("DocumentAttributeFilename", file_name=source.name)])
+        self.sent.media = NS(document=self.sent.document)
+        self.download_bytes = body
+        outer = self
+        class Stream:
+            def __aiter__(self):
+                async def chunks():
+                    yield outer.download_bytes
+                return chunks()
+            async def close(self):
+                pass
+        self.provider.iter_download = mock.Mock(side_effect=lambda *_a, **_k: Stream())
+        return payload, body, source
+
+    def test_one_native_document_keeps_original_bytes_name_caption_and_entities(self):
+        payload, body, source = self.document_payload()
+        frozen_bytes = []
+        async def capture(*_args, **kwargs):
+            frozen_bytes.append(kwargs["file"].getvalue())
+            return self.sent
+        self.provider.send_message.side_effect = capture
+        result = self.run_payload(payload)
+        self.assertTrue(result["sent"])
+        self.provider.send_message.assert_awaited_once()
+        options = self.provider.send_message.call_args.kwargs
+        self.assertEqual(frozen_bytes, [body])
+        self.assertTrue(options["file"].closed)
+        self.assertEqual(options["file"].name, source.name)
+        self.assertTrue(options["force_document"])
+        self.assertTrue(options["formatting_entities"])
+        self.provider.iter_download.assert_called_once_with(self.sent.document, request_size=65_536)
+        self.assertNotIn(str(source), json.dumps(result))
+
+    def test_document_reconciliation_needs_no_source_path_and_never_uploads(self):
+        payload, _body, source = self.document_payload()
+        del payload["document"]["filePath"]
+        source.unlink()
+        result = self.run_payload(payload, self.args(verify_message_id=11))
+        self.assertTrue(result["verified"])
+        self.provider.send_message.assert_not_awaited()
+        self.presence.assert_not_awaited()
+        M.assert_send_allowed.assert_not_called()
+
+    def test_document_changed_bytes_name_or_size_cannot_confirm_or_resend(self):
+        payload, _body, _source = self.document_payload()
+        self.download_bytes = b"DIFFERENT"
+        with self.assertRaises(M.TelegramRuntimeError):
+            self.run_payload(payload)
+        self.provider.send_message.assert_awaited_once()
+        self.provider.send_message.reset_mock()
+        result = self.run_payload(payload, self.args(verify_message_id=11))
+        self.assertFalse(result["verified"])
+        self.assertFalse(result["automaticRetryAllowed"])
+        self.provider.send_message.assert_not_awaited()
+        self.sent.document.size += 1
+        self.provider.iter_download.reset_mock()
+        self.assertFalse(self.run_payload(payload, self.args(verify_message_id=11))["verified"])
+        self.provider.iter_download.assert_not_called()
+
+    def test_changed_local_file_symlink_and_oversized_caption_fail_before_client(self):
+        payload, _body, source = self.document_payload()
+        source.write_bytes(b"CHANGED")
+        with mock.patch.object(M, "build_client", side_effect=AssertionError("no provider access")):
+            with self.assertRaises(M.TelegramRuntimeError):
+                self.run_payload(payload)
+            source.unlink()
+            target = source.with_name("other.md")
+            target.write_bytes(b"CHANGED")
+            try:
+                source.symlink_to(target)
+            except OSError:
+                pass  # Windows standard-user lane can lack symlink privilege.
+            else:
+                with self.assertRaises(M.TelegramRuntimeError):
+                    self.run_payload(payload)
+            payload["text"] = "😀" * 513
+            with self.assertRaises(M.TelegramRuntimeError):
+                self.run_payload(payload)
+
+    def test_rich_owner_reply_uses_native_text_url_entities_from_the_real_parser(self):
+        payload, expected, entities = self.rich_payload()
+        result = self.run_payload(payload)
+        self.assertEqual(result["protocol"], "telegram-owner-reply/v2")
+        self.assertEqual(type(entities[0]).__name__, "MessageEntityTextUrl")
+        self.assertEqual(entities[0].offset, 3, "emoji offset uses UTF-16, not Python code points")
+        self.provider.send_message.assert_awaited_once_with(self.peer, expected, reply_to=10,
+            file=None, parse_mode=None, formatting_entities=entities, link_preview=False)
+        self.assertNotIn("example.invalid", json.dumps(result))
+
+    def test_rich_reply_changed_link_entity_remains_one_uncertain_send(self):
+        payload, _expected, entities = self.rich_payload()
+        changed = [type(entities[0])(entities[0].offset, entities[0].length, "https://other.invalid/")]
+        self.provider.get_messages.return_value = tl("Message", **{**vars(self.sent), "entities": changed})
+        with self.assertRaises(M.TelegramRuntimeError):
+            self.run_payload(payload)
+        self.provider.send_message.assert_awaited_once()
+
+    def test_rich_reply_reconciliation_only_reads_the_exact_candidate(self):
+        payload, _expected, _entities = self.rich_payload()
+        args = self.args(verify_message_id=11)
+        result = self.run_payload(payload, args)
+        self.assertEqual(result["protocol"], "telegram-owner-reply-read/v2")
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["messageId"], 11)
+        self.provider.get_messages.assert_awaited_once_with(self.peer, ids=11)
+        self.provider.send_message.assert_not_awaited()
+        self.presence.assert_not_awaited()
+        M.assert_send_allowed.assert_not_called()
+
+    def test_rich_reply_reconciliation_mismatch_does_not_grant_send_or_retry(self):
+        payload, _expected, _entities = self.rich_payload()
+        self.sent.entities = []
+        result = self.run_payload(payload, self.args(verify_message_id=11))
+        self.assertFalse(result["verified"])
+        self.assertFalse(result["automaticRetryAllowed"])
+        self.provider.send_message.assert_not_awaited()
+
+    def test_old_plain_reply_can_be_reconciled_after_upgrade_without_any_send(self):
+        payload, _expected, _entities = self.rich_payload()
+        payload["text"] = "  " + payload["text"] + "\n"
+        payload["legacyPlainVerification"] = True
+        self.sent.message, self.sent.entities = payload["text"], []
+        self.assertTrue(self.run_payload(payload, self.args(verify_message_id=11))["verified"])
+        self.sent.message = payload["text"].strip()
+        self.assertFalse(self.run_payload(payload, self.args(verify_message_id=11))["verified"],
+                         "trimming an immutable legacy plain body is a mismatch")
+        self.provider.send_message.assert_not_awaited()
+        with mock.patch.object(M, "build_client", side_effect=AssertionError("legacy flag cannot send")):
+            with self.assertRaises(M.TelegramRuntimeError):
+                self.run_payload(payload)
 
     def test_exact_native_reply_is_one_send_with_plain_text_and_positive_readback(self):
         result = self.run_reply()
