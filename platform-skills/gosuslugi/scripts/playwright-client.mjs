@@ -10,6 +10,16 @@ import { browserSessionDirectory, requestLocal } from './transport.mjs';
 import { ServiceFlow, serviceForOrigin } from './esia-flow.mjs';
 import { createAuthorizationBroker } from './authorization.mjs';
 import { PlaywrightAuthorizationFlow } from './playwright-flow.mjs';
+import { createPosSubmissionFlow } from './pos-submission.mjs';
+
+// POS owns its post-login submission protocol. Keep it beside the ESIA SDK,
+// rather than having each caller recreate one-shot guards and HTTP evidence.
+export function createPosSubmission(page, options) {
+  return createPosSubmissionFlow(page, options, {
+    createAuthorization: createEsiaAuthorization,
+    observeAuthorization: observeEsiaAuthorization,
+  });
+}
 
 function deferred() {
   let resolve, reject;

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "sourceVersion": "4.5.15",
-  "originalSha256": "a6ac8c3198dd62c10565e6f2b64a8b63ba7dddbae4f4c45b05a188f5eb176abb",
+  "sourceVersion": "4.5.16",
+  "originalSha256": "ea4c763155321899ca08a80e337668eb322b1cc31eb24b5cf28b219e30c3bafb",
   "sections": [
     {
       "heading": "---",
@@ -53,8 +53,8 @@
     {
       "heading": "## Форма обращения ПОС",
       "file": "references/pos-submission.md",
-      "sha256": "b26b47d07a13760237054d198a522f6e1f2cc3b34851aedb80781d9391613c9a",
-      "bytes": 4338,
+      "sha256": "af125db0f6f4411e725795c99f48cc3f1da6e1bff3713c3798126ddbbab7c68b",
+      "bytes": 14428,
       "sourceSuffix": "\n"
     },
     {

@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.5.15 объявляет signed host browser-session class
+Runtime 3.5.16 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -595,6 +595,18 @@ Formal operation routing допускает независимый маршру�
 read-back исходной заявки. Native lease, role selection и vault не меняются.
 
 ### ПОС: заполнение до авторизации виджета
+
+Caller-owned подача использует `createPosSubmission` из того же signed SDK.
+[Контракт сценария](pos-submission.md) задаёт review, одноразовые entry/modal/role
+clicks, последовательные исходные upload requests, HTTP evidence и связанный
+регистрационный номер. Наблюдатель читает
+только fixed endpoint/method основной Page, числовой status и факт failure;
+network bodies, headers и auth данные не читаются. Unknown результат не
+разрешает новый helper или новую форму. Поздняя квитанция сверяет ровно один
+наблюдённый create; несколько dispatch сохраняют риск дубля. Preflight до
+начала исправляется в той же Page без сброса согласия/файлов. Cleanup/expiry
+повторно проверяются после асинхронной подготовки до click. Browser ownership,
+native authorizer и исходный абсолютный срок не меняются.
 
 `https://pos.gosuslugi.ru/form/` – публичный виджет подачи, а не личный кабинет
 с отдельным предварительным входом. Основная сессия Госуслуг открывается обычным

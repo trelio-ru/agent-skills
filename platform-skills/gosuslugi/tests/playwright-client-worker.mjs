@@ -11,6 +11,7 @@ import { createEsiaAuthorization, observeEsiaAuthorization } from '../scripts/pl
 import { readAuthorization, requestLocal } from '../scripts/transport.mjs';
 import { EsiaAuthorizer } from '../scripts/esia-authorizer.mjs';
 import { activeCredentialGate, credentialGate, recoveredCredentialGate } from '../scripts/auth-safety.mjs';
+import { testPosSubmission } from './pos-submission-browser-fixture.mjs';
 
 // Every network response and credential below is synthetic. The browser,
 // native guardian, private descriptor and per-character permit are real.
@@ -525,6 +526,8 @@ try {
     assert.equal(await page.locator('input[name=draft]').inputValue(), 'Черновик остаётся после блокировки');
     await authorizer.close(); await current.close(); current = null; await context.close();
   }
+  await markStage('pos_submission');
+  await testPosSubmission(owned.browser);
   assert.ok(nativePermits > 40, 'secret characters need actual native permits');
   await fs.writeFile(config.file, JSON.stringify({ ok: true, browserPid }), { mode: 0o600 });
 } catch (error) {

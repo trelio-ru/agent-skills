@@ -434,6 +434,11 @@ lifecycle/lease; неизвестные/неверные bindings отклоня
 Пошаговый caller Госуслуг не ждёт request/authenticated внутри очереди
 browser-команд. Первый click может открыть только modal: observer сохраняет
 доступность state и следующего разрешённого click в той же Page/helper.
+Подачу ПОС ведёт provider-owned `createPosSubmission` по
+[контракту формы](platform-skills/gosuslugi/references/pos-submission.md):
+одна подготовленная Page, одноразовые clicks, HTTP stages без bodies и
+связанный регистрационный номер. Возврат формы/успешный ЕСИА не разрешают
+новый вход; preflight исправляется без потери файлов и принятой галочки.
 Advisory wait без запроса требует осмотра промежуточного экрана, а не повторного
 входа, нового helper или выдуманного ручного challenge.
 Ошибки caller/download не проходят через `safeAuthorizationFailure` и не меняют
