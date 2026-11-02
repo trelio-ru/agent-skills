@@ -530,3 +530,6 @@ offline envelope fixture не заменяет live проверку personal la
 `npm run git:integrate -- --tag <tag>`. Старые wrappers/boolean не дают admission.
 После checkout установить pinned maintainer dependency через `npm ci --ignore-scripts`.
 Контракт, recovery и границы общего кода – [git-coordination](docs/git-coordination.md).
+Долгое ожидание очереди/CI – `git:integrate -- --background` и один 15-минутный
+heartbeat этого же чата по этому контракту. Без подтверждённого admission и
+сохранённой автоматизации нельзя обещать автоматическое продолжение.

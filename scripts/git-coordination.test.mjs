@@ -58,3 +58,12 @@ test('canonical divergence is rejected before remote main mutation through the r
   assert.equal(git(main, '--git-dir=' + remote, 'rev-parse', 'refs/heads/main'), before, 'Reject before remote mutation');
   assert.notEqual(code, 0); assert.match(stderr, /Canonical main is outside the verified source path/);
 });
+
+// Exercise the installed dependency through this owner's real CLI wrapper. A
+// package pin missing its background module/exports must fail before enqueue.
+test('pinned consumer CLI reads an unknown ticket without claiming integration success', () => {
+  const observed = spawnSync(process.execPath, ['scripts/git-integrate.mjs', '--status', '999999999999'],
+    {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']});
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.deepEqual(JSON.parse(observed.stdout), {id: '999999999999', state: 'unknown'});
+});
