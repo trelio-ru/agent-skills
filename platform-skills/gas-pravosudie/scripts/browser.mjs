@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   childEnvironment,
@@ -76,8 +76,30 @@ export async function launchOwnedBrowser({ playwright, permit, channel = process
 
 function exactClientDescriptor(value) {
   requireThat(value && !Array.isArray(value) && typeof value === 'object', 'gosuslugi_client_invalid');
+  const hasController = Object.hasOwn(value, 'controller');
   requireThat(Object.keys(value).sort().join() ===
-    'browserAccess,configHome,guidePath,modulePath,options,ownership', 'gosuslugi_client_invalid');
+    (hasController ? 'browserAccess,configHome,controller,guidePath,modulePath,options,ownership'
+      : 'browserAccess,configHome,guidePath,modulePath,options,ownership'), 'gosuslugi_client_invalid');
+  if (hasController) {
+    // Current Gosuslugi discovery also prepares a host controller for standalone
+    // Playwright callers. GAS already owns its browser through its own guardian,
+    // so this is passive compatibility metadata, never execution authority.
+    // Validate the closed v1 shape without opening ownerFile, importing moduleUrl
+    // or applying that independent controller's expiry to the GAS session.
+    const controller = value.controller;
+    requireThat(controller && typeof controller === 'object' && !Array.isArray(controller) &&
+      Object.keys(controller).sort().join() === 'apiVersion,deadlineAt,moduleUrl,ownerFile,sessionId' &&
+      controller.apiVersion === 1 && typeof controller.sessionId === 'string' && UUID.test(controller.sessionId) &&
+      typeof controller.ownerFile === 'string' && path.isAbsolute(controller.ownerFile) &&
+      Number.isSafeInteger(controller.deadlineAt) && controller.deadlineAt > 0 &&
+      typeof controller.moduleUrl === 'string', 'gosuslugi_client_invalid');
+    let moduleUrl;
+    try { moduleUrl = new URL(controller.moduleUrl); } catch { /* Rejected below with the public descriptor error. */ }
+    requireThat(moduleUrl?.protocol === 'file:' && !moduleUrl.host && !moduleUrl.search && !moduleUrl.hash,
+      'gosuslugi_client_invalid');
+    try { requireThat(path.isAbsolute(fileURLToPath(moduleUrl)), 'gosuslugi_client_invalid'); }
+    catch { throw new RuntimeError('gosuslugi_client_invalid'); }
+  }
   requireThat(typeof value.modulePath === 'string' && path.isAbsolute(value.modulePath) &&
     path.basename(value.modulePath) === 'playwright-client.mjs' && fs.existsSync(value.modulePath),
   'gosuslugi_client_invalid');

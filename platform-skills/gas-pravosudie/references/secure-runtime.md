@@ -68,8 +68,15 @@ transaction и login click после неизвестного результа�
 Descriptor принимает exact `options` с `company` и `member`, а для выбранного
 локального аккаунта – также `accountId` в формате UUID. ГАС передаёт привязку
 аккаунта helper-у без удаления или подмены; descriptor без `accountId` сохраняет
-legacy company/member flow. Неизвестные поля и явно заданный неверный `accountId`
-дают `gosuslugi_client_invalid` до обращения к странице, согласия и запуска ЕСИА.
+legacy company/member flow. Верхний optional `controller` текущего Госуслуги
+client принимается только в закрытом формате host API v1: `apiVersion`, UUID
+`sessionId`, абсолютный `ownerFile`, положительный целочисленный `deadlineAt`
+и локальный `file:` `moduleUrl` без host/query/fragment. Это пассивные metadata
+для отдельного Playwright caller: ГАС не читает owner file, не импортирует этот
+модуль, не запускает controller и не передаёт его helper-у. Его срок не заменяет
+собственную исходную lease ГАС. Прежний descriptor без `controller` поддерживается.
+Неизвестные поля и неверные controller/account bindings дают
+`gosuslugi_client_invalid` до обращения к странице, согласия и запуска ЕСИА.
 
 Если обычный runtime Госуслуг уже находится в `ready`, exact `authorize`
 передаёт transaction его существующему защищённому worker. Повторная системная

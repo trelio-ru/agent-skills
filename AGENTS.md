@@ -426,7 +426,9 @@ HTTP document commit он сразу отключает observation и возв�
 context/page. Request ancestry связывает redirect-параметры/токены сайта;
 ошибки внешнего HTTP идут caller-у отдельно и не означают отказ ЕСИА.
 Caller ГАС сохраняет optional UUID `accountId` verified Госуслуги descriptor
-до helper-а; неизвестные/неверные bindings отклоняет до browser/consent IO.
+до helper-а и принимает optional host-v1 `controller` как проверенные пассивные
+metadata, без чтения owner file, импорта модуля или смены собственного browser
+lifecycle/lease; неизвестные/неверные bindings отклоняет до browser/consent IO.
 Готовность кабинета проверяет вызывающий сценарий. Доступ к credentials
 отзывается на callback, повтор transaction не разрешается.
 Пошаговый caller Госуслуг не ждёт request/authenticated внутри очереди

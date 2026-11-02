@@ -2,12 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gas-pravosudie",
-    "version": "4.1.7",
-    "summary": "Для обращений и запросов по делу агент проверяет официальный порядок подачи и предлагает подходящий раздел ГАС «Правосудие» вместо email суда. Доставка письма не считается регистрацией обращения."
+    "version": "4.1.8",
+    "summary": "Исправлена ошибка gosuslugi_client_invalid при подготовке входа в ГАС «Правосудие» через актуальный навык Госуслуг. Сохранены выбранный аккаунт, собственная защищённая сессия ГАС и совместимость с прежним форматом клиента.",
+    "routingSummary": "Work with Russian court cases and electronic filings through GAS Pravosudie with delegated ESIA sign-in."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.12",
+    "version": "1.0.13",
     "minimumHostVersion": "2.4.0",
     "entrypoint": {
       "path": "scripts/trelio-gas-pravosudie.mjs",

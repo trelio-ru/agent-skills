@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { CourtPortal } from '../scripts/browser.mjs';
 import { RuntimeError } from '../scripts/core.mjs';
@@ -124,6 +126,114 @@ test('selected Gosuslugi account reaches the ESIA helper unchanged through the c
   assert.equal((await f.resume()).phase, 'ready');
   assert.equal(f.attempts[0].closed, 1);
   assert.equal(f.saved(), 1);
+});
+
+function controllerDescriptor(directory) {
+  return {
+    apiVersion: 1, sessionId: crypto.randomUUID(), deadlineAt: Date.now() + 1800000,
+    ownerFile: path.join(directory, 'unopened-owner.json'),
+    moduleUrl: pathToFileURL(path.join(directory, 'unimported-host.mjs')).href,
+  };
+}
+
+test('current controller metadata is passive while account binding and court callback are preserved', async t => {
+  for (const selectedAccount of [false, true]) {
+    const f = await fixture(t);
+    if (selectedAccount) f.client.options.accountId = crypto.randomUUID();
+    f.client.controller = controllerDescriptor(f.client.configHome);
+    // A standalone controller's expired lease is unrelated to the still-live
+    // court browser. Neither of these nonexistent paths may be opened/imported.
+    f.client.controller.deadlineAt = 1;
+    const { sessionId, expiresAt } = f.status;
+    assert.equal((await f.prepare()).phase, 'authorization_required');
+    assert.deepEqual(f.attempts[0].options, {
+      ...f.client.options, configHome: f.client.configHome,
+      origin: 'https://ej.sudrf.ru', confirm: true, requestTitle: null,
+    });
+    f.returnToCourt();
+    f.attempts[0].resolve({ context: f.context, page: f.page });
+    await f.settle();
+    assert.equal((await f.resume()).phase, 'ready');
+    assert.equal(f.status.sessionId, sessionId);
+    assert.equal(f.status.expiresAt, expiresAt);
+    assert.equal(f.portal.page, f.page);
+    assert.equal(f.portal.context, f.context);
+    assert.deepEqual(f.calls, [['login']]);
+    assert.equal(f.saved(), 1);
+  }
+});
+
+test('the actual current Gosuslugi client producer is accepted by the court sign-in adapter', {
+  skip: !['darwin', 'win32'].includes(process.platform),
+}, async t => {
+  const f = await fixture(t);
+  const startedAt = Date.now();
+  const producer = new URL('../../gosuslugi/scripts/trelio-gosuslugi.mjs', import.meta.url).href;
+  const host = new URL('../../gosuslugi/tests/browser-session-fixture.mjs', import.meta.url).href;
+  const accountId = crypto.randomUUID();
+  // Execute the real producer in an isolated process with only a synthetic host
+  // admission seam. No native unlock, credential store or browser is available.
+  // This prevents a hand-written six-field fixture hiding another ABI change.
+  const client = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
+    `import { run } from ${JSON.stringify(producer)}; process.stdout.write(JSON.stringify(await run(['client'])));`], {
+    encoding: 'utf8', timeout: 10000, maxBuffer: 65536, stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env, TRELIO_CONFIG_HOME: f.client.configHome,
+      TRELIO_SKILL_ID: 'gosuslugi', TRELIO_SKILL_CONNECTION_ID: '',
+      TRELIO_SKILL_COMPANY_ID: f.client.options.company, TRELIO_SKILL_MEMBER_ID: f.client.options.member,
+      TRELIO_SKILL_ACCOUNT_JSON: JSON.stringify({ id: accountId, providerRef: null, companyBinding: 'a'.repeat(64) }),
+      TRELIO_BROWSER_CONTROLLER_ENABLED: '1', TRELIO_BROWSER_SESSION_MODULE_URL: host,
+      TRELIO_BROWSER_SESSION_POLICY_JSON: JSON.stringify({ apiVersion: 1, sessionClass: 'protected-snapshot',
+        leaseMs: 1800000, manualAssist: false }),
+      TRELIO_BROWSER_SESSION_STARTED_AT: String(startedAt),
+      TRELIO_BROWSER_SESSION_DEADLINE_AT: String(startedAt + 1800000),
+    },
+  }));
+  assert.equal(client.controller.apiVersion, 1);
+  assert.equal(client.options.accountId, accountId);
+  assert.deepEqual((await fs.readdir(f.client.configHome)).sort(), ['references', 'scripts']);
+  // Substitute only the helper implementation so the full production descriptor
+  // can traverse GAS validation/consent/callback without a real ESIA transaction.
+  const { modulePath, guidePath } = f.client;
+  Object.assign(f.client, client, { modulePath, guidePath });
+  assert.equal((await f.prepare()).phase, 'authorization_required');
+  assert.equal(f.attempts[0].options.accountId, accountId);
+  assert.equal(Object.hasOwn(f.attempts[0].options, 'controller'), false);
+  f.returnToCourt();
+  f.attempts[0].resolve({ context: f.context, page: f.page });
+  await f.settle();
+  assert.equal((await f.resume()).phase, 'ready');
+  assert.deepEqual(f.calls, [['login']]);
+});
+
+test('unknown client fields and malformed controllers fail before browser, consent or helper IO', async t => {
+  const valid = controllerDescriptor(path.resolve('synthetic-unused'));
+  const invalid = [undefined, null, [], '', 1, {},
+    ...[{ apiVersion: 2 }, { sessionId: 'invalid' }, { ownerFile: 'relative.json' },
+      { deadlineAt: '1' }, { deadlineAt: 0 }, { deadlineAt: 1.5 },
+      { moduleUrl: 'https://example.invalid/host.mjs' }, { moduleUrl: 'invalid' },
+      { moduleUrl: 'file://remote/host.mjs' }, { moduleUrl: valid.moduleUrl + '?extra=1' },
+      { moduleUrl: valid.moduleUrl + '#extra' }, { unexpected: true }].map(patch => ({ ...valid, ...patch })),
+  ];
+  for (const controller of invalid) {
+    const f = await fixture(t);
+    f.client.controller = controller;
+    let browserReads = 0;
+    f.portal.ensureAuthorizationPage = async () => { browserReads += 1; };
+    await assert.rejects(f.prepare(), { code: 'gosuslugi_client_invalid' });
+    assert.equal(browserReads, 0);
+    assert.equal(await f.controls['#iAgree[type="checkbox"]:visible'].isChecked(), false);
+    assert.equal(f.attempts.length, 0);
+    assert.deepEqual(f.calls, []);
+  }
+  for (const withController of [false, true]) {
+    const f = await fixture(t);
+    if (withController) f.client.controller = valid;
+    f.client.unexpected = true;
+    await assert.rejects(f.prepare(), { code: 'gosuslugi_client_invalid' });
+    assert.equal(f.attempts.length, 0);
+    assert.deepEqual(f.calls, []);
+  }
 });
 
 test('invalid account descriptors fail before browser access, consent or helper creation', async t => {
