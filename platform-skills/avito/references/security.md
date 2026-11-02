@@ -90,3 +90,24 @@ files могут быть удалены cleanup. Originals не входят в
 Получение не исполняет файл, не извлекает ZIP, не запускает Office/macros и не
 является антивирусной проверкой. Чтение подходящим reader и разрешённое
 сохранение источника сохраняют обычные ACL/Run/provenance и запрет раскрытия.
+
+## Исходящие файлы через native chooser
+
+Signed `fileUploads` разрешает только `upload-files` с fresh frameId, trusted
+координатами и явными абсолютными путями разрешённых originals. Host сначала
+проверяет все ancestors/regular files, отсутствие symlink/reparse/hardlink,
+потом потоково замораживает имена и bytes в private copies. Исходники и их ACL
+не меняются; файлы не исполняются, не распаковываются и не входят в auth archive.
+
+Один координатный click перехватывает штатный chooser. Только его top-frame
+input при прежних origin/navigation/manual gate/lease получает frozen files;
+произвольный selector, DOM/CDP, URL или другой transport не открываются.
+Пути staging, file input identity, bytes и browser protocol не выдаются модели.
+Допустимость формата определяет сайт; отказ не разрешает смену расширения/MIME.
+
+Staging ограничен 32 originals/вызов, 1 GiB/файл, 2 GiB/256 файлов за lifetime
+и 25 секундами внутри исходной lease. Переданный File может читаться сайтом
+асинхронно, поэтому после dispatch copies сохраняются до обычного `close` даже
+при потерянном ответе. Выбор может сразу начать upload и требует поручения на
+раскрытие точных файлов выбранной аудитории. Он не подтверждает отправку или
+доставку сообщения; timeout/detach/ошибка требуют read-back без blind replay.

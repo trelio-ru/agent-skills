@@ -2,8 +2,9 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "avito",
-    "version": "0.3.1",
-    "summary": "Уточнён первый контакт в чате: до первого ответа собеседника доступны только текстовые сообщения, фото и файлы откладываются без попыток обойти ограничение Авито"
+    "version": "0.4.0",
+    "summary": "Добавлена загрузка исходящих фото и файлов через штатную кнопку вложения Авито с проверкой первого ответа собеседника и результата загрузки",
+    "routingSummary": "Find Avito listings, communicate with sellers, and download or attach files through the managed browser."
   },
   "connection": {
     "schemaVersion": 1,
@@ -15,8 +16,8 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.3.1",
-    "minimumHostVersion": "3.11.0",
+    "version": "0.4.0",
+    "minimumHostVersion": "3.17.0",
     "entrypoint": {
       "path": "trelio-avito.mjs",
       "interpreter": "node"

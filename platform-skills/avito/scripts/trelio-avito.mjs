@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const MINIMUM_HOST_VERSION = '3.17.0';
 
 const commands = {
   doctor: {}, setup: {}, 'show-login': {}, status: {}, wait: {}, ready: {}, screenshot: {}, close: {}, disconnect: {},
@@ -8,6 +11,7 @@ const commands = {
   'submit-search': { frameId: 'string', x: 'number?', y: 'number?' }, 'search-ready': { frameId: 'string' },
   navigate: { url: 'string' }, click: { frameId: 'string', x: 'number', y: 'number' },
   'download-attachment': { frameId: 'string', x: 'number', y: 'number' },
+  'upload-files': { frameId: 'string', x: 'number', y: 'number', files: 'string[]' },
   scroll: { frameId: 'string', x: 'number', y: 'number', deltaY: 'number', deltaX: 'number?' },
   'type-text': { frameId: 'string', text: 'string' }, key: { frameId: 'string', key: 'string' },
 };
@@ -22,6 +26,20 @@ export function parseAvitoCommand(argv) {
     const field = flags[i].slice(2);
     if (!Object.hasOwn(commands[operation], field) || Object.hasOwn(args, field)) fail();
     const type = commands[operation][field].replace('?', '');
+    if (type === 'string[]') {
+      // Only explicit local originals cross this CLI boundary. The common
+      // host checks private-file ancestry and freezes their bytes before the
+      // native chooser receives them; this provider neither reads source bytes
+      // nor changes their ACL. A URL, selector or page-authored path cannot
+      // become a separate upload transport. Format acceptance belongs to Avito.
+      let files;
+      try { files = JSON.parse(flags[i + 1]); } catch { fail(); }
+      if (!Array.isArray(files) || !files.length || files.length > 32
+        || files.some(file => typeof file !== 'string' || !path.isAbsolute(file)
+          || file.length > 4096 || /[\u0000-\u001f]/u.test(file))) fail();
+      args[field] = files;
+      continue;
+    }
     if (type === 'boolean' && !['true', 'false'].includes(flags[i + 1])) fail();
     args[field] = type === 'number' ? Number(flags[i + 1]) : type === 'boolean' ? flags[i + 1] === 'true' : flags[i + 1];
     if (type === 'number' && !Number.isSafeInteger(args[field])) fail();
@@ -61,14 +79,18 @@ export async function runAvito(argv, env = process.env) {
   const { operation, args } = parseAvitoCommand(argv);
   if (operation === 'doctor') return {
     schemaVersion: 1, hostVisualAvailable: Boolean(env.TRELIO_VISUAL_SESSION_MODULE_URL),
-    // Headerless redirects and final HTML/download guards require the fixed
-    // signed host before any browser I/O. An older live worker is finished
-    // through close; auth storage is reused without reset or re-login.
-    accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: '3.11.0',
+    // Native chooser delivery is the newest required host API. Signed admission
+    // upgrades the host before browser I/O; close preserves an older worker's
+    // authorisation instead of resetting the account or importing its profile.
+    accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: MINIMUM_HOST_VERSION,
   };
   const url = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank');
   if (url.protocol !== 'file:' || env.TRELIO_SKILL_ID !== 'avito') throw new Error('AVITO_HOST_REQUIRED');
-  const { runVisualSession } = await import(url.href);
+  const { runVisualSession, VISUAL_FILE_UPLOAD_API } = await import(url.href);
+  // A stale host must fail before any chooser click, not silently accept a
+  // command it cannot deliver. Keep close/status usable for normal recovery;
+  // the API marker never authorises sending or bypasses first-contact review.
+  if (operation === 'upload-files' && VISUAL_FILE_UPLOAD_API !== 'trelio.visual-file-upload/v1') throw new Error('AVITO_HOST_UPGRADE_REQUIRED');
   // Domain policy and initial URL belong to this signed provider. The common
   // host owns storage, Chromium, bounded observations, guards and lifecycle.
   // There is no alternate transport, local executable override or site script.
@@ -79,7 +101,7 @@ export async function runAvito(argv, env = process.env) {
     hostOperation = 'submit';
     hostArgs = Object.hasOwn(args, 'x') ? { action: 'click', ...args } : { action: 'key', key: 'Enter', ...args };
   } else if (operation === 'search-ready') hostOperation = 'request-ready';
-  return runVisualSession({ observationMode: 'text', attachmentDownloads: true, origins: ['https://www.avito.ru', 'https://avito.ru'], domains: ['avito.ru'],
+  return runVisualSession({ observationMode: 'text', attachmentDownloads: true, fileUploads: true, origins: ['https://www.avito.ru', 'https://avito.ru'], domains: ['avito.ru'],
     operation: hostOperation, args: operation === 'setup' ? { url: 'https://www.avito.ru/' } : hostArgs, env });
 }
 
@@ -88,7 +110,7 @@ if (process.argv[1] && await fs.realpath(process.argv[1]) === await fs.realpath(
   catch (error) {
     // Runtime/browser errors may contain URLs, input text or local storage.
     // Never echo a native message/stack or fall back to another implementation.
-    process.stdout.write(`${JSON.stringify({ schemaVersion: 1, state: 'error', code: ['AVITO_COMMAND_INVALID', 'AVITO_HOST_REQUIRED'].includes(error.message) ? error.message : 'AVITO_RUNTIME_FAILED' })}\n`);
+    process.stdout.write(`${JSON.stringify({ schemaVersion: 1, state: 'error', code: ['AVITO_COMMAND_INVALID', 'AVITO_HOST_REQUIRED', 'AVITO_HOST_UPGRADE_REQUIRED'].includes(error.message) ? error.message : 'AVITO_RUNTIME_FAILED' })}\n`);
     process.exitCode = 1;
   }
 }

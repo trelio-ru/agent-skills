@@ -265,7 +265,11 @@ host проверяется отдельно на macOS, Windows и Linux до �
 Первый host account flow Avito обязан проходить реальный packaged
 `__trelio_accounts_import`: отсутствие legacy store даёт пустой bounded envelope
 без native/browser/credential IO, не ошибку и не сброс существующих snapshots.
-Avito minimum host >=3.11.0 фиксирует bounded входящие вложения через browser
+Avito minimum host >=3.17.0 включает исходящие через signed `fileUploads` и
+native chooser с frozen originals: [контракт](platform-skills/avito/references/workflow.md#исходящие-вложения).
+Проверка первого входящего ответа и поручения на передачу остаётся обязательной;
+допустимые форматы определяет Авито, unknown outcome не разрешает replay.
+Bounded входящие вложения идут через browser
 stream/local receipt, без URL/body в MCP и без popup focus; обычный navigate
 файлов остаётся запрещённым. Также сохраняются безопасные headerless HTTP redirects,
 text-first, pacing и лимит пяти вкладок;
