@@ -91,8 +91,22 @@ export async function readPrivateJson(file, helper) {
   await verifyPrivate(file, helper); const stat = await fs.stat(file);
   requireThat(stat.size <= 16384, 'local_state_invalid'); return JSON.parse(await fs.readFile(file, 'utf8'));
 }
-async function optionalJson(file, helper) {
-  try { return await readPrivateJson(file, helper); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+export async function readOptionalState(file, helper, { read = readPrivateJson } = {}) {
+  try { return await read(file, helper); }
+  catch (error) {
+    if (error.code === 'ENOENT') return null;
+    // Windows verifies the ACL in a separate native process. Normal worker
+    // cleanup may unlink lease/control after the JS lstat but before that
+    // verifier opens the file; FileNotFound then reaches us as this fixed
+    // generic native error. Only a fresh, exact ENOENT establishes absence.
+    // Present files, ACL/owner failures and other lstat errors stay failures;
+    // no contents are read without verification and no login is restarted.
+    if (error.code === 'native_operation_failed') {
+      try { await fs.lstat(file); }
+      catch (current) { if (current.code === 'ENOENT') return null; }
+    }
+    throw error;
+  }
 }
 export function requestControl(control, packet, timeoutMs = 30000) {
   requireThat(Number.isInteger(control.port) && control.port > 0 && control.port <= 65535 &&
@@ -118,7 +132,7 @@ async function leaseAlive(lease) {
   try { process.kill(lease.guardPid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; return true; }
 }
 async function doctor(directory, helper, root) {
-  const lease = await optionalJson(path.join(directory, 'lease.json'), helper);
+  const lease = await readOptionalState(path.join(directory, 'lease.json'), helper);
   let configured = false, runtimeReady = false;
   try { await verifyPrivate(path.join(directory, 'vault.json'), helper); configured = true; } catch (e) { if (e.code !== 'ENOENT') throw e; }
   try { await loadPlaywright(root); runtimeReady = true; } catch {}
@@ -150,8 +164,8 @@ export async function run(args, statusTimeoutMs = 30000) {
   await ensurePrivateDirectory(directory, helper);
   if (command === 'bootstrap') { await bootstrapBrowser(root); return doctor(directory, helper, root); }
   if (command === 'doctor') return doctor(directory, helper, root);
-  let lease = await optionalJson(path.join(directory, 'lease.json'), helper);
-  const control = await optionalJson(path.join(directory, 'control.json'), helper);
+  let lease = await readOptionalState(path.join(directory, 'lease.json'), helper);
+  const control = await readOptionalState(path.join(directory, 'control.json'), helper);
   // An unlocked worker belongs to the company that started it. Reusing the
   // account in another company requires a new worker after normal shutdown;
   // a catalogue binding never transfers an existing operation's authority.
@@ -226,12 +240,12 @@ export async function run(args, statusTimeoutMs = 30000) {
     // files. Never send a stale bearer to a port that may have been reused by
     // another process. Proven guardian exit means this lease is closed; its
     // encrypted vault remains untouched.
-    const last = await optionalJson(path.join(directory, 'status.json'), helper);
+    const last = await readOptionalState(path.join(directory, 'status.json'), helper);
     return { sessionId: lease.leaseId, phase: command === 'status' ? finishedReceiptPhase(last, lease.leaseId) : 'closed', expiresAt: lease.expiresAt, requiredAction: null,
       ...(last?.sessionId === lease.leaseId ? closedDiagnostics(last) : {}) };
   }
   if (command === 'status' && (!lease || !control)) {
-    const last = await optionalJson(path.join(directory, 'status.json'), helper);
+    const last = await readOptionalState(path.join(directory, 'status.json'), helper);
     if (lease && !control && options['--session'] === lease.leaseId &&
       last?.sessionId !== lease.leaseId && await leaseAlive(lease))
       return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };

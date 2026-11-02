@@ -14,7 +14,7 @@ import { createPrompt, promptHtml, SAVE_WARNING, TOTP_HELP } from '../scripts/pr
 import { atomicWrite, createPrivateFile, nativeHelper, nativeKeyHelper, nativeRequestTitleInput,
   runPrivate, ensurePrivateDirectory, verifyPrivate, keychainStatus } from '../scripts/native.mjs';
 import { launchOwnedBrowser, validatedStorage, Portal, loginRole, roleChallenge, choosePersonalRole, authenticatedPortalHeader, reusableRoleStorage } from '../scripts/browser.mjs';
-import { parseArguments, requestControl, run } from '../scripts/trelio-gosuslugi.mjs';
+import { parseArguments, requestControl, readOptionalState, run } from '../scripts/trelio-gosuslugi.mjs';
 import { browserSessionDirectory } from '../scripts/transport.mjs';
 import { authEvidence } from '../development/live-login-observations.mjs';
 import { readCodexThreadTitle, resolveRequestTitle } from '../scripts/chat-title.mjs';
@@ -839,6 +839,23 @@ test('orphaned receipts use current closed projection after normal cleanup and r
     await assert.rejects(run(['status', '--session', crypto.randomUUID()]), /no_active_session/);
   }
   assert.equal(requests, 0);
+});
+test('optional state tolerates a verified cleanup disappearance, never a present or insecure file', async t => {
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'gosuslugi-cleanup-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'control.json');
+  const nativeFailure = Object.assign(new Error('fixed native failure'), { code: 'native_operation_failed' });
+  await fs.writeFile(file, '{}');
+  assert.equal(await readOptionalState(file, null, { read: async () => {
+    await fs.unlink(file); throw nativeFailure;
+  } }), null);
+  await fs.writeFile(file, '{}');
+  await assert.rejects(readOptionalState(file, null, { read: async () => { throw nativeFailure; } }),
+    error => error === nativeFailure, 'a generic error with a present file must not become absence');
+  await fs.unlink(file);
+  const denied = Object.assign(new Error('fixed ACL failure'), { code: 'native_acl_not_private' });
+  await assert.rejects(readOptionalState(file, null, { read: async () => { throw denied; } }),
+    error => error === denied, 'an explicit security failure stays a failure even after disappearance');
 });
 test('a submitted local form returns configured through wait after cleanup, without chat acknowledgement', { skip: !supported }, async t => {
   const env = { TRELIO_CONFIG_HOME: nativeRoot, TRELIO_SKILL_ID: 'gosuslugi',

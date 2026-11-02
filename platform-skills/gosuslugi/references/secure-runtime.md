@@ -898,6 +898,10 @@ OAuth code/state, headers, сетевое тело и auth DOM не входят
 binding и authenticated control path сохраняются. Timeout не означает отказ.
 Status после cleanup сохраняет configured/forgotten/authorized как результат
 завершённой операции, а бывшую live phase считает closed.
+Исчезновение lease/control между JS-проверкой и native ACL-проверкой Windows
+подтверждается свежим `lstat` exact файла: только `ENOENT` после generic
+native failure означает отсутствие. Существующий файл и явный отказ ACL/owner
+сохраняют ошибку; проверка не читает содержимое без допуска и не запускает вход.
 Ожидание не вызывает resume, не продлевает lease, не открывает окно и не читает
 credential fields. Отдельные human decisions и запрет replay сохраняются.
 Regression: submit без chat input, pending, новый challenge, ошибка/expiry,
