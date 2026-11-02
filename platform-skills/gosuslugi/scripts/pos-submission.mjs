@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { RuntimeError, requireThat } from './core.mjs';
 
 const ORIGIN = 'https://pos.gosuslugi.ru';
+const AGREEMENT_CAPTION = 'Я соглашаюсь с правилами подачи сообщений и обращений';
 const STEPS = new Map([
   ['/user-service/esia/esia-token', ['GET', 'token_exchange']],
   ['/user-service/esia/get-user-info', ['GET', 'user_info']],
@@ -143,7 +144,7 @@ export function createPosSubmissionFlow(page, options, { createAuthorization, ob
 
   async function readPage() {
     permit();
-    return page.evaluate(() => {
+    return page.evaluate(agreementCaption => {
       const visible = node => Boolean(node && node.getClientRects().length &&
         getComputedStyle(node).visibility !== 'hidden');
       // Read a small set of form-owned nodes, never body.innerText. That also
@@ -158,6 +159,21 @@ export function createPosSubmissionFlow(page, options, { createAuthorization, ob
       }
       const footer = [...document.querySelectorAll('button.esia-auth-button')].filter(visible);
       const agreement = document.querySelector('#check-agree');
+      const agreementLabels = [...document.querySelectorAll('label[for="check-agree"]')];
+      const agreementLabel = agreementLabels.length === 1 ? agreementLabels[0] : null;
+      // Even an already checked control must still be the known POS rule.
+      // Keep caption/link targets in the private review fingerprint: native
+      // helper setup is asynchronous and cannot authorize changed conditions.
+      // None of these terms or URLs are projected in the public snapshot.
+      const agreementTerms = agreementLabel ? {
+        caption: agreementLabel.textContent.replace(/\s+/gu, ' ').trim(),
+        links: [...agreementLabel.querySelectorAll('a')].map(node => node.href),
+      } : null;
+      if (agreementTerms && (agreementTerms.caption.length > 1000 || agreementTerms.links.length > 4 ||
+        agreementTerms.links.some(link => link.length > 2048))) return { overflow: true };
+      const agreementKnown = document.querySelectorAll('#check-agree').length === 1 &&
+        agreement?.tagName === 'INPUT' && agreement.type === 'checkbox' && !agreement.disabled &&
+        agreementLabel?.control === agreement && agreementTerms?.caption === agreementCaption;
       const fields = [...document.querySelectorAll('input,textarea,select')]
         .filter(node => node.id !== 'check-agree' && !node.closest('.form-auth-overlay') &&
           ['text', 'email', 'tel', 'number', 'textarea', 'select-one', 'select-multiple', 'file', 'checkbox']
@@ -182,19 +198,48 @@ export function createPosSubmissionFlow(page, options, { createAuthorization, ob
       const overlay = document.querySelector('.form-auth-overlay');
       const personal = overlay ? [...overlay.querySelectorAll('button')].filter(node => visible(node) &&
         /(?:^|[,\s])(?:Частное лицо|Физическое лицо)(?:\s|$)/iu.test(node.textContent.trim())) : [];
-      return { registrationNumber, material, choices, attachments,
+      return { registrationNumber, material, choices, attachments, agreementTerms, agreementKnown,
         agreement: agreement?.checked === true,
         footerReady: footer.length === 1 && !footer[0].disabled,
         roleCount: personal.length, roleReady: personal.length === 1 && !personal[0].disabled,
         overlay: visible(overlay),
       };
-    }).then(result => {
+    }, AGREEMENT_CAPTION).then(result => {
       requireThat(!result.overflow, 'pos_form_too_large');
       return result;
     });
   }
+  async function setKnownChoice(id, caption, enabled, accordion = false) {
+    const input = page.locator(`#${id}`), label = page.locator(`label[for="${id}"]`);
+    requireThat(await input.count() === 1 && await label.count() === 1, 'pos_choice_unsupported');
+    const valid = await label.evaluate((node, expected) => {
+      const control = document.getElementById(expected.id);
+      return node.tagName === 'LABEL' && node.control === control && control?.tagName === 'INPUT' &&
+        control.type === 'checkbox' && !control.disabled &&
+        node.textContent.replace(/\s+/gu, ' ').trim() === expected.caption;
+    }, { id, caption });
+    requireThat(valid, 'pos_choice_unsupported');
+    if (await input.isChecked() === enabled) return;
+    // POS renders a readOnly controlled input. Its visible LABEL owns the
+    // state transition; input.click() can do nothing. The law selector may
+    // additionally be inside a collapsed accordion. Never force hidden input
+    // events or write checked/React state directly.
+    if (!await label.isVisible() && accordion) {
+      const summary = page.locator('.fz-accordion').filter({ has: input }).locator('.accordion__summary');
+      requireThat(await summary.count() === 1, 'pos_choice_unsupported');
+      permit(); await summary.click({ timeout: 10000 });
+    }
+    permit();
+    // Use the label's checkbox edge, not the text/link in the rules caption.
+    // This performs one ordinary trusted browser click without opening terms
+    // or accidentally clicking a nested navigation link.
+    await label.click({ position: { x: 1, y: 1 }, timeout: 10000 });
+    await page.waitForFunction(({ id, enabled }) => document.getElementById(id)?.checked === enabled,
+      { id, enabled }, { timeout: 5000 });
+  }
   const digest = value => crypto.createHash('sha256')
-    .update(JSON.stringify({ opaId, material: value.material, choices: value.choices, attachments: value.attachments })).digest('hex');
+    .update(JSON.stringify({ opaId, material: value.material, choices: value.choices,
+      attachments: value.attachments, agreementTerms: value.agreementTerms })).digest('hex');
 
   function snapshot(current = {}) {
     const authorization = observer?.snapshot();
@@ -210,7 +255,7 @@ export function createPosSubmissionFlow(page, options, { createAuthorization, ob
     // has not been correlated to this reviewed submission.
     if (succeeded && !['pos_cleanup_failed', 'pos_observation_overflow'].includes(failure?.code)) code = null;
     return { phase: code ? 'blocked' : succeeded ? 'submitted' : current.registrationNumber && !started ? 'existing_receipt' :
-      !started ? current.agreement === false ? 'consent_required' : 'prepared' :
+      !started ? 'prepared' :
       dispatched ? 'submitting' : current.roleCount ? 'role_selection' : 'authorizing',
     outcome: succeeded ? 'confirmed_succeeded' : dispatched || entrySent ? 'unknown' : 'not_dispatched',
     ...(code ? { code, operation: failure?.operation ?? 'inspect', stage: failedStage ?? 'verification' } : {}),
@@ -219,7 +264,7 @@ export function createPosSubmissionFlow(page, options, { createAuthorization, ob
     authorization,
     evidence: structuredClone(evidence),
     recovery: { retry: 'forbidden', nextAction: code === 'pos_multiple_create_requests' ? 'verify_possible_duplicate' : succeeded ? 'save_receipt' : code ?
-      'inspect_same_form_and_http_evidence' : current.agreement === false ? 'await_same_form_consent' : 'continue_same_form' },
+      'inspect_same_form_and_http_evidence' : 'continue_same_form' },
     };
   }
   async function inspect() {
@@ -269,14 +314,7 @@ export function createPosSubmissionFlow(page, options, { createAuthorization, ob
     }),
     setFederalLaw: ({ enabled } = {}) => guarded('set_federal_law', async () => {
       requireThat(!started && typeof enabled === 'boolean', 'pos_federal_law_invalid');
-      const result = await page.locator('#check-requestedFederalLawType').evaluate((input, target) => {
-        if (input.tagName !== 'INPUT' || input.type !== 'checkbox' || input.disabled) return false;
-        // The widget hides its actual checkbox. Dispatch its native click only
-        // for this separately authorized processing-mode field, never check-agree.
-        if (input.checked !== target) input.click();
-        return input.checked === target;
-      }, enabled);
-      requireThat(result === true, 'pos_federal_law_not_selected');
+      await setKnownChoice('check-requestedFederalLawType', 'Подать обращение по 59-ФЗ', enabled, true);
       reviewId = null; reviewDigest = null;
       return inspect();
     }),
@@ -292,8 +330,16 @@ export function createPosSubmissionFlow(page, options, { createAuthorization, ob
       requireThat(!started && !failure, 'pos_attempt_already_started');
       const current = await readPage();
       requireThat(reviewId && reviewed === reviewId && digest(current) === reviewDigest, 'pos_review_changed');
-      requireThat(current.agreement, 'pos_consent_required');
-      requireThat(current.footerReady && !current.overlay, 'pos_form_not_ready');
+      requireThat(current.agreementKnown, 'pos_choice_unsupported');
+      requireThat(!current.overlay, 'pos_form_not_ready');
+      // The user's permission is for this exact reviewed submission. It also
+      // authorizes its standard POS rules checkbox; no second human click is
+      // needed. Unknown captions/additional consents are never accepted by
+      // this fixed helper. No permission or changed text/files => no checkbox.
+      if (!current.agreement) await setKnownChoice('check-agree', AGREEMENT_CAPTION, true);
+      const accepted = await readPage();
+      requireThat(digest(accepted) === reviewDigest, 'pos_review_changed');
+      requireThat(accepted.agreementKnown && accepted.agreement && accepted.footerReady && !accepted.overlay, 'pos_form_not_ready');
       // Consume before any browser action. A timeout may happen after dispatch;
       // neither another start nor a new helper on this Page may replay it.
       started = true;
@@ -309,7 +355,7 @@ export function createPosSubmissionFlow(page, options, { createAuthorization, ob
       // cannot authorize text/files changed in the meantime. No site click has
       // run yet, so this specific correction can retain the same Page.
       const fresh = await readPage();
-      if (digest(fresh) !== reviewDigest || !fresh.agreement || !fresh.footerReady || fresh.overlay) {
+      if (digest(fresh) !== reviewDigest || !fresh.agreementKnown || !fresh.agreement || !fresh.footerReady || fresh.overlay) {
         const unused = login; login = null;
         await unused.close(); observer = null; started = false;
         throw new RuntimeError('pos_review_changed');

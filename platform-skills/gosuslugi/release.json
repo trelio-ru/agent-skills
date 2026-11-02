@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gosuslugi",
-    "version": "4.5.16",
-    "summary": "Подача через ПОС сохраняет подготовленную форму и подтверждается регистрационным номером; ошибки после входа диагностируются без повторных отправок.",
+    "version": "4.6.0",
+    "summary": "Согласованная подача ПОС проходит стандартные правила и режим 59-ФЗ без ручных галочек; приложения загружаются последовательно, результат проверяется по регистрационному номеру.",
     "routingSummary": "Use Gosuslugi services, submit approved POS appeals with verified receipts, send own documents to Goskey, and authorize permitted ESIA sign-ins."
   },
   "connection": null,
   "runtime": {
-    "version": "3.5.16",
+    "version": "3.6.0",
     "minimumHostVersion": "3.24.0",
     "entrypoint": {
       "path": "scripts/trelio-gosuslugi.mjs",

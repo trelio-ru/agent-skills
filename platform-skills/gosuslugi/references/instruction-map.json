@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "sourceVersion": "4.5.16",
-  "originalSha256": "c2627ac6a152645de780d29d9b5d47c0fe7c342e743d29f29ccc3d91fbe0b3e5",
+  "sourceVersion": "4.6.0",
+  "originalSha256": "7812170cbb0ddccbe926d9edc978608e98a71bb56ce7e3f4365a059116d4afe6",
   "sections": [
     {
       "heading": "---",
@@ -19,8 +19,8 @@
     {
       "heading": "## Основное правило",
       "file": "references/safety.md",
-      "sha256": "344322eedf70bcedac83558d269f4dc6542c2226e3547019c67a91ef69c34687",
-      "bytes": 7453,
+      "sha256": "504b8624e8271ceb82e7d8416ef6251e5c5491f729aa5c1111e1d660ba14efb5",
+      "bytes": 7844,
       "sourceSuffix": "\n"
     },
     {
@@ -53,8 +53,8 @@
     {
       "heading": "## Форма обращения ПОС",
       "file": "references/pos-submission.md",
-      "sha256": "ef3f752795f0bffd27217955a5bff9aa391b2222fe4340dffbf449d7c1124044",
-      "bytes": 14921,
+      "sha256": "6fe405b5ba982e9f8f80abefb139a29c3ec317820ebb5a80aec08b0e3595138b",
+      "bytes": 15085,
       "sourceSuffix": "\n"
     },
     {

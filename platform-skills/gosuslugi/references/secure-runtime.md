@@ -1,6 +1,6 @@
 # Защищённый runtime Госуслуг
 
-Runtime 3.5.16 объявляет signed host browser-session class
+Runtime 3.6.0 объявляет signed host browser-session class
 `protected-snapshot`, fixed lease 1 800 000 ms и `manualAssist=false`. Общий
 host contract задаёт внешний absolute process deadline, но не заменяет и не
 ослабляет описанные ниже AES-GCM, Keychain/DPAPI, native guardian,
@@ -607,6 +607,7 @@ network bodies, headers и auth данные не читаются. Unknown ре
 начала исправляется в той же Page без сброса согласия/файлов. Cleanup/expiry
 повторно проверяются после асинхронной подготовки до click. Browser ownership,
 native authorizer и исходный абсолютный срок не меняются.
+Прямое разрешение на конкретную reviewed подачу включает стандартный `check-agree`: start сам отмечает только exact известную подпись правил. Изменившаяся форма или отсутствие разрешения блокируют и галочку, и вход. Неизвестное/дополнительное согласие не принимается. Hidden readOnly checkbox управляется через связанный видимый label; режим 59-ФЗ предварительно раскрывает собственный accordion. Прямой input.click и запись checked/React state не применяются.
 
 `https://pos.gosuslugi.ru/form/` – публичный виджет подачи, а не личный кабинет
 с отдельным предварительным входом. Основная сессия Госуслуг открывается обычным

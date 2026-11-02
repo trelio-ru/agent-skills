@@ -7,7 +7,7 @@ const ORIGIN = 'https://pos.gosuslugi.ru';
 function fixture(options = {}) {
   const page = new EventEmitter();
   const model = { material: [{ id: 'description', value: 'Synthetic approved statement' }], choices: ['Synthetic region'],
-    agreement: false, footerReady: true, overlay: false, roleCount: 0, roleReady: false, registrationNumber: null };
+    agreement: false, agreementKnown: true, footerReady: true, overlay: false, roleCount: 0, roleReady: false, registrationNumber: null };
   let phase = 'esia_request_pending', authorizations = 0;
   const clicks = [];
   page.url = () => ORIGIN + '/form/?opaId=123';
@@ -51,7 +51,7 @@ test('permission precedes even a URL read, and one Page cannot acquire a second 
 
 test('review survives the human agreement, while changed statement invalidates it before login', async () => {
   const f = fixture(), review = await f.flow.review();
-  assert.equal(review.phase, 'consent_required');
+  assert.equal(review.phase, 'prepared');
   f.model.material[0].value = 'changed'; f.model.agreement = true;
   const result = await f.flow.start({ reviewed: review.reviewId, confirmSubmission: true });
   assert.equal(result.code, 'pos_review_changed'); assert.equal(result.outcome, 'not_dispatched');
@@ -130,9 +130,10 @@ test('read-only wait for a human does not expire the business verification or cl
 });
 
 test('preflight correction reuses the same flow without repeating the human agreement', async () => {
-  const f = fixture(), review = await f.flow.review();
-  assert.equal((await f.flow.start({ reviewed: review.reviewId, confirmSubmission: true })).code, 'pos_consent_required');
-  f.model.agreement = true;
+  const f = fixture(); f.model.agreement = true; f.model.footerReady = false;
+  const review = await f.flow.review();
+  assert.equal((await f.flow.start({ reviewed: review.reviewId, confirmSubmission: true })).code, 'pos_form_not_ready');
+  f.model.footerReady = true;
   assert.equal((await f.flow.start({ reviewed: review.reviewId, confirmSubmission: true })).code, undefined);
   assert.equal(f.authorizations, 1);
 });
@@ -156,7 +157,7 @@ test('close while native helper creation is pending revokes the late helper and 
   const page = new EventEmitter();
   page.url = () => ORIGIN + '/form/?opaId=123'; page.mainFrame = () => ({});
   page.route = async () => {}; page.unroute = async () => {};
-  page.evaluate = async () => ({ agreement: true, footerReady: true, material: [], choices: [] });
+  page.evaluate = async () => ({ agreement: true, agreementKnown: true, footerReady: true, material: [], choices: [] });
   let release, helperClosed = 0, clicks = 0;
   page.locator = () => ({ click: async () => { clicks++; } });
   const pending = new Promise(resolve => { release = resolve; });
