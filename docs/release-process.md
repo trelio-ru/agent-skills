@@ -28,6 +28,12 @@ minimum host повышается только при новой зависим�
 созданный tag после неуспешной публикации: исправление получает новую skill
 version и новый tag, затем повторный exact CI и отдельный plan/apply.
 
+В `release.json` новая публикация также содержит проверенное издателем
+`release.routingSummary`: одно английское предложение о возможностях, 12–180
+ASCII-символов без URL и переносов. Publisher связывает его с plan/CAS и
+проверяет read-back; title, description и keywords не служат fallback. Старый
+immutable tag без этого поля не переписывается – нужен новый patch release.
+
 Из актуального product checkout запускается штатный guarded helper:
 
 ```sh

@@ -104,9 +104,13 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /`views`/u);
     assert.match(source, /views=null|`null`/u);
   }
-  assert.equal(releaseManifest.release.version, "2.16.0");
+  assert.equal(releaseManifest.release.version, "2.16.1");
+  // Publication binds this reviewed source summary to the immutable release;
+  // the catalog title/description must not become an inferred routing fallback.
+  assert.match(releaseManifest.release.routingSummary, /^[\x20-\x7e]{12,180}$/u);
+  assert.match(releaseManifest.release.routingSummary, /Telegram messages, files, and chats/u);
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.16.0");
+  assert.equal(releaseManifest.runtime.version, "2.16.1");
   assert.ok(releaseManifest.runtime.files.some(file => file.path === "conversation_tools.py"));
   for (const source of [skillInstructions, connectionDocs]) {
     for (const feature of ["--quote-text", "--quote-offset", "send-series", "chat-settings", "archive --chat", "unmute", "muteInherited", "TELEGRAM_SERIES_DELIVERY_UNKNOWN", "confirmedParts", "uncertainPart", "notAttemptedParts"]) {
