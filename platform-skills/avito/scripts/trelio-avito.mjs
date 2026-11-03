@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const MINIMUM_HOST_VERSION = '3.17.0';
+const MINIMUM_HOST_VERSION = '3.28.0';
 
 const commands = {
   doctor: {}, setup: {}, 'show-login': {}, status: {}, wait: {}, ready: {}, screenshot: {}, close: {}, disconnect: {},
@@ -80,7 +80,7 @@ export async function runAvito(argv, env = process.env) {
   const { operation, args } = parseAvitoCommand(argv);
   if (operation === 'doctor') return {
     schemaVersion: 1, hostVisualAvailable: Boolean(env.TRELIO_VISUAL_SESSION_MODULE_URL),
-    // Native chooser delivery is the newest required host API. Signed admission
+    // Voice-source delivery is the newest required host API. Signed admission
     // upgrades the host before browser I/O; close preserves an older worker's
     // authorisation instead of resetting the account or importing its profile.
     accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: MINIMUM_HOST_VERSION,

@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "avito",
-    "version": "0.4.0",
-    "summary": "Добавлена загрузка исходящих фото и файлов через штатную кнопку вложения Авито с проверкой первого ответа собеседника и результата загрузки",
-    "routingSummary": "Find Avito listings, communicate with sellers, and download or attach files through the managed browser."
+    "version": "0.5.0",
+    "summary": "Добавлено получение голосовых сообщений из чата Авито локальным аудиофайлом для расшифровки",
+    "routingSummary": "Find Avito listings, chat with sellers, download voice messages, and send or receive files in the managed browser."
   },
   "connection": {
     "schemaVersion": 1,
@@ -16,8 +16,8 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.4.0",
-    "minimumHostVersion": "3.17.0",
+    "version": "0.5.0",
+    "minimumHostVersion": "3.28.0",
     "entrypoint": {
       "path": "trelio-avito.mjs",
       "interpreter": "node"
