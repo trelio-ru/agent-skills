@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.16.2`
-объявляет runtime `2.16.2`, требует Telethon `>=1.45,<2` и host >=3.25.0.
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.16.3`
+объявляет runtime `2.16.3`, требует Telethon `>=1.45,<2` и host >=3.25.0.
 Connection definition, package credential и namespace личной сессии сохраняются.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
 входа. Чтение не отправляет Telegram read receipts; исходящие действия
@@ -160,6 +160,29 @@ Private paths, argv, session и содержимое сообщений в diagn
 `tests/test_runtime_handoff.py` создаёт одноразовый venv без зависимостей/аккаунта/
 сети и проверяет argv, isolated startup, ожидание и failure через реальные pipes.
 Windows NTSTATUS моделируется завершением test process, без invalid memory access.
+
+До создания Windows venv child launcher помещает только себя и будущих потомков
+в новый unnamed Job Object с `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Его sole handle
+не наследуется ребёнком и закрывается ОС при завершении launcher: timeout/kill
+не оставляют venv process с session lock. Дополнительно bounded wait на kernel
+handle исходного host parent завершает этот новый job при аварийном уходе host.
+Creation-time fence отклоняет повторно использованный parent PID. Чужие процессы
+не перечисляются и не завершаются; existing lock/session не удаляется.
+
+Job assignment предшествует запуску ребёнка. Ошибка admission сохраняет отказ
+`TELEGRAM_WINDOWS_NATIVE_FAILURE`, fixed `stage=process_scope`, без child/network
+и без обхода enclosing job/security policy. При обычном child exit launcher
+сохраняет его status, не закрывает job раньше своего завершения и прекращает
+только собственный parent watcher. Handle parent закрывается после окончания wait.
+После cancellation/host death результат команды остаётся неизвестным: cleanup
+процессов не разрешает replay send/ACK, новый login или reset cursor.
+
+Native Windows regression использует production handoff и отдельный disposable
+venv/lock: legacy control воспроизводит orphan, затем real launcher timeout и
+host death проверяют завершение всей новой цепочки и освобождение lock. Другой
+Python fixture должен остаться жив. Синтетические children имеют конечный срок;
+cleanup использует только handles собственных fixture-процессов, без taskkill
+по имени и без личных sessions. macOS/Linux сохраняют настоящий `execve`.
 
 ## Состав группы или канала
 

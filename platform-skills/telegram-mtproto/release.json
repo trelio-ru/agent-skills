@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.16.2",
-    "summary": "Коды отказа занятой или неавторизованной сессии и безопасная диагностика этапов чтения Telegram",
+    "version": "2.16.3",
+    "summary": "Завершение Windows-цепочки Telegram вместе с host и освобождение локальной сессии после аварии",
     "routingSummary": "Read, search, send, and manage Telegram messages, files, and chats."
   },
   "connection": {
@@ -19,7 +19,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.16.2",
+    "version": "2.16.3",
     "minimumHostVersion": "3.25.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
@@ -45,6 +45,11 @@
         "source": "scripts/trelio-telegram.py",
         "path": "trelio-telegram.py",
         "mode": 493
+      },
+      {
+        "source": "scripts/windows_process_scope.py",
+        "path": "windows_process_scope.py",
+        "mode": 420
       },
       {
         "sourceEnvironment": "TRELIO_TELEGRAM_APP_CREDENTIAL_JSON",

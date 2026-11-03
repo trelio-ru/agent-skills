@@ -99,8 +99,8 @@ rename. В результате review запиши exact base/head, измен�
 | Влияние изменения | Обязательные проверки |
 | --- | --- |
 | Только текст/карточка либо безопасная проекция диагностики; прежние success/failure, доступ, side effects и recovery сохраняются | Targeted regression изменённого пути, штатный provider gate на всех обязательных OS, instruction/package/source-boundary checks, tagged artifact и live smoke изменённого поведения |
-| Поведение одного provider внутри прежнего host ABI: parser, чтение или отправка через уже допущенную команду | Те же native provider gates, содержательные regressions фактического поведения и профильный live smoke; затронутый межкомпонентный сценарий добавляется, если provider tests не покрывают его границу с host |
-| Новые/изменённые host ABI, signed command admission, account/session lifecycle, scopes/ACL, ACK/cursor/reference, unknown-outcome/replay, original-file identity или encrypted delivery; совместная правка backend/host; неясное влияние | Native gates изменённых компонентов и полный cold/fault question-system stand из канонического backend checkout с exact source pins |
+| Поведение одного provider внутри прежнего host ABI: parser, чтение/отправка через уже допущенную команду, локальное завершение собственных дочерних процессов | Те же native provider gates, содержательные regressions фактического поведения и профильный live smoke; затронутый межкомпонентный сценарий добавляется, если provider tests не покрывают его границу с host |
+| Новые/изменённые host ABI, signed command admission, account/session authorization или namespace, scopes/ACL, ACK/cursor/reference, unknown-outcome/replay, original-file identity или encrypted delivery; совместная правка backend/host; неясное влияние | Native gates изменённых компонентов и полный cold/fault question-system stand из канонического backend checkout с exact source pins |
 
 Первая строка не разрешает менять семантику отказа под видом новой ошибки.
 Например, retry вместо uncertain, успешный ответ вместо отказа или смена
@@ -109,6 +109,15 @@ rename. В результате review запиши exact base/head, измен�
 повторять 3000-file backend fixture, если полный review подтвердил отсутствие
 таких изменений. Реальные pipes и native session contention при этом проверяет
 provider regression на каждой обязательной OS.
+
+Локальный process cleanup во второй строке требует реальных native fault tests:
+аварийный уход host, kill/timeout launcher, отсутствие surviving child/native lock
+и сохранение отдельного unrelated процесса. Проверяется прежний результат при
+обычном завершении и отказ до provider IO при недоступной изоляции. Это не
+разрешает расширять timeout, обходить host policy либо менять смысл unknown
+после прерванной записи. Если меняется эта общая граница, нужна третья строка.
+Стенд другой OS, который не исполняет изменённый native путь, не заменяет эти
+tests и не добавляется лишь ради его размера или длительности.
 
 Совместимый provider-only release не требует нового backend commit, обновления
 его question-system fixture pin, product tag/deploy или нового host release

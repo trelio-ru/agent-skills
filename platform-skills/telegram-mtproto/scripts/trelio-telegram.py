@@ -1446,6 +1446,24 @@ def command_bootstrap(_args: argparse.Namespace) -> dict[str, Any]:
     return {"runtimeReady": True, "runtimePython": str(python)}
 
 
+_WINDOWS_PROCESS_SCOPE_PATH = Path(__file__).resolve().with_name("windows_process_scope.py")
+
+
+def install_windows_process_scope():
+    """Load the signed sibling only on Windows, before any venv child IO."""
+    try:
+        spec = importlib.util.spec_from_file_location("trelio_telegram_process_scope", _WINDOWS_PROCESS_SCOPE_PATH)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.install_parent_bound_job()
+    except Exception as error:
+        # Native paths/handles/argv never become a diagnostic or a fallback.
+        # A missing containment primitive must not run an unowned provider.
+        raise TelegramRuntimeError("Windows process supervision is unavailable; no Telegram command was started.",
+                                   code="TELEGRAM_WINDOWS_NATIVE_FAILURE",
+                                   details={"stage": "process_scope"}) from error
+
+
 def reexec_in_runtime_if_needed(command: str) -> None:
     if command in {"bootstrap", "doctor", "policy"}:
         return
@@ -1477,7 +1495,14 @@ def reexec_in_runtime_if_needed(command: str) -> None:
         # shell string or retry a session command after an uncertain outcome.
         # Preserve the host's isolated startup when switching interpreters;
         # the venv's own dependencies remain available, user-site hooks do not.
-        completed = subprocess.run(arguments, env=environment, shell=False, check=False)
+        # Contain the launcher BEFORE CreateProcess: timeout kills and abrupt
+        # host death must not leave the venv child holding its session lock.
+        # The scope owns only this fresh invocation, never a previous owner.
+        finish_scope = install_windows_process_scope()
+        try:
+            completed = subprocess.run(arguments, env=environment, shell=False, check=False)
+        finally:
+            finish_scope()
         if completed.returncode & 0xFFFFFFFF == 0xC0000005:
             # This proves only that the venv process hit an access violation.
             # Do not blame Python/Telethon, infer denied Telegram access, reset
