@@ -279,7 +279,7 @@ native chooser с frozen originals: [контракт](platform-skills/avito/ref
 Проверка первого входящего ответа и поручения на передачу остаётся обязательной;
 допустимые форматы определяет Авито, unknown outcome не разрешает replay.
 Голосовые используют отдельный signed `audioDownloads`/API marker и
-host >=3.28.0; min в release/doctor должен совпадать. Команда
+host >=3.28.3; min в release/doctor должен совпадать. Команда
 `download-audio`: [контракт](platform-skills/avito/references/workflow.md#голосовое-в-диалоге).
 Native player/blob original не заменять обычным play, system recording или HTTP.
 После получения – отдельный доступный local ASR с его setup consent;

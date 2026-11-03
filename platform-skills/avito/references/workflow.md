@@ -2,12 +2,14 @@
 
 Runtime использует общий host visual-browser API и поддерживает macOS, Windows
 и desktop Linux с доступным системным хранилищем и графической сессией.
-Требуется host >=3.28.0: получение original из голосового плеера, native chooser
+Требуется host >=3.28.3: получение original из голосового плеера, native chooser
 для исходящих файлов, корректная обработка
 HTTP-редиректов без Content-Type с запретом конечных файлов, bounded text
 projection, pacing и лимит вкладок.
 Minimum в подписанном release запускает штатное обновление bridge
 до browser IO. Сохранённая авторизация переиспользуется; новый вход не нужен.
+Эта версия host также получает M4A, когда плеер указывает AAC-тип:
+контейнер проверяется полностью, original не перекодируется и выдаётся как `.m4a`.
 Если активен старый image worker, `observation_mode_mismatch` требует обычного
 `close`, затем нового `navigate`, без disconnect или сброса snapshot.
 Готовность каждой платформы устанавливается её native test и живым smoke,
@@ -207,7 +209,7 @@ detach, timeout или неизвестном результате сначал�
 воспроизведение не доказывают содержание ответа. Сначала по fresh text/PNG
 установи exact диалог, входящего автора, дату/время и выбранный плеер. Для него
 вызови `download-audio --frameId ID --x X --y Y`, а не download-attachment
-и не обычный click/play. Нужен host >=3.28.0 с
+и не обычный click/play. Нужен host >=3.28.3 с
 `VISUAL_AUDIO_DOWNLOAD_API=trelio.visual-audio-download/v1`; source не означает,
 что эта возможность уже опубликована. Старый host отказывает до input как
 `AVITO_HOST_UPGRADE_REQUIRED`. После совместимого обновления старый worker
