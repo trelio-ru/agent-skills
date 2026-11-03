@@ -1,0 +1,4 @@
+interface:
+  display_name: "GigaChat"
+  short_description: "Диалог с GigaChat, уточнения и проверка источников"
+  default_prompt: "Используй $gigachat: задай вопрос на giga.chat в скрытой вкладке, при необходимости уточни ответ в той же беседе и проверь ссылки на первоисточники."

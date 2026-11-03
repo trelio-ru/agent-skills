@@ -20,6 +20,7 @@ const PROVIDERS = Object.freeze({
   // Browser-tool instructions ship no executable package. Keep their source
   // guards without inventing Node preparation or browser installation jobs.
   "google-ai-search": { owner: "general", matrix: null },
+  "gigachat": { owner: "general", matrix: null },
   "yandex-search": { owner: "general", matrix: null },
   // Concierge composes already signed messenger skills and ships no executable.
   // Its source still needs the shared instruction gate; a fake Node runtime or
@@ -77,6 +78,7 @@ const HOSTED_OPERATING_SYSTEMS = Object.freeze([
 
 // Preserve the former full self-hosted gate for shared infrastructure changes.
 const FULL_SELF_HOSTED_SKILLS = Object.freeze([
+  "gigachat",
   "vk-ads",
   "document-facsimile",
   "email-imap-smtp",

@@ -114,6 +114,10 @@ jobs:
         run: node --test platform-skills/google-ai-search/tests/pacing.test.mjs
       - name: Run Yandex Search instruction controller regressions
         run: node --test platform-skills/yandex-search/tests/pacing.test.mjs
+      - name: Run GigaChat instruction controller regressions
+        # Runs the delivered browser REPL controller without an executable
+        # package, user account, provider requests or browser installation.
+        run: node --test platform-skills/gigachat/tests/pacing.test.mjs
       - name: Run DodoStats / DrinkitStats Remote MCP contract regression
         if: needs.hosted-plan.outputs.run_dodostats == 'true'
         run: >-
