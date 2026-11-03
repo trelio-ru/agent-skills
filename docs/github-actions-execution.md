@@ -29,6 +29,12 @@ Network errors проходят минимум три безопасных по�
 
 ## Выбор provider проверок
 
+Instruction-only browser skills используют source gate с выполнением их
+delivered REPL controller и не входят в runtime-package matrix. У них нет
+`release.json`/`.skillpkg`; регистрация Node runtime ради одного теста инструкции
+не создаётся. При добавлении такого навыка сохраняются отдельный exact маршрут,
+hosted source test и эквивалентный разрешённый fallback test.
+
 Изменения внутри provider выбирают только его обязательные OS и shared
 instruction/package contracts. Новые Node providers регистрируют `ci.json`
 в своей папке: schemaVersion, language=node, testFile под tests/ и prepareFile

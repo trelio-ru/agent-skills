@@ -328,8 +328,8 @@ completion-based controller с зачётом размышлений. Общая
 может объединять несколько запросов; проверяется принадлежность каждому ходу.
 Live smoke включает два завершённых ответа и открытие их первоисточников;
 account/history и идентификаторы беседы не попадают в публичные материалы.
-Provider-owned CI компилирует и тестирует delivered controller без установки
-браузера или объявления отдельного runtime; shared CI routing не меняется.
+CI тестирует delivered controller в source gate, как у Google AI Search,
+без установки браузера, runtime package и фиктивного release.json.
 Яндекс следует [контракту поиска и Алисы](platform-skills/yandex-search/SKILL.md):
 агент сам выбирает обычную выдачу или диалог с Алисой AI через browser tool,
 самостоятельно уточняет запросы и отвечает на встречные вопросы в том же чате.

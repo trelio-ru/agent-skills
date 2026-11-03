@@ -48,6 +48,20 @@ node ops/scripts/publish_agent_skill_release.mjs \
 проверь каталог и выполни точный безопасный smoke. Source, tag и runtime bytes
 после выпуска не переписываются. Trelio/plugin/host release не создаётся.
 
+## Instruction-only навыки
+
+Навыки, использующие существующий browser tool без своего executable, проходят
+exact hosted source/instruction gate и реальный browser smoke. Они не получают
+фиктивный runtime manifest или `.skillpkg` ради общего package workflow.
+Новая версия публикуется через штатный `/internal-admin/skills/`: создание
+catalog item, затем instruction-only release с exact current-release CAS.
+Название и описание берутся из explicit source metadata, основная инструкция —
+из канонической проекции без display-only полей; routingSummary проверяется
+издателем отдельно. В summary фиксируются repository, exact integrated commit,
+PR и проверенное поведение. После публикации проверяются current version,
+инструкция, routingSummary, отсутствие runtime и реальный browser-сценарий.
+Публикация не назначает навык компаниям и не меняет их подключения.
+
 ## Telegram MTProto
 
 Код и полные provider tests выполняются в этом публичном репозитории на
