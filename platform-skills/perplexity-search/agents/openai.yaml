@@ -1,0 +1,4 @@
+interface:
+  display_name: "Perplexity Search"
+  short_description: "Поиск в браузере с уточнениями и источниками"
+  default_prompt: "Используй $perplexity-search, чтобы найти информацию через Perplexity в скрытой вкладке, уточнить вопрос в той же беседе и дать ответ со ссылками на источники."
