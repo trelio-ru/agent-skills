@@ -17,6 +17,52 @@ export const VK_GROUP_SOURCES = '/api/v2/remarketing/vk_groups';
 const VK_GROUP_FIELDS = ['id', 'name', 'shortname', 'members_count'];
 const VK_SOURCE_FIELDS = ['id', 'object_id', 'name', 'shortname', 'status', 'loaded_users_count', 'users_count'];
 
+// The documented v3 faststat path calls groups "campaigns" even for an
+// ad_groups account. This is one fixed read contract, not a dialect fallback.
+// Never return arbitrary nested fields: the endpoint also has advertiser/user
+// containers which are outside this command's exact advertising-object scope.
+export async function faststat(api, entity, identifiers) {
+  check(['plans', 'groups', 'banners'].includes(entity), 'faststat_selector_invalid');
+  const resource = { plans: 'ad_plans', groups: 'campaigns', banners: 'banners' }[entity];
+  check(resource && Array.isArray(identifiers) && identifiers.length > 0 && identifiers.length <= 20, 'faststat_selector_invalid');
+  const ids = identifiers.map(id);
+  check(new Set(ids).size === ids.length, 'faststat_selector_invalid');
+  const result = await api.request('GET', `/api/v3/statistics/faststat/${resource}.json`, { query: { id: ids.join(',') } });
+  const object = value => value && typeof value === 'object' && !Array.isArray(value);
+  check(object(result), 'response_invalid');
+  const number = value => {
+    if (value === undefined || value === null) return null;
+    check(Number.isSafeInteger(value) && value >= 0, 'response_invalid'); return value;
+  };
+  const series = value => {
+    if (value === undefined || value === null) return null;
+    check(Array.isArray(value) && value.length <= 60 &&
+      value.every(v => Number.isSafeInteger(v) && v >= 0), 'response_invalid');
+    return [...value];
+  };
+  const seen = result.last_seen_msg_time;
+  check(seen === undefined || seen === null || object(seen), 'response_invalid');
+  const lastSeenMessage = { timestamp: number(seen?.timestamp), agoSeconds: number(seen?.ago) };
+  const rows = result[resource];
+  check(rows === undefined || object(rows), 'response_invalid');
+  const items = ids.map(objectId => {
+    // Missing rows/counters must stay unknown. Zero filling would turn delayed,
+    // denied or absent telemetry into evidence that the auction had no shows.
+    if (!rows || !Object.hasOwn(rows, String(objectId))) return { id: objectId, state: 'not_returned', complete: false };
+    const row = rows[objectId];
+    check(object(row) && (row.minutely === undefined || row.minutely === null || object(row.minutely)), 'response_invalid');
+    const timestamp = number(row.timestamp), shows = series(row.minutely?.shows), clicks = series(row.minutely?.clicks);
+    check(!shows || !clicks || shows.length === clicks.length, 'response_invalid');
+    return { id: objectId, state: 'returned', timestamp, minutely: { shows, clicks },
+      complete: timestamp !== null && shows?.length === 60 && clicks?.length === 60 };
+  });
+  // Timestamps are provider evidence as returned, not a claim of freshness or
+  // event arrival. The last series element corresponds to the object's own
+  // timestamp; no timezone, missing minute or bid diagnosis is inferred here.
+  return { entity, resource, windowMinutes: 60, trafficFiltering: 'not_applied',
+    lastSeenMessage, items, complete: lastSeenMessage.timestamp !== null && items.every(v => v.complete) };
+}
+
 export function project(value, fields) {
   check(value && typeof value === 'object' && !Array.isArray(value), 'response_invalid');
   return Object.fromEntries(fields.filter(k => Object.hasOwn(value, k)).map(k => {

@@ -164,6 +164,14 @@ registration id. Lookup использует scalar params.source_id, полны
 20 кандидатов в ответе до 14 000 UTF-8 bytes. Exact resolved не теряется за
 пределами preview; scanTruncated отдельно от truncated описывает полноту поиска.
 
+Faststat выполняет только fixed v3 GET для plans/groups/banners, до 20 exact ID
+и 60 минутных integer значений shows/clicks. Повторно проецируются лишь выбранные
+объекты и числовые timestamps/ago; другие контейнеры, свободные строки, metadata
+и неописанные поля не экспортируются. Missing остаётся null/not_returned, без
+zero fill. Полнота формы не означает свежесть/фильтрацию трафика/причину аукциона.
+Тот же bounded HTTP client, auth/account scope, GET retry и encrypted token
+rotation сохраняются; новый путь не вызывает рекламные записи или OAuth recovery.
+
 Классификация: marketing campaign management/performance; runtime не читает
 банковские счета, balance/billing, платежи, зарплаты, налоговые/инвестиционные
 сведения. Данные расхода рекламы – метрики согласованного размещения. Добавление

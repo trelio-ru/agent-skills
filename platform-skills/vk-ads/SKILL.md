@@ -62,12 +62,13 @@ Linux в этой версии не поддерживает credential storage 
 - `list --entity plans|groups|banners`, `get --entity … --id …`
 - `catalog --name packages|patterns|fields|regions|interests`
 - `stats --entity … --ids … --from YYYY-MM-DD --to YYYY-MM-DD`
+- `faststat --entity plans|groups|banners --ids …` – последние 60 минут показов/кликов
 
 Аудитория и доставка: `audiences --id …`, `sources --type counters|users-lists|search-phrases`,
 `counter-goals --id …`, `placements --group …`, `optimization --group …`.
 Для подписчиков сообществ: `vk-groups --query shortname` ищет публичную группу,
 `sources --type vk-groups` читает зарегистрированные источники кабинета.
-Перед первым использованием этих команд прочитай `reference --name diagnostics`.
+Перед первым использованием этих команд, включая faststat, прочитай `reference --name diagnostics`.
 Runtime сопоставляет IDs сегментов/источников/пакета/площадок/цели и явно
 показывает неизвестные/неполные связи. Людей не выгружает.
 Статистика поддерживает `--metrics`, `--period`, `--attribution`,

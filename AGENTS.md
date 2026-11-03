@@ -170,6 +170,11 @@ optimistic snapshot остаются exact. Только пустой targetings
 отсутствующий ключ segments эквивалентны после очистки фильтра; null, другие
 типы, непустой массив и отсутствующие остальные ключи не нормализуются.
 Диагностика аудиторий/размещений следует [контракту](platform-skills/vk-ads/references/diagnostics.md):
+Faststat читает только рекламные objects через fixed v3 GET: groups использует
+документированный campaigns path, без fallback. До 20 ID/60 значений; missing
+не заполняется нулями. Форма/свежесть/нефильтрованный трафик различаются.
+delivering не подтверждает показ; uniques.reach устарел. ProjectionTargetings
+не описывает segments, поэтому прогноз широкой аудитории не заменяет ретаргетинг.
 source metadata повторно проецируется без users/upload history/идентификаторов
 людей; nested segments не обходятся рекурсивно. Карта pads не доказывает
 фактическую дистрибуцию. Missing count/неизвестные IDs остаются явными.
