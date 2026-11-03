@@ -278,6 +278,11 @@ Avito minimum host >=3.17.0 включает исходящие через signe
 native chooser с frozen originals: [контракт](platform-skills/avito/references/workflow.md#исходящие-вложения).
 Проверка первого входящего ответа и поручения на передачу остаётся обязательной;
 допустимые форматы определяет Авито, unknown outcome не разрешает replay.
+Голосовые используют отдельный signed `audioDownloads`/API marker и
+`download-audio`: [контракт](platform-skills/avito/references/workflow.md#голосовое-в-диалоге).
+Native player/blob original не заменять обычным play, system recording или HTTP.
+После получения – отдельный доступный local ASR с его setup consent;
+неподдержанный host/плеер не означает общий запрет Авито на аудио.
 Bounded входящие вложения идут через browser
 stream/local receipt, без URL/body в MCP и без popup focus; обычный navigate
 файлов остаётся запрещённым. Также сохраняются безопасные headerless HTTP redirects,

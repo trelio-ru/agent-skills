@@ -91,6 +91,25 @@ files могут быть удалены cleanup. Originals не входят в
 является антивирусной проверкой. Чтение подходящим reader и разрешённое
 сохранение источника сохраняют обычные ACL/Run/provenance и запрет раскрытия.
 
+## Отдельный поток голосовых
+
+Signed `audioDownloads` разрешает только `download-audio` с fresh frameId/x/y.
+Native source или temporary trusted-play adapter выбирает один HTMLAudioElement;
+никаких site variables, selectors, source extraction, общего network listener,
+микрофона или записи системного звука. Source/bytes остаются внутри private
+browser channel. HTTPS подчиняется прежнему signed origin/redirect stream,
+blob требует creator origin исходного top document. Другой transport при отказе
+не открывается. Navigation, manual/credential gate, lease и no-replay сохраняются.
+
+На source даётся пять секунд; source и передача делят общий 30s/20 МиБ bound.
+MIME проверяется до blob/body и вместе с bytes на host. Проверенный original
+выдаётся тем же private receipt/cache, без URL/body/base64 в MCP. Audio opt-in
+не расширяет download-attachment до произвольного media. Native play wrapper
+всегда снимается; выбранный player временно muted/paused с восстановлением
+прежнего mute. Метка listened может измениться от native click, PEEK не обещается.
+Получение не выполняет ASR, не открывает cloud upload или отправку собеседнику.
+Расшифровка и первое скачивание модели следуют отдельному актуальному навыку.
+
 ## Исходящие файлы через native chooser
 
 Signed `fileUploads` разрешает только `upload-files` с fresh frameId, trusted

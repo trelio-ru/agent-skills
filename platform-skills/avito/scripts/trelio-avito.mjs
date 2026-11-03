@@ -11,6 +11,7 @@ const commands = {
   'submit-search': { frameId: 'string', x: 'number?', y: 'number?' }, 'search-ready': { frameId: 'string' },
   navigate: { url: 'string' }, click: { frameId: 'string', x: 'number', y: 'number' },
   'download-attachment': { frameId: 'string', x: 'number', y: 'number' },
+  'download-audio': { frameId: 'string', x: 'number', y: 'number' },
   'upload-files': { frameId: 'string', x: 'number', y: 'number', files: 'string[]' },
   scroll: { frameId: 'string', x: 'number', y: 'number', deltaY: 'number', deltaX: 'number?' },
   'type-text': { frameId: 'string', text: 'string' }, key: { frameId: 'string', key: 'string' },
@@ -86,11 +87,15 @@ export async function runAvito(argv, env = process.env) {
   };
   const url = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank');
   if (url.protocol !== 'file:' || env.TRELIO_SKILL_ID !== 'avito') throw new Error('AVITO_HOST_REQUIRED');
-  const { runVisualSession, VISUAL_FILE_UPLOAD_API } = await import(url.href);
+  const { runVisualSession, VISUAL_FILE_UPLOAD_API, VISUAL_AUDIO_DOWNLOAD_API } = await import(url.href);
   // A stale host must fail before any chooser click, not silently accept a
   // command it cannot deliver. Keep close/status usable for normal recovery;
   // the API marker never authorises sending or bypasses first-contact review.
   if (operation === 'upload-files' && VISUAL_FILE_UPLOAD_API !== 'trelio.visual-file-upload/v1') throw new Error('AVITO_HOST_UPGRADE_REQUIRED');
+  // A voice control is not a document link. Only the separately opted-in
+  // audio API may observe its native player/blob; an old host must refuse
+  // before clicking instead of trying attachment download or ordinary play.
+  if (operation === 'download-audio' && VISUAL_AUDIO_DOWNLOAD_API !== 'trelio.visual-audio-download/v1') throw new Error('AVITO_HOST_UPGRADE_REQUIRED');
   // Domain policy and initial URL belong to this signed provider. The common
   // host owns storage, Chromium, bounded observations, guards and lifecycle.
   // There is no alternate transport, local executable override or site script.
@@ -101,7 +106,7 @@ export async function runAvito(argv, env = process.env) {
     hostOperation = 'submit';
     hostArgs = Object.hasOwn(args, 'x') ? { action: 'click', ...args } : { action: 'key', key: 'Enter', ...args };
   } else if (operation === 'search-ready') hostOperation = 'request-ready';
-  return runVisualSession({ observationMode: 'text', attachmentDownloads: true, fileUploads: true, origins: ['https://www.avito.ru', 'https://avito.ru'], domains: ['avito.ru'],
+  return runVisualSession({ observationMode: 'text', attachmentDownloads: true, audioDownloads: true, fileUploads: true, origins: ['https://www.avito.ru', 'https://avito.ru'], domains: ['avito.ru'],
     operation: hostOperation, args: operation === 'setup' ? { url: 'https://www.avito.ru/' } : hostArgs, env });
 }
 

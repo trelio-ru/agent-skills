@@ -29,6 +29,38 @@ test('first host account discovery works before selection and ignores caller env
   await assert.rejects(runAvito(['__trelio_accounts_import', '--path', '/private'], noEnvironmentAccess), /AVITO_COMMAND_INVALID/);
 });
 
+test('voice command selects only fresh player coordinates and requires the separate signed host API before input', async t => {
+  const temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-avito-voice-')));
+  t.after(() => fs.rm(temporary, { recursive: true, force: true }));
+  const args = ['download-audio', '--frameId', 'fresh', '--x', '10', '--y', '20'];
+  assert.deepEqual(parseAvitoCommand(args), { operation: 'download-audio', args: { frameId: 'fresh', x: 10, y: 20 } });
+  const noHostAccess = new Proxy({}, { get() { throw new Error('unexpected host access'); } });
+  for (const flags of [['--url', 'https://example.test/voice'], ['--selector', 'audio'], ['--output', path.join(temporary, 'voice.wav')], ['--audioDownloads', 'true']]) await assert.rejects(runAvito([...args, ...flags], noHostAccess), /AVITO_COMMAND_INVALID/);
+  for (const marker of [undefined, 'trelio.visual-audio-download/unknown', 'trelio.visual-audio-download/v1']) {
+    const host = path.join(temporary, `host-${marker?.endsWith('/v1') ? 'current' : marker ? 'unknown' : 'old'}.mjs`);
+    await fs.writeFile(host, `export const VISUAL_AUDIO_DOWNLOAD_API=${JSON.stringify(marker) || 'undefined'};
+      export const calls=[];
+      export function runVisualSession({env,...input}) { calls.push(input); if(env.TEST_THROW) throw new Error('PRIVATE_AUDIO_SOURCE'); return env.TEST_RESULT ? JSON.parse(env.TEST_RESULT) : input; }`);
+    const env = { TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(host).href, TRELIO_SKILL_ID: 'avito' }, { calls } = await import(pathToFileURL(host).href);
+    if (marker !== 'trelio.visual-audio-download/v1') {
+      await assert.rejects(runAvito(args, env), /AVITO_HOST_UPGRADE_REQUIRED/);
+      assert.equal(calls.length, 0, 'old or unknown APIs refuse before the player is clicked');
+      assert.equal((await runAvito(['close'], env)).operation, 'close');
+      continue;
+    }
+    const input = await runAvito(args, env);
+    assert.equal(input.audioDownloads, true); assert.equal(input.attachmentDownloads, true); assert.equal(input.operation, 'download-audio');
+    assert.deepEqual(input.args, { frameId: 'fresh', x: 10, y: 20 });
+    assert.deepEqual(input.domains, ['avito.ru'], 'voice support does not invent CDN/origin permissions');
+    for (const reason of ['attachment_unsupported', 'attachment_too_large', 'attachment_link_required', 'stale_frame', 'operation_failed']) {
+      calls.length = 0; const failure = { state: 'error', reason };
+      assert.deepEqual(await runAvito(args, { ...env, TEST_RESULT: JSON.stringify(failure) }), failure);
+      assert.equal(calls.length, 1, 'a source/transfer refusal never falls back to ordinary play or another click');
+    }
+    calls.length = 0; await assert.rejects(runAvito(args, { ...env, TEST_THROW: '1' }), /PRIVATE_AUDIO_SOURCE/); assert.equal(calls.length, 1);
+  }
+});
+
 test('materialized package exposes complete signed guides without credentials or browser I/O', async () => {
   const source = fileURLToPath(new URL('../', import.meta.url));
   const built = buildRuntimePackage(source);
