@@ -247,6 +247,8 @@ Node launcher и Python worker до inference, без изменения сох�
 segment. Resume не теряет cancellation нового run и не меняет исходник.
 Обязательны нативные first-install/inference gates на всех заявленных OS;
 синтетический decoder не заменяет проверку настоящей официальной модели.
+Windows first-install проверяется без ambient `PROCESSOR_*`, как после signed
+host: provider сам задаёт архитектуру поддерживаемого managed Python.
 
 Канонический main остаётся чистым. Новая работа выполняется в отдельном
 физическом worktree и ветке codex/* от свежего origin/main. Перед правкой:

@@ -7,7 +7,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 import {artifacts, childEnvironment, installationPlan, performSetup, providerRoot, pythonPath, ready, startSetup} from './bootstrap.mjs';
 import {atomicJson, privateDirectory, readJson, stateDirectory} from './storage.mjs';
 
-export const RUNTIME_VERSION = '1.1.0';
+export const RUNTIME_VERSION = '1.1.1';
 const busy = new Set(['queued', 'validating', 'loading', 'transcribing']);
 const supported = new Set(['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.aif', '.aiff', '.mp4', '.mov', '.mkv', '.webm']);
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');

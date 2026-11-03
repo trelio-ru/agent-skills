@@ -10,6 +10,13 @@ if (process.argv[2] === 'package') {
   // recording or test cache is ever added to a public signed code package.
   process.stdout.write('Audio transcription package uses committed source only.\n');
 } else {
+  // Match the signed host boundary, not the runner's full login environment.
+  // A direct CI launch used to retain these fields and hide a first-install
+  // failure on real devices. The provider must reconstruct its supported x64
+  // Python marker for uv and inference without widening the host allowlist.
+  for (const key of Object.keys(process.env)) {
+    if (/^PROCESSOR_ARCHITE(?:CTURE|W6432)$/iu.test(key)) delete process.env[key];
+  }
   const provider = fileURLToPath(new URL('../', import.meta.url));
   // On elevated Windows runners mkdir's default owner can be Administrators.
   // Let the production helper create a fresh child and establish its own SID

@@ -147,7 +147,35 @@ test('private paths reject symlinks and CLI never accepts network inputs or hidd
   assert.equal(env.PYTHONPATH, undefined);
   assert.equal(env.IMAGEIO_FFMPEG_EXE, undefined);
   assert.equal(env.UV_INDEX_URL, undefined);
-  if (process.platform === 'win32') assert.equal(env.PROCESSOR_ARCHITECTURE, process.env.PROCESSOR_ARCHITECTURE);
+  assert.equal(env.PROCESSOR_ARCHITECTURE, process.platform === 'win32' && process.arch === 'x64' ? 'AMD64' : undefined);
+  assert.equal(env.PROCESSOR_ARCHITEW6432, undefined);
+  fs.rmSync(root, {recursive: true});
+});
+
+test('a host-filtered provider reconstructs Windows architecture without inheriting overrides or secrets', () => {
+  const root = temporary();
+  // Exercise another real Node process: changing the parent's environment or
+  // mocking platform.machine() would miss the host -> provider -> child boundary.
+  const program = `
+    const {childEnvironment} = await import(process.argv[1]);
+    const env = childEnvironment(process.argv[2]);
+    process.stdout.write(JSON.stringify({architecture: env.PROCESSOR_ARCHITECTURE ?? null,
+      wow64: env.PROCESSOR_ARCHITEW6432 ?? null, secret: Object.hasOwn(env, 'PRIVATE_TOKEN'),
+      pythonOverride: Object.hasOwn(env, 'PYTHONPATH'), indexOverride: Object.hasOwn(env, 'UV_INDEX_URL')}));
+  `;
+  for (const fields of [{}, {PROCESSOR_ARCHITECTURE: 'ARM64', PROCESSOR_ARCHITEW6432: 'ARM64'}]) {
+    const environment = {...childEnvironment(root), PRIVATE_TOKEN: 'synthetic-secret', PYTHONPATH: 'synthetic-override', UV_INDEX_URL: 'https://invalid.example'};
+    delete environment.PROCESSOR_ARCHITECTURE;
+    Object.assign(environment, fields);
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', program,
+      new URL('../scripts/bootstrap.mjs', import.meta.url).href, root],
+      {shell: false, env: environment, encoding: 'utf8', timeout: 15000});
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      architecture: process.platform === 'win32' && process.arch === 'x64' ? 'AMD64' : null,
+      wow64: null, secret: false, pythonOverride: false, indexOverride: false,
+    });
+  }
   fs.rmSync(root, {recursive: true});
 });
 
@@ -190,6 +218,32 @@ test('prepared host actually uses a managed Python and official checksum-pinned 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /2\.8\.0/u);
   for (const item of artifacts.models) assert.equal(fs.statSync(path.join(fixture.root, 'models', item.name)).size, item.bytes);
+});
+
+test('native Windows Python gets its machine marker after a real host-filtered Node launch', {skip: process.platform !== 'win32' || !fixture && !process.env.CI}, () => {
+  assert.ok(fixture, 'CI must run its provider-owned first-install preparation');
+  const environment = childEnvironment(fixture.root);
+  delete environment.PROCESSOR_ARCHITECTURE;
+  // This control demonstrates the actual CPython failure condition instead of
+  // matching a source string. Each probe uses a fresh Python process so its
+  // platform.uname() cache cannot conceal a missing environment marker.
+  const baseline = spawnSync(pythonPath(fixture.root), ['-I', '-c', 'import platform;print(platform.machine())'],
+    {shell: false, env: environment, encoding: 'utf8', timeout: 15000});
+  assert.equal(baseline.status, 0, baseline.stderr);
+  assert.equal(baseline.stdout.trim(), '');
+  const program = `
+    const {spawnSync} = await import('node:child_process');
+    const {childEnvironment, pythonPath} = await import(process.argv[1]);
+    const root = process.argv[2];
+    const result = spawnSync(pythonPath(root), ['-I', '-c', 'import platform;print(platform.machine())'],
+      {shell: false, env: childEnvironment(root), encoding: 'utf8', timeout: 15000});
+    process.stdout.write(JSON.stringify({status: result.status, machine: result.stdout.trim()}));
+  `;
+  const repaired = spawnSync(process.execPath, ['--input-type=module', '-e', program,
+    new URL('../scripts/bootstrap.mjs', import.meta.url).href, fixture.root],
+    {shell: false, env: environment, encoding: 'utf8', timeout: 20000});
+  assert.equal(repaired.status, 0, repaired.stderr);
+  assert.deepEqual(JSON.parse(repaired.stdout), {status: 0, machine: 'AMD64'});
 });
 
 test('worker subprocess covers sample preservation, cancellation/resume, corrupt source and OS lock', {skip: !fixture && !process.env.CI, timeout: 120000}, () => {

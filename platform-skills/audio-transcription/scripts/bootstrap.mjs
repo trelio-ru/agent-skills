@@ -40,12 +40,18 @@ export function childEnvironment(root) {
   const clean = {};
   // Never forward provider/account/Agent Secret credentials or ambient Python,
   // uv, pip and FFmpeg overrides into installers or inference processes.
-  // CPython platform.machine() on Windows derives its result from these two
-  // non-secret OS architecture fields. Removing them makes uv reject an empty
-  // machine marker even when the exact managed x64 interpreter is installed.
-  for (const key of ['HOME', 'USERPROFILE', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432']) {
+  for (const key of ['HOME', 'USERPROFILE', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL']) {
     if (process.env[key]) clean[key] = process.env[key];
   }
+  // The signed host deliberately removes unlisted environment variables before
+  // starting a provider, including both Windows PROCESSOR_* architecture fields.
+  // CPython 3.11 platform.machine() otherwise returns an empty string and uv
+  // rejects the interpreter before installing any dependencies. Author the
+  // marker for our sole supported Windows target from the running Node binary,
+  // rather than relying on ambient values that direct CI happens to preserve.
+  // Do not copy PROCESSOR_ARCHITEW6432: Python prefers it over this marker, so a
+  // stale/conflicting inherited value could select a different lock environment.
+  if (platformKey === 'win32-x64') clean.PROCESSOR_ARCHITECTURE = 'AMD64';
   Object.assign(clean, {UV_NO_CONFIG: '1', UV_CACHE_DIR: path.join(root, 'uv-cache'),
     UV_PYTHON_INSTALL_DIR: path.join(root, 'python'), UV_PYTHON_BIN_DIR: path.join(root, 'python-bin'),
     UV_LINK_MODE: 'copy', PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8',

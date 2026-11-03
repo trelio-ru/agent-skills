@@ -29,6 +29,10 @@ uv скачивается как закреплённый binary с провер
 Системные установки и PATH не меняются; pip/uv config и ambient credentials
 не наследуются. FFmpeg берётся только из закреплённого wheel imageio-ffmpeg,
 никогда из переменной окружения или случайного PATH.
+Для поддерживаемого Windows x64 runtime сам задаёт маркер архитектуры
+`AMD64` по архитектуре запущенного Node: общий host не передаёт ambient
+`PROCESSOR_*`. Это нужно managed Python 3.11 и uv; чужой
+`PROCESSOR_ARCHITEW6432` не наследуется и не меняет выбранную среду.
 
 Источники установки: публичные GitHub releases Astral uv/Python standalone,
 PyPI, CPU wheels PyTorch и официальный CDN GigaAM. Все используют обычный TLS;
@@ -112,7 +116,9 @@ SRT и TXT используют таймкоды
 (Windows 10+), linux-x64 (glibc 2.28+). Другие architectures возвращают
 `AUDIO_PLATFORM_UNSUPPORTED` до сети.
 CPU gate исполняется нативно на GitHub-hosted macOS/Windows/Linux, включая
-first setup, реальный checkpoint и длинный искусственный PCM stream.
+first setup без ambient переменных архитектуры, реальный checkpoint и длинный
+искусственный PCM stream. Windows regression отдельно проверяет настоящую
+цепочку Node → managed Python с host-filtered environment.
 
 Локальная ASR не открывает право последующей публикации. Task/Workspace/meeting
 выбираются и сохраняются отдельными обычными инструментами, с сохранением

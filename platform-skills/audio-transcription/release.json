@@ -2,12 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "audio-transcription",
-    "version": "1.1.0",
-    "summary": "Локальная расшифровка на GigaAM v3_rnnt: исходные слова без обязательного восстановления пунктуации, один файл весов 446 МБ и защита от смешивания моделей при продолжении старых записей."
+    "version": "1.1.1",
+    "summary": "Исправлена установка локальной среды на Windows x64 при запуске через Trelio: архитектура managed Python определяется без унаследованных переменных окружения.",
+    "routingSummary": "Transcribe Russian audio and video locally into text and subtitles."
   },
   "connection": null,
   "runtime": {
-    "version": "1.1.0",
+    "version": "1.1.1",
     "minimumHostVersion": "1.4.0",
     "entrypoint": {
       "path": "scripts/audio-transcription.mjs",
