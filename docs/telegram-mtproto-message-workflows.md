@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.15.3`
-объявляет runtime `2.15.3`, требует Telethon `>=1.45,<2` и host >=3.25.0.
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.16.2`
+объявляет runtime `2.16.2`, требует Telethon `>=1.45,<2` и host >=3.25.0.
 Connection definition, package credential и namespace личной сессии сохраняются.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
 входа. Чтение не отправляет Telegram read receipts; исходящие действия
@@ -820,6 +820,22 @@ Existing human chat-only/sending policy сохраняется. Эта read API 
 разрешает ассистенту создать задачу, отправить сообщение или пометить его
 прочитанным. Protected source lease, связывание со своей SQLite очередью и
 проверка owner delegation принадлежат отдельному host/backend контракту.
+
+Monitor failures always retain a stable code. Native nonblocking session-lock
+contention returns `TELEGRAM_REQUEST_FAILED` with the fixed diagnostic
+`category=local_session_busy`, `stage=session_lock` and `automaticRetry=false`;
+it neither removes a lock nor identifies/stops its owner. A fresh negative
+`is_user_authorized` returns `TELEGRAM_SESSION_UNAVAILABLE`, without login/reset.
+An uncoded expected failure becomes a closed `TELEGRAM_MONITOR_UNAVAILABLE`
+envelope. Its stage comes only from the actual implementation branch:
+`session_preflight`, `client_preparation`, `authorization`,
+`native_api_preparation`, `account_binding`, `cursor_validation`,
+`native_difference`, `project_updates`, `conversation_binding`, `cursor_encoding`.
+Stage is an execution location, not proof of an OS/network/account cause.
+No exception prose, paths, cursor or provider values enter this diagnostic.
+Existing coded gap/scope/unknown outcomes, native locks, cursor/HMAC ABI and
+no-replay semantics are preserved. Real cross-process lock/pipes and synthetic
+native-reader failures are checked by `test_monitor_diagnostics.py` on all OS.
 
 `test_assistant_monitor.py` проверяет настоящую command/dispatcher ветку,
 account/channel positions, slice/empty/gaps, большие sender IDs, domain-separated

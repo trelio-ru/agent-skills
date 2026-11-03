@@ -262,6 +262,38 @@ class BrowserPromptUnavailable(TelegramRuntimeError):
     """Raised when a protected local browser prompt cannot be delivered."""
 
 
+def monitor_failure(error: Exception, *, stage: str) -> TelegramRuntimeError:
+    """Keep a fixed failure category without treating error prose as a code.
+
+    Older expected errors can have no code at all. They must not become a
+    success/empty page, nor leak a path or SDK message through a diagnostic.
+    The stage is selected by this monitor's control flow, never provider text;
+    it describes where execution stopped, not a presumed cause or retry grant.
+    Existing gap/scope/unknown-outcome codes retain their original meaning.
+    """
+    if isinstance(error, TelegramRuntimeError) and error.code:
+        return error
+    if not isinstance(error, TelegramRuntimeError):
+        # Preserve the monitor's established top-level UNAVAILABLE contract.
+        # The shared classifier can add a fixed SDK diagnostic through the
+        # causal chain; it cannot promote an unknown read to a retry/success.
+        failure = TelegramRuntimeError("Telegram monitor failed; no cursor page was delivered.",
+            code="TELEGRAM_MONITOR_UNAVAILABLE", details={"diagnostic": {
+                "category": "unclassified", "stage": stage,
+                "nextStep": "inspect_exact_operation", "automaticRetry": False}})
+        failure.__cause__ = error
+        return import_inbox_tools().safe_error(failure, sys.modules[__name__], stage=stage)
+    projected = import_inbox_tools().safe_error(error, sys.modules[__name__], stage=stage)
+    if projected.code:
+        return projected
+    return TelegramRuntimeError(
+        "Telegram monitor could not deliver a complete page; retain the original checkpoint.",
+        code="TELEGRAM_MONITOR_UNAVAILABLE",
+        details={"diagnostic": {"category": "unclassified", "stage": stage,
+                 "nextStep": "inspect_exact_operation", "automaticRetry": False}},
+    )
+
+
 @dataclass(frozen=True)
 class Identity:
     company_id: str
@@ -689,14 +721,20 @@ def session_lock(identity: Identity, *, allow_removed: bool = False) -> Iterator
             try:
                 msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as error:
-                raise TelegramRuntimeError("This Telegram session is already used by another process.") from error
+                raise TelegramRuntimeError("This Telegram session is already used by another process.",
+                    code="TELEGRAM_REQUEST_FAILED", details={"diagnostic": {
+                        "category": "local_session_busy", "stage": "session_lock",
+                        "nextStep": "wait_for_session_owner", "automaticRetry": False}}) from error
         else:
             import fcntl
 
             try:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as error:
-                raise TelegramRuntimeError("This Telegram session is already used by another process.") from error
+                raise TelegramRuntimeError("This Telegram session is already used by another process.",
+                    code="TELEGRAM_REQUEST_FAILED", details={"diagnostic": {
+                        "category": "local_session_busy", "stage": "session_lock",
+                        "nextStep": "wait_for_session_owner", "automaticRetry": False}}) from error
         # Fence under the SAME native lock as session use: a process selected
         # before catalogue removal must not recreate an erased SQLite login.
         if not allow_removed and (connection_root(identity) / "removed.json").exists():
@@ -1773,7 +1811,8 @@ def build_client(args: argparse.Namespace, identity: Identity):
 async def ensure_authorized(client: Any) -> None:
     await client.connect()
     if not await client.is_user_authorized():
-        raise TelegramRuntimeError("Local Telegram session is not authorized. Run login first.")
+        raise TelegramRuntimeError("Local Telegram session is not authorized. Run login first.",
+                                   code="TELEGRAM_SESSION_UNAVAILABLE")
 
 
 def normalize_telegram_password_hint(value: Any) -> str:
@@ -6977,12 +7016,20 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
     limit = getattr(args, "limit", MAX_MONITOR_EVENTS)
     if type(limit) is not int or not 10 <= limit <= MAX_MONITOR_EVENTS:
         raise TelegramRuntimeError("Monitor --limit must be 10..100.")
-    client = build_client(args, identity)
+    try:
+        client = build_client(args, identity)
+    except Exception as error:
+        projected = monitor_failure(error, stage="client_preparation")
+        if projected is error:
+            raise
+        raise projected from error
     failure = None
+    stage = "authorization"
     try:
         await ensure_authorized(client)
         if getattr(args, "online_presence", False):
             await publish_online_presence(client)
+        stage = "native_api_preparation"
         GetState, GetDifference, GetChannelDifference, GetFullChannel, Empty, utils = import_telethon_monitor()
         channel = None
         peer_id = None
@@ -6997,11 +7044,13 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
         # monitor protocol epoch is independent of the human preview epoch;
         # current local account/binding still invalidates an old source cursor,
         # even when two imported locators address the same provider session.
+        stage = "account_binding"
         binding = await overview_binding(client, identity, "monitor/v1", {
             "channel": str(peer_id) if peer_id is not None else None,
             "localAccountId": identity.account["id"] if identity.account else None,
             "companyBinding": identity.account["companyBinding"] if identity.account else None,
         }, version="monitor-checkpoint/v1")
+        stage = "cursor_validation"
         token = getattr(args, "cursor", None)
         state = overview_cursor(identity, binding, token=token, purpose="monitor") if token else None
         if state is not None:
@@ -7039,6 +7088,7 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
                 monitor_int(value, positive=key == "date")
             since = account_state["position"]["date"]
         initial_history = bool(getattr(args, "unread_backfill", False) or account_seed is not None or state is not None and "backfill" in state)
+        stage = "native_difference"
         if initial_history:
             if channel is None:
                 raise TelegramRuntimeError("Initial unread backfill needs a channel stream.", code="TELEGRAM_MONITOR_INVALID_INPUT")
@@ -7059,6 +7109,7 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
                 # synthetic TooLong. Page through the original position.
                 response = await client(GetDifference(pts=old["pts"], qts=old["qts"], date=datetime.fromtimestamp(old["date"], timezone.utc), pts_limit=limit))
                 constructors = {"Difference", "DifferenceSlice", "DifferenceEmpty"}
+            stage = "project_updates"
             name = type(response).__name__
             if name not in constructors:
                 # Includes native *TooLong: a resync needs explicit review and
@@ -7112,6 +7163,7 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
                 raise TelegramRuntimeError("Telegram monitor page exceeds its bound; retain the cursor.", code="TELEGRAM_MONITOR_GAP")
         if not initial_history:
             next_state = {"position": position}
+        stage = "conversation_binding"
         if events:
             # One native account binding per page, never a profile read for
             # every message. The monitor cursor/digest ABI itself is unchanged.
@@ -7120,6 +7172,7 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
             keys = {chat: monitor_conversation_key(identity, routing_binding, int(chat)) for chat in {event["chatId"] for event in events}}
             for event in events:
                 event["conversationKey"] = keys[event["chatId"]]
+        stage = "cursor_encoding"
         return {"schemaVersion": 1, "stream": {"kind": "channel" if channel is not None else "account_cloud", "chatId": str(peer_id) if peer_id is not None else None},
                 "baselineOnly": state is None and not initial_history, "events": events, "channelsToSync": sorted(channels_to_sync),
                 "unresolvedDeletionIds": sorted(set(unresolved_deletions)),
@@ -7130,10 +7183,13 @@ async def command_monitor_async(args: argparse.Namespace, identity: Identity) ->
                 "readState": {"readReceiptsSent": False, "viewsRegistered": False}}
     except TelegramRuntimeError as error:
         failure = error
-        raise
+        projected = monitor_failure(error, stage=stage)
+        if projected is error:
+            raise
+        raise projected from error
     except Exception as error:
         failure = error
-        raise TelegramRuntimeError("Telegram monitor failed; no cursor page was delivered.", code="TELEGRAM_MONITOR_UNAVAILABLE") from error
+        raise monitor_failure(error, stage=stage) from error
     finally:
         try:
             await client.disconnect()
@@ -7701,7 +7757,17 @@ def main() -> int:
     except Exception as error:
         # Build the safe failure BEFORE finishing the local page: the human
         # should see the checked reason here, without having to inspect Codex.
-        error_payload = import_inbox_tools().safe_error(error, sys.modules[__name__]).public_payload()
+        if args.command == "monitor":
+            # Identity/session preflight happens before the async reader. Its
+            # uncoded legacy failures need the same closed monitor envelope;
+            # this boundary never starts a new client or repeats an operation.
+            error = monitor_failure(error, stage="session_preflight")
+            # The async reader already classified a known SDK cause using its
+            # actual stage. Reclassification here would replace that stage
+            # with provider_command and erase the useful execution location.
+            error_payload = error.public_payload()
+        else:
+            error_payload = import_inbox_tools().safe_error(error, sys.modules[__name__]).public_payload()
         if BROWSER_PROMPT_SESSION is not None:
             BROWSER_PROMPT_SESSION.finish(
                 title="Вход не завершён",

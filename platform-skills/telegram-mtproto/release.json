@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.16.1",
-    "summary": "Совместимость с актуальным каталогом навыков; нативные ссылки и оригинальные файлы в ответах ассистента",
+    "version": "2.16.2",
+    "summary": "Коды отказа занятой или неавторизованной сессии и безопасная диагностика этапов чтения Telegram",
     "routingSummary": "Read, search, send, and manage Telegram messages, files, and chats."
   },
   "connection": {
@@ -19,7 +19,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.16.1",
+    "version": "2.16.2",
     "minimumHostVersion": "3.25.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

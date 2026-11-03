@@ -56,6 +56,10 @@ name/size/SHA-256 and stream-check exact provider bytes. One document+caption
 Read-only verification needs no source path and may compare a historical v1
 literal body after upgrade; that compatibility flag cannot send a new message.
 Explicit monitor presence never forces offline or changes Telegram privacy.
+Monitor failures use fixed codes and implementation-selected stages, never
+classification by error text. Session contention keeps the native owner lock;
+test it with real separate processes/pipes, without a personal session or SDK.
+No diagnostic permits login/reset, a cursor change or replay.
 First-send `--conversation-reference` uses the SAME provider monitor scope;
 no hint failure may replay a positive send. [Contract](docs/agent-skill-connections.md#first-outgoing-routing).
 Opaque conversation keys reuse the private cursor HMAC in a separate domain;
