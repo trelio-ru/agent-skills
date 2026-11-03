@@ -1,0 +1,4 @@
+interface:
+  display_name: "DeepSeek Search"
+  short_description: "Поиск и глубокий анализ с проверкой источников"
+  default_prompt: "Используй $deepseek-search, чтобы найти информацию через DeepSeek с веб-поиском, выбрать глубокое мышление по задаче и проверить источники."

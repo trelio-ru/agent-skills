@@ -113,6 +113,8 @@ test("shared tooling and workflow changes retain the full regression gate", () =
     assert.ok(selection.selfHostedSkills.includes("gigachat"), filePath);
     assert.ok(selection.selfHostedSkills.includes("perplexity-search"), filePath);
     assert.ok(!selection.hostedMatrix.include.some(row => row.skill === "perplexity-search"), filePath);
+    assert.ok(selection.selfHostedSkills.includes("deepseek-search"), filePath);
+    assert.ok(!selection.hostedMatrix.include.some(row => row.skill === "deepseek-search"), filePath);
     assert.equal(selection.runConsultantPlus, true, filePath);
     assert.equal(selection.runTelegramContract, true, filePath);
     assert.equal(selection.runDodoStats, true, filePath);
@@ -120,7 +122,7 @@ test("shared tooling and workflow changes retain the full regression gate", () =
 });
 
 test("instruction-only providers still run the shared instruction contracts", () => {
-  for (const skill of ["ozon-buyer-search", "google-ai-search", "gigachat", "perplexity-search", "yandex-search", "giga-concierge"]) {
+  for (const skill of ["ozon-buyer-search", "google-ai-search", "gigachat", "perplexity-search", "deepseek-search", "yandex-search", "giga-concierge"]) {
     const selection = selectProviderRegressions([
       `platform-skills/${skill}/SKILL.md`,
     ]);

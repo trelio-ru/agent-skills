@@ -22,6 +22,7 @@ const PROVIDERS = Object.freeze({
   "google-ai-search": { owner: "general", matrix: null },
   "gigachat": { owner: "general", matrix: null },
   "perplexity-search": { owner: "general", matrix: null },
+  "deepseek-search": { owner: "general", matrix: null },
   "yandex-search": { owner: "general", matrix: null },
   // Concierge composes already signed messenger skills and ships no executable.
   // Its source still needs the shared instruction gate; a fake Node runtime or
@@ -81,6 +82,7 @@ const HOSTED_OPERATING_SYSTEMS = Object.freeze([
 const FULL_SELF_HOSTED_SKILLS = Object.freeze([
   "gigachat",
   "perplexity-search",
+  "deepseek-search",
   "vk-ads",
   "document-facsimile",
   "email-imap-smtp",

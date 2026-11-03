@@ -116,6 +116,8 @@ jobs:
         # The browser tool owns execution; this instruction has no runtime
         # manifest/package and must not enter the signed-package OS matrix.
         run: node --test platform-skills/perplexity-search/tests/pacing.test.mjs
+      - name: Run DeepSeek Search instruction controller regressions
+        run: node --test platform-skills/deepseek-search/tests/pacing.test.mjs
       - name: Run Yandex Search instruction controller regressions
         run: node --test platform-skills/yandex-search/tests/pacing.test.mjs
       - name: Run GigaChat instruction controller regressions

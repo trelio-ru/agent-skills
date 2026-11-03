@@ -17,6 +17,7 @@ TELEGRAM_MTPROTO_TEST_APP_CREDENTIAL_JSON='{"api_id":"12345","api_hash":"aaaaaaa
 FULL_SKILL_SET=(
   gigachat
   perplexity-search
+  deepseek-search
   vk-ads
   document-facsimile
   email-imap-smtp
@@ -45,7 +46,7 @@ print_usage() {
 
 is_supported_skill() {
   case "$1" in
-    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|google-ai-search|gigachat|perplexity-search|yandex-search|russian-post-registered-mail)
+    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|google-ai-search|gigachat|perplexity-search|deepseek-search|yandex-search|russian-post-registered-mail)
       return 0
       ;;
     *)
@@ -135,6 +136,9 @@ if has_skill gigachat; then
 fi
 if has_skill perplexity-search; then
   node --test platform-skills/perplexity-search/tests/pacing.test.mjs
+fi
+if has_skill deepseek-search; then
+  node --test platform-skills/deepseek-search/tests/pacing.test.mjs
 fi
 if has_skill yandex-search; then
   node --test platform-skills/yandex-search/tests/pacing.test.mjs

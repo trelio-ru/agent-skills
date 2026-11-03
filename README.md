@@ -4,8 +4,8 @@
 Инструкции, runtime-код, тесты и инструменты сборки публикуются отдельно от
 корпоративных навыков, личных подключений и production signing.
 
-В `platform-skills/` находятся 24 общих навыка: 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
-DodoStats / DrinkitStats, Google AI Search, GigaChat, почта, ГАС «Правосудие», Госуслуги,
+В `platform-skills/` находятся 25 общих навыков: 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
+DeepSeek Search, DodoStats / DrinkitStats, Google AI Search, GigaChat, почта, ГАС «Правосудие», Госуслуги,
 iPhone Mirroring, Perplexity Search, Yandex Search, ИИ-Консьерж от Гига / Сбер,
 MAX, поиск Ozon, заказные письма Почты России, Т-Банк, Telegram MTProto,
 Telegram Web, WhatsApp, факсимиле для документов, ВК Реклама и локальная расшифровка аудио. Для конкретного provider
@@ -69,6 +69,15 @@ instruction-only подход: скрытая вкладка сайта, отв�
 интервал 2–15 секунд с зачётом размышлений и чтения источников. Реальный цикл
 с двумя ответами и открытием первоисточников проверен в
 [браузерном smoke](platform-skills/perplexity-search/development/browser-smoke.md).
+Source не означает публикацию или назначение в live каталоге Trelio.
+
+[DeepSeek Search](platform-skills/deepseek-search/SKILL.md) работает через
+скрытую вкладку `chat.deepseek.com` без API: «Умный поиск», уточнения в той же
+беседе и «Глубокое мышление» для анализа и сравнения. Вход определяется живым
+интерфейсом и выполняется пользователем. Оба режима проверены вместе;
+мышление не гарантирует точные цитаты, поэтому проверяются href и содержание
+первоисточников. Полный цикл описан в
+[браузерном smoke](platform-skills/deepseek-search/development/browser-smoke.md).
 Source не означает публикацию или назначение в live каталоге Trelio.
 
 Яндекс (`yandex-search`) объединяет обычную выдачу `yandex.ru/search/` и чат
