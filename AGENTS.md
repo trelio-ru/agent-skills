@@ -280,6 +280,9 @@ Avito minimum host >=3.17.0 включает исходящие через signe
 native chooser с frozen originals: [контракт](platform-skills/avito/references/workflow.md#исходящие-вложения).
 Проверка первого входящего ответа и поручения на передачу остаётся обязательной;
 допустимые форматы определяет Авито, unknown outcome не разрешает replay.
+Документы выбираются только через «Отправить файл», не через фото/видео.
+Отсутствие control и статус подтверждения профиля проверяются раздельно;
+входящий DOCX не доказывает право текущего аккаунта на отправку документов.
 Голосовые используют отдельный signed `audioDownloads`/API marker и
 host >=3.28.3; min в release/doctor должен совпадать. Команда
 `download-audio`: [контракт](platform-skills/avito/references/workflow.md#голосовое-в-диалоге).

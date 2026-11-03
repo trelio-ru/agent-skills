@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "avito",
-    "version": "0.5.1",
-    "summary": "Для голосовых M4A с AAC-типом закреплён совместимый runtime получения аудио для локальной расшифровки",
+    "version": "0.5.2",
+    "summary": "Перед отправкой документов проверяется отдельная кнопка «Отправить файл» и доступность профиля; DOCX больше не предлагается загружать как фото",
     "routingSummary": "Find Avito listings, chat with sellers, download voice messages, and send or receive files in the managed browser."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.5.1",
+    "version": "0.5.2",
     "minimumHostVersion": "3.28.3",
     "entrypoint": {
       "path": "trelio-avito.mjs",
