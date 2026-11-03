@@ -87,6 +87,54 @@ provider-ы по exact diff и проверяет Linux/macOS/Windows. Для em
 Windows bootstrap следует [общему контракту](windows-native-runtime.md),
 который распространяется и на приватные навыки.
 
+### Выбор межкомпонентного стенда до выпуска
+
+До enqueue один раз проверь полный diff от последнего опубликованного provider
+tag до candidate, включая manifest, инструкции, зависимости и обе стороны
+rename. В результате review запиши exact base/head, изменённые контракты и
+выбранный набор проверок. Название «диагностика», patch SemVer и небольшой diff
+сами по себе не доказывают низкий риск. Неизвестное влияние требует полного
+межкомпонентного стенда, а не предположения о совместимости.
+
+| Влияние изменения | Обязательные проверки |
+| --- | --- |
+| Только текст/карточка либо безопасная проекция диагностики; прежние success/failure, доступ, side effects и recovery сохраняются | Targeted regression изменённого пути, штатный provider gate на всех обязательных OS, instruction/package/source-boundary checks, tagged artifact и live smoke изменённого поведения |
+| Поведение одного provider внутри прежнего host ABI: parser, чтение или отправка через уже допущенную команду | Те же native provider gates, содержательные regressions фактического поведения и профильный live smoke; затронутый межкомпонентный сценарий добавляется, если provider tests не покрывают его границу с host |
+| Новые/изменённые host ABI, signed command admission, account/session lifecycle, scopes/ACL, ACK/cursor/reference, unknown-outcome/replay, original-file identity или encrypted delivery; совместная правка backend/host; неясное влияние | Native gates изменённых компонентов и полный cold/fault question-system stand из канонического backend checkout с exact source pins |
+
+Первая строка не разрешает менять семантику отказа под видом новой ошибки.
+Например, retry вместо uncertain, успешный ответ вместо отказа или смена
+порядка lock/auth/IO относятся к соответствующему опасному контракту. Изменение
+только фиксированного diagnostic code/stage при прежнем отказе не требует
+повторять 3000-file backend fixture, если полный review подтвердил отсутствие
+таких изменений. Реальные pipes и native session contention при этом проверяет
+provider regression на каждой обязательной OS.
+
+Совместимый provider-only release не требует нового backend commit, обновления
+его question-system fixture pin, product tag/deploy или нового host release
+только ради очередной версии provider. Используй уже опубликованный совместимый
+backend/host; проверь actual readiness и exact опубликованный package до smoke.
+Если новая возможность требует их изменения, сначала выпусти и проверь нужную
+зависимость обычным flow. Full product release в backend сохраняет свой full
+gate; эта таблица его не сокращает.
+
+Не дублируй уже успешный обязательный gate того же SHA/OS/плана локальным full
+прогоном. Tag job проверяет exact PR evidence и строит artifact; signing/CAS и
+read-back остаются самостоятельными шагами. Успех старого SHA не становится
+проверкой нового candidate. Для неизменившегося компонента можно сослаться на
+его exact baseline как на подтверждение совместимости, но не объявлять новый
+состав компонентов полностью протестированным. После нового изменения повтори
+review и только затронутые обязательные gates, сохранив evidence остальных
+неизменившихся inputs. Failed/skipped/unknown обязательный результат блокирует
+выпуск; другой runner, сокращённый timeout или новый release не обходят отказ.
+
+Live smoke проверяет конкретное изменённое поведение, а не просто exit 0 или
+версию. Для исходящих нужны обычная sending authority и exact read-back;
+неизвестный исход сначала устанавливается без повторной отправки. Ошибка
+readiness либо занятая личная сессия требует диагностики своего владельца,
+а не нового full stand, сброса входа, удаления lock или серии одинаковых probes.
+Зелёный synthetic stand не считается ответом реального ассистента.
+
 
 ## Бюджет основной инструкции
 

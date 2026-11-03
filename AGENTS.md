@@ -486,6 +486,8 @@ Windows не использует CRT exec overlay; argv, ожидание и р
 Теги skill-<skill-id>-vX.Y.Z и выпущенные package bytes неизменяемы.
 Каждый release tag резервируй через `npm run git:integrate -- --tag <tag>` и подтверждай запуск его workflow
 по [контракту выпуска](docs/release-process.md).
+Межкомпонентный stand выбирай до CI по [влиянию diff](docs/release-process.md#выбор-межкомпонентного-стенда-до-выпуска):
+совместимый provider patch не требует нового backend pin/deploy; неизвестный риск – full.
 MAX фото/альбомы следуют [контракту](docs/max-web-agent-skill.md#история-и-состояние-чтения):
 read-only downloadRef связывает exact аккаунт/чат/сообщение с thumbnail bytes,
 не с позицией или меняющимся CDN URL. Viewer и оригинал проверяются отдельно;
