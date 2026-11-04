@@ -151,3 +151,36 @@ test("failed observation cannot acknowledge readiness using an older snapshot", 
   await assert.rejects(controller.observe(() => { throw new Error("Snapshot unavailable"); }), /Snapshot unavailable/u);
   assert.throws(() => controller.answerReady(), /GOOGLE_AI_NO_QUESTION_TO_REVIEW/u);
 });
+
+/**
+ * The new search branch shares the delivered controller with AI Mode. These
+ * checks cross the mode boundary: a new tab cannot reset either the clock or
+ * the unknown-send fence, even if that tab has a usable search field.
+ */
+test("ordinary search, filters, AI Mode and same-chat follow-ups share one clock", async () => {
+  const harness = createHarness();
+  const sent = [];
+  const requests = ["ordinary search", "Web filter", "AI Mode question", "AI follow-up", "refined ordinary search"];
+  for (const request of requests) {
+    await harness.controller.submit(() => sent.push(request));
+    await assert.rejects(harness.controller.submit(() => sent.push("premature mode switch")),
+      /GOOGLE_AI_PREVIOUS_QUESTION_NOT_REVIEWED/u);
+    await observeReady(harness);
+  }
+  assert.deepEqual(sent, requests);
+  assert.deepEqual(harness.delays, [2_000, 2_000, 2_000, 2_000]);
+});
+
+test("switching modes cannot bypass an unknown search or AI submission", async () => {
+  for (const initialMode of ["ordinary search", "AI Mode"]) {
+    const { controller } = createHarness();
+    let sends = 0;
+    await assert.rejects(controller.submit(() => {
+      sends += 1;
+      throw new Error(`${initialMode} outcome unknown`);
+    }), /outcome unknown/u);
+    await assert.rejects(controller.submit(() => { sends += 1; }),
+      /GOOGLE_AI_PREVIOUS_QUESTION_NOT_REVIEWED/u);
+    assert.equal(sends, 1);
+  }
+});

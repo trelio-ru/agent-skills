@@ -1,4 +1,4 @@
 interface:
-  display_name: "Google AI Search"
-  short_description: "Поиск через g.ai с уточнениями и источниками"
-  default_prompt: "Используй $google-ai-search, чтобы найти информацию через g.ai в скрытой вкладке и дать ответ со ссылками на источники."
+  display_name: "Google: поиск и ИИ"
+  short_description: "Обычный поиск Google и AI Mode с источниками"
+  default_prompt: "Используй $google-ai-search: выбери обычную выдачу Google или AI Mode по задаче, уточняй запросы и проверяй первоисточники в скрытых вкладках."
