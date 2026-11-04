@@ -11,7 +11,7 @@ import { Api, safeApiErrorDetails, apiValidationDetails } from '../scripts/api.m
 import { AuthRecovery, assertAuthRecoveryIdle } from '../scripts/auth-recovery.mjs';
 import { Operations, prepare, matches } from '../scripts/operations.mjs';
 import { input } from '../scripts/form.mjs';
-import { argumentsOf, configureWorker, setupStatus, accountApi } from '../scripts/trelio-vk-ads.mjs';
+import { argumentsOf, configureWorker, setupStatus, accountApi, main } from '../scripts/trelio-vk-ads.mjs';
 // The provider matrix intentionally invokes this portable entrypoint on all
 // three OS. Register the separate suites here too, so new modules cannot be
 // checked only by a local file-specific command and silently miss hosted CI.
@@ -25,6 +25,38 @@ import './faststat.test.mjs';
 const owner = () => ({ account: crypto.randomUUID(), binding: 'a'.repeat(64), company: crypto.randomUUID(), member: crypto.randomUUID() });
 const auth = () => ({ mode: 'client', groups: 'ad_groups', client_id: 'synthetic-client', client_secret: 'synthetic-only-secret', agency_client: '' });
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+
+test('delivered instructions route fallback only through vk and preserve failed-write boundaries', async () => {
+  // This checks the instructions actually returned by the reference command,
+  // not just a maintainer note. Whitespace normalization keeps the semantic
+  // contract portable to Windows checkouts. It does not claim model obedience
+  // or turn an instruction into a host-level browser enforcement mechanism.
+  const normalize = text => text.replace(/\s+/gu, ' ');
+  const instructions = normalize(await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8'));
+  assert.match(instructions, /Fallback – только через \[навык `vk`\]/u);
+  assert.match(instructions, /Прямой доступ агента.{0,180}запрещён, включая чтение/u);
+  assert.match(instructions, /references\/workflow.md#fallback-vk/u);
+
+  const identity = owner();
+  const env = { TRELIO_SKILL_ID: 'vk-ads', TRELIO_SKILL_COMPANY_ID: identity.company,
+    TRELIO_SKILL_MEMBER_ID: identity.member, TRELIO_SKILL_ACCOUNT_JSON: JSON.stringify({
+      id: identity.account, providerRef: null, companyBinding: identity.binding }) };
+  const references = {};
+  for (const name of ['workflow', 'security', 'diagnostics']) {
+    references[name] = normalize((await main(['reference', '--name', name], env)).markdown);
+    assert.match(references[name], /Прямой доступ агента.{0,90}браузер запрещён/u, name);
+  }
+  assert.match(references.workflow, /`integrationRouting`.{0,120}явный выбор пользователя/u);
+  assert.match(references.workflow, /`instructions,execution` навыка `vk` через `get_agent_skill`/u);
+  assert.match(references.workflow, /`runtimeExecution.localAction`/u);
+  assert.match(references.workflow, /Если навык отсутствует, недоступен либо не поддерживает действие, сообщи blocker/u);
+  assert.match(references.workflow, /Timeout, временная ошибка API\/каталога и неизвестный результат записи не разрешают fallback/u);
+  assert.match(references.workflow, /не повторяй её через `vk`, даже с новым operation ID/u);
+  assert.match(references.workflow, /Чтение UI не погашает receipt\/fence `vk-ads`/u);
+  assert.match(references.security, /Accounts, credentials, sessions и policy навыков независимы/u);
+  assert.match(references.diagnostics, /без сохранения только через навык `vk`/u);
+});
+
 // The test codec is dependency injection at module level, never a CLI/env
 // bypass. Production cannot select it and Linux remains fail-closed.
 function codec() {

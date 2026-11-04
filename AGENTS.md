@@ -126,6 +126,9 @@ system settings, other hosts, auth/mutation retries не расширяются.
 и [security](platform-skills/vk-ads/references/security.md): paused creation,
 scoped планы, persisted receipts, read-back и запрет replay неизвестной записи.
 POST/PUT и структуру групп нельзя менять как fallback после ошибки API.
+Единственный fallback – отдельный signed навык `vk` по
+[контракту перехода](platform-skills/vk-ads/references/workflow.md#fallback-vk);
+прямой браузер запрещён даже для чтения, а unknown-write fence сохраняется.
 Status-only recovery existing parent следует
 [узкому контракту](platform-skills/vk-ads/references/status-recovery.md):
 независимая launch authority, полный fresh tree/caps/dates review, один новый

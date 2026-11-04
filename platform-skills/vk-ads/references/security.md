@@ -8,6 +8,13 @@ default и binding; provider не копирует этот каталог и л
 меняются штатным host account update. Параметры обязательны кроме agency_client
 в режиме client; секрет 1–4096 символов, Client ID 1–256, без CR/LF/NUL.
 
+Fallback выполняется только через отдельный signed навык `vk` по
+[контракту перехода](workflow.md#fallback-vk). Прямой доступ агента к VK через
+браузер запрещён, включая чтение и диагностику. Отсутствие/отказ `vk` не
+разрешает Browser/Computer Use, Playwright/CDP, HTTP или другой connector.
+Accounts, credentials, sessions и policy навыков независимы; переход не
+снимает unknown-write fence, не разрешает replay или новые изменения.
+
 Форма принимает только exact loopback Host, случайный route, same-origin
 Origin/Sec-Fetch, один page load/submit, JSON до 12000 bytes. CSP отключает
 внешние ресурсы/frame embedding. Нет read endpoint credentials и вывода URI
@@ -182,7 +189,8 @@ Reset удаляет credentials/token, сохраняя encrypted receipts и �
 OS key нужен для оставшейся history. Он не отзывает VK client secret/token.
 Замена credentials тоже сохраняет receipts и их plans; неприменённые планы
 удаляются, поскольку были подготовлены для прежнего подключения.
-Для отзыва нужен штатный интерфейс VK. Перенос между устройствами и импорт
+Для отзыва нужен штатный интерфейс VK: агент использует только навык `vk`
+по контракту перехода выше; прямой браузер запрещён. Перенос между устройствами и импорт
 старых stores не реализованы: новый UUID требует настройки; совместимый runtime
 повторно использует прежний account envelope. Имена, комментарии, personalRules
 и binding компании не меняют storage key, но scope hash операций меняется.
