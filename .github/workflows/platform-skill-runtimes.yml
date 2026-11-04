@@ -118,6 +118,9 @@ jobs:
         run: node --test platform-skills/perplexity-search/tests/pacing.test.mjs
       - name: Run DeepSeek Search instruction controller regressions
         run: node --test platform-skills/deepseek-search/tests/pacing.test.mjs
+      - name: Run Grok instruction controller regressions
+        # No runtime package or account: run the exact delivered controller.
+        run: node --test platform-skills/grok-search/tests/pacing.test.mjs
       - name: Run Yandex Search instruction controller regressions
         run: node --test platform-skills/yandex-search/tests/pacing.test.mjs
       - name: Run GigaChat instruction controller regressions

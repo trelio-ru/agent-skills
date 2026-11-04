@@ -18,6 +18,7 @@ FULL_SKILL_SET=(
   gigachat
   perplexity-search
   deepseek-search
+  grok-search
   vk-ads
   document-facsimile
   email-imap-smtp
@@ -46,7 +47,7 @@ print_usage() {
 
 is_supported_skill() {
   case "$1" in
-    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|google-ai-search|gigachat|perplexity-search|deepseek-search|yandex-search|russian-post-registered-mail)
+    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|google-ai-search|gigachat|perplexity-search|deepseek-search|grok-search|yandex-search|russian-post-registered-mail)
       return 0
       ;;
     *)
@@ -139,6 +140,9 @@ if has_skill perplexity-search; then
 fi
 if has_skill deepseek-search; then
   node --test platform-skills/deepseek-search/tests/pacing.test.mjs
+fi
+if has_skill grok-search; then
+  node --test platform-skills/grok-search/tests/pacing.test.mjs
 fi
 if has_skill yandex-search; then
   node --test platform-skills/yandex-search/tests/pacing.test.mjs
