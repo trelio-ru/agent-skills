@@ -18,6 +18,29 @@ const temporary = () => privateDirectory(path.join(fs.mkdtempSync(path.join(fs.r
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const artifact = value => ({url: 'https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/synthetic.bin', bytes: value.length, sha256: digest(value)});
 
+function prepareSpokenFixture(target) {
+  // Keep the SAME public upstream speech and checksum used by the original
+  // native gate. Bundling these small development-only bytes removes an
+  // unrelated CDN/TLS dependency without substituting synthetic inference,
+  // shortening the sample, relaxing assertions or shipping audio in a skill.
+  const sample=JSON.parse(fs.readFileSync(path.join(providerRoot,'development/fixture.json')));
+  assert.equal(sample.localFile,'public-example.wav');
+  const source=path.join(providerRoot,'development',sample.localFile),stat=fs.lstatSync(source);
+  assert.ok(stat.isFile()&&!stat.isSymbolicLink());assert.equal(stat.size,sample.bytes);
+  const bytes=fs.readFileSync(source);assert.equal(digest(bytes),sample.sha256);
+  fs.writeFileSync(target,bytes,{flag:'wx',mode:0o600});
+  return sample;
+}
+
+test('development speech is the complete already-pinned upstream fixture and stays outside the package',t=>{
+  const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true}));
+  const sample=prepareSpokenFixture(path.join(root,'original.wav'));
+  assert.equal(sample.bytes,361324);
+  assert.equal(sample.sha256,'d8aaaa18a5098d7c6de0595ae7ac1e64cacd0d4022af3595213bdaf23be77e69');
+  const release=JSON.parse(fs.readFileSync(path.join(providerRoot,'release.json')));
+  assert.ok(release.runtime.files.every(file=>!file.source.startsWith('development/')));
+});
+
 function sourceOriginalFixture(t){
   const directory=temporary();t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const filePath=path.join(directory,'voice.ogg'),bytes=Buffer.from('OggS SYNTHETIC ORIGINAL');
@@ -442,9 +465,8 @@ test('native ready launcher refuses an old-model resume before creating a worker
 test('real official GigaAM processes >25 seconds through async production CLI and creates complete UTF-8 outputs', {skip: !fixture && !process.env.CI, timeout: 180000}, async () => {
   assert.ok(fixture);
   const root = privateDirectory(temporary());
-  const sample = JSON.parse(fs.readFileSync(path.join(providerRoot, 'development/fixture.json')));
   const samplePath = path.join(root, 'example.wav');
-  await downloadArtifact(sample, samplePath);
+  prepareSpokenFixture(samplePath);
   const source = path.join(root, 'Длинная запись.wav');
   const program = 'import wave,sys; a=wave.open(sys.argv[1],"rb");p=a.getparams();b=a.readframes(a.getnframes());a.close();o=wave.open(sys.argv[2],"wb");o.setparams(p);o.writeframes(b*4);o.close()';
   const made = spawnSync(pythonPath(fixture.root), ['-I', '-c', program, samplePath, source], {shell: false, env: childEnvironment(fixture.root), encoding: 'utf8'});
@@ -476,7 +498,7 @@ test('native source-original protocol decodes actual audio once with the prepare
   const original=path.join(parent,'voice.ogg');
   // Public hash-pinned spoken fixture; ffmpeg detects its real format from
   // bytes, just as it does with the private original-file receipt in the host.
-  await downloadArtifact(JSON.parse(fs.readFileSync(path.join(providerRoot,'development/fixture.json'))),original);
+  prepareSpokenFixture(original);
   if(process.platform!=='win32')fs.chmodSync(original,0o600);
   const input={schemaVersion:1,requestId:'11111111-2222-4333-8444-555555555555',
     original:{filePath:original,...sourceFileFingerprint(original,20*1024*1024)},outputDirectory:path.join(parent,'job')};

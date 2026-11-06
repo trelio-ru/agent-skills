@@ -173,6 +173,12 @@ CPU gate исполняется нативно на GitHub-hosted macOS/Windows/
 first setup без ambient переменных архитектуры, реальный checkpoint и длинный
 искусственный PCM stream. Windows regression отдельно проверяет настоящую
 цепочку Node → managed Python с host-filtered environment.
+Speech inference uses the unchanged official public `example.wav` (361324 bytes,
+SHA-256 `d8aaaa18a5098d7c6de0595ae7ac1e64cacd0d4022af3595213bdaf23be77e69`).
+These development-only bytes are checked before each native test and excluded
+from the signed package. Provenance is in `development/fixture.json`; inference
+no longer depends on the upstream CDN's sample-audio TLS availability. Real
+model installation/inference, original durations and assertions remain mandatory.
 
 Локальная ASR не открывает право последующей публикации. Task/Workspace/meeting
 выбираются и сохраняются отдельными обычными инструментами, с сохранением
