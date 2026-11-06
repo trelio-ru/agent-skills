@@ -188,3 +188,46 @@ LOGOUT/reparse. Синтетические wire-тесты проверяют ex
 незатронутые соседние UID/flags, verify-only, scope/hash/UIDVALIDITY/policy,
 утраченный ответ, literal/metadata bounds и отсутствие raw provider diagnostics.
 Нормативный [STORE](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.4.6).
+
+## Автономная отписка от рекламной почты
+
+`read-reference` дополнительно возвращает только boolean `unsubscribe.available`.
+Модель классифицирует каждое новое письмо; ни noreply, ни предыдущая отписка,
+ни List-ID/домен не создают правила пропуска. Transactional/security, spam/phishing
+и неясные письма не выбираются для отписки. Default-on настройка email source
+делегирует это узкое действие без согласования каждой рассылки с владельцем;
+обычные SMTP/reply правила не меняются.
+
+Host-only `unsubscribe-reference --uid UID --uid-validity UIDVALIDITY
+--expected-revision SHA256 --expected-original-sha256 SHA256 --confirm` требует
+native frozen/прочитанный original, сохранённый выбор ignored UUID, текущую настройку,
+source/device/BOTH ACL и отдельно consumed one-attempt receipt. Команда не входит
+в `taskCommands`. Она использует прежние native account/guardian/PEEK helpers,
+проверяет exact UID/revision/full RFC822 SHA и read-only policy. Адрес, URL/token
+и headers остаются внутри provider, не принимаются от модели и не сохраняются
+в SQLite/server journal. IMAP flags, SMTP, browser и mailto не используются.
+
+Provider исполняет только RFC8058 HTTPS POST `List-Unsubscribe=One-Click`.
+Поддерживаемые trusted receivers – exact `imap.gmail.com` → `mx.google.com`,
+`imap.mail.ru` → `mxs.mail.ru`. Требуются первый однозначный receiver-owned
+Authentication-Results, один aligned DKIM pass и соответствующая единственная
+aligned signature с подписанными unique From/List-Unsubscribe/List-Unsubscribe-Post.
+Unknown receiver/grammar, duplicate headers/signatures, unsupported endpoint
+либо отсутствие authentication закрывают отписку, сохраняя обычное чтение.
+Это доверие к аутентифицированному принимающему сервису по RFC8601, не локальная
+DKIM verification и не доверие произвольному sender-supplied заголовку.
+
+Endpoint – домен From/DKIM или его поддомен, HTTPS/443 без userinfo/fragment.
+Все DNS addresses обязаны быть публичными; actual TLS connection закреплена за
+проверенным IP с проверкой hostname. Нет proxy env, redirect, cookie, Authorization,
+Referer или HTML/form fallback. Native permit проверяется перед сетью и POST.
+Один запрос: `requested` означает только 2xx приём запроса, `skipped` – отсутствие
+HTTP mutation, `unknown` – непроверенный результат попытки. Никакой исход не даёт
+automatic replay. Provider закрывает socket без подмены уже установленного исхода.
+Журнал и owner UI содержат только UUID/date/closed outcome, без уведомления на
+каждую отписку. Факт исчезновения будущих писем не заявляется.
+
+Проверки: `tests/test_unsubscribe.py` – настоящий header/IMAP/HTTP encoder,
+synthetic receiver/network, duplicate/forged auth, hashes/scopes, private/mixed DNS,
+TLS pinning, no redirect/cookies и unknown write. Signed host/native admission
+проверяются в их owning repositories. Fixtures не являются live mailbox acceptance.

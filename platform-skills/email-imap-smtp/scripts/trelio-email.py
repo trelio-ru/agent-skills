@@ -56,7 +56,7 @@ POLICIES_DIR = CONFIG_DIR / "policies"
 KEYCHAIN_SERVICE_PREFIX = "trelio-email"
 POLICY_MODES = ("confirm", "read-only")
 CONNECTION_MODES = ("imap_smtp", "smtp_only")
-IMAP_COMMANDS = {"authentication-profile", "authentication-browser", "monitor", "read-reference", "ack-reference", "folders", "search", "read", "save-message", "attachments", "save-attachment", "reply"}
+IMAP_COMMANDS = {"authentication-profile", "authentication-browser", "monitor", "read-reference", "ack-reference", "unsubscribe-reference", "folders", "search", "read", "save-message", "attachments", "save-attachment", "reply"}
 MAX_ACCOUNT_DESCRIPTION_CHARS = 2_000
 MAX_SIGNATURE_BYTES = 16 * 1024
 MAX_MESSAGE_BYTES = 25 * 1024 * 1024
@@ -2579,6 +2579,15 @@ def email_reference_digest_argument(value: str) -> str:
     return value
 
 
+def unsubscribe_runtime():
+    # This module is part of the same signed package, never loaded from PATH,
+    # a mailbox, third-party dependency resolver or model-selected file.
+    spec = importlib.util.spec_from_file_location("trelio_email_unsubscribe", Path(__file__).with_name("email_unsubscribe.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def command_read_reference(args: argparse.Namespace) -> dict[str, Any]:
     """Read a queued IMAP identity, never mark it seen or advance its cursor."""
     # Keep an internal guard in addition to argparse: the native worker uses
@@ -2633,6 +2642,7 @@ def command_read_reference(args: argparse.Namespace) -> dict[str, Any]:
                                     "uid": str(uid), "uidValidity": str(validity),
                                     **({"conversationKey": conversation_key} if conversation_ref else {})},
                       "message": projected, "originalSha256": hashlib.sha256(raw).hexdigest(),
+                      "unsubscribe": {"available": unsubscribe_runtime().target(account, message) is not None},
                       "coverage": {"textComplete": True, "attachmentsContentRead": False, "otherMessagesIncluded": False},
                       "readState": {"marksRead": False, "readReceiptsSent": False}}
         return result
@@ -2643,6 +2653,57 @@ def command_read_reference(args: argparse.Namespace) -> dict[str, Any]:
         # message or credentials. Native and direct result surfaces get only a
         # fixed code, never a partial successful message or raw provider prose.
         raise EmailReferenceError("EMAIL_REFERENCE_UNAVAILABLE") from error
+
+
+def command_unsubscribe_reference(args: argparse.Namespace) -> dict[str, Any]:
+    """One exact model-read email, same native IMAP/guardian, one private POST.
+
+    The dispatcher owns the durable attempt BEFORE invoking this command. This
+    handler never retries, opens a browser, sends mail or changes IMAP state.
+    """
+    try:
+        validate_message_uid(args.uid)
+        validate_message_uid(args.uid_validity)
+        email_reference_digest_argument(args.expected_revision)
+        email_reference_digest_argument(args.expected_original_sha256)
+        if args.confirm is not True:
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError, MailboxError, argparse.ArgumentTypeError):
+        raise EmailReferenceError("EMAIL_REFERENCE_INPUT_INVALID") from None
+    account = load_account(args.account)
+    require_imap(account)
+    result = {"schemaVersion": 1, "protocol": "email-unsubscribe/v1",
+              "automaticRetryAllowed": False, "outcome": "skipped", "writeAttempted": False}
+    if load_email_policy(args.account)["sendMode"] == "read-only":
+        return result
+    try:
+        with imap_connection(account) as client:
+            folder = select_folder(client, args.folder, special_use=args.special_use)
+            scope = email_monitor_scope(account, folder)
+            validity, next_uid = email_monitor_position(client)
+            if validity != int(args.uid_validity) or int(args.uid) >= next_uid or \
+                    email_reference_revision(scope, validity, int(args.uid)) != args.expected_revision:
+                return result
+            raw = fetch_raw_message(client, args.uid, verify_reference=True)
+            if hashlib.sha256(raw).hexdigest() != args.expected_original_sha256:
+                return result
+            module = unsubscribe_runtime()
+            url = module.target(account, email.message_from_bytes(raw, policy=default))
+            select_folder(client, folder)
+            fresh_validity, fresh_next = email_monitor_position(client)
+            if not url or fresh_validity != validity or fresh_next < next_uid:
+                return result
+        # Cleanup completes before the external effect. Recheck the current
+        # local read-only policy and native guardian immediately before HTTP.
+        if load_email_policy(args.account)["sendMode"] == "read-only":
+            return result
+        require_credential_lease()
+        effect = module.post_once(url, require_credential_lease)
+        return {**result, **effect}
+    except Exception:
+        # Unknown private/provider errors never echo an endpoint, header,
+        # mailbox or token. post_once itself preserves the HTTP write boundary.
+        return result
 
 
 def validate_email_ack_arguments(args: argparse.Namespace) -> None:
@@ -3503,6 +3564,14 @@ def build_parser() -> argparse.ArgumentParser:
     ack_mode.add_argument("--confirm", action="store_true")
     ack_mode.add_argument("--verify-only", action="store_true")
     ack_parser.set_defaults(handler=command_ack_reference)
+    unsubscribe_parser = subparsers.add_parser("unsubscribe-reference", help="One host-admitted RFC8058 request for an exact previously read marketing email")
+    add_mailbox_arguments(unsubscribe_parser)
+    for flag in ("--uid", "--uid-validity"):
+        unsubscribe_parser.add_argument(flag, required=True, type=parse_message_uid)
+    for flag in ("--expected-revision", "--expected-original-sha256"):
+        unsubscribe_parser.add_argument(flag, required=True, type=email_reference_digest_argument)
+    unsubscribe_parser.add_argument("--confirm", action="store_true", required=True)
+    unsubscribe_parser.set_defaults(handler=command_unsubscribe_reference)
     search_parser = subparsers.add_parser("search", help="Search messages using narrow server-side filters")
     add_mailbox_arguments(search_parser)
     search_parser.add_argument("--from", dest="sender")

@@ -91,3 +91,10 @@ committed processing и ACK lease; эта provider-команда их не по
 исходное разрешение и live доступ перед отдельным решением повторить. Закрытая
 ошибка после STORE сохраняет `writeAttempted=true`, `writeOutcome=unknown` и
 `automaticRetryAllowed=false`; пароль/transport/cursor не сбрасываются.
+
+
+## Автоотписка цифрового ассистента
+
+Каждое новое письмо сначала анализируется. Default-on настройка источника разрешает host самостоятельно отписаться только от явно ненужной рекламной рассылки через проверенный one-click механизм, без согласования каждой рассылки. `unsubscribe.available` в exact read – лишь техническая готовность; spam/phishing, коды, регистрация, счета/оплата и безопасность не становятся рекламой из-за этого признака. Сомнения сохраняют обычную обработку.
+
+`unsubscribe-reference` – отдельный host-only original/receipt profile, не task command и не право модели выбирать URL или выполнять HTTP. Runtime повторяет exact full-byte hash, native policy/authentication/SSRF/one-attempt checks. Unknown не повторяется; браузер, mailto и SMTP fallback запрещены. Обычные письма/отправки сохраняют прежний контракт.

@@ -386,6 +386,7 @@ MAX account discovery requires the browser's native full-sync19 + complete53 mar
 MAX task policy v2 additionally denies model browser executable/window/budget
 overrides. Legacy host refusal is preserved until common enforcement is verified;
 the descriptor alone does not prove readiness or native owner identity.
+Автоотписка email – host-only one-attempt RFC8058 после модельного разбора, по тому же [контракту](docs/email-monitoring.md#автономная-отписка-от-рекламной-почты); не добавлять её в taskCommands.
 Для пассивного IMAP `monitor` читай [контракт](docs/email-monitoring.md): UIDVALIDITY, scoped checkpoint, finite readonly range; без ACK/новых задач.
 Initial unread opt-in creates a separate bounded v2 stream under the original UID ceiling;
 forward v1 remains independent of UNSEEN. Never reset an existing cursor or claim an atomic historical unread snapshot.

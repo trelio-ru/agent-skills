@@ -2,12 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.7.4",
-    "summary": "Непрозрачная native ссылка первой отправки для привязки будущего ответа к существующей задаче без повторной отправки."
+    "version": "2.8.0",
+    "summary": "Безопасная одноразовая автоотписка от рекламной почты после модельного разбора без согласования каждой рассылки.",
+    "routingSummary": "Read and send email over IMAP/SMTP, with authenticated one-click unsubscribe for assistant-classified marketing."
   },
   "connection": null,
   "runtime": {
-    "version": "2.7.4",
+    "version": "2.8.0",
     "minimumHostVersion": "3.18.0",
     "entrypoint": {
       "path": "trelio-email.py",
@@ -102,6 +103,11 @@
       {
         "source": "scripts/instruction-guides/part-07.md",
         "path": "instruction-guides/part-07.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/email_unsubscribe.py",
+        "path": "email_unsubscribe.py",
         "mode": 420
       }
     ]
