@@ -6,6 +6,9 @@ No fixture can authorize a task, send a message or mark a message read.
 import asyncio
 import importlib.util
 import json
+import io
+import os
+import hashlib
 import pathlib
 import sys
 import tempfile
@@ -626,6 +629,109 @@ class ReferenceRead(unittest.TestCase):
 
     def read(self, args=None):
         return asyncio.run(M.command_message_read_async(args or self.args(), self.identity))
+
+    def audio_input(self, *, chunks=None, size=None):
+        root = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        if os.name == 'posix':
+            root.chmod(0o700)
+        body = b'OggS\x00SYNTHETIC PRIVATE ORIGINAL AUDIO'
+        self.native.message = ''
+        native = tl('Document', id=42, size=len(body) if size is None else size,
+                    attributes=[tl('DocumentAttributeAudio', voice=True)])
+        self.native.document, self.native.media = native, tl('MessageMediaDocument', document=native)
+        self.native.voice, self.native.file = native, NS(size=native.size, name=None)
+        values = [body] if chunks is None else chunks
+        outer = self
+        class Stream:
+            def __aiter__(self):
+                async def produce():
+                    for chunk in values:
+                        if isinstance(chunk, Exception):
+                            raise chunk
+                        yield chunk
+                return produce()
+            async def close(self):
+                outer.stream_closed = True
+        self.stream_closed = False
+        self.provider.iter_download = mock.Mock(side_effect=lambda *_a, **_k: Stream())
+        payload = {'schemaVersion': 1, 'requestId': '11111111-2222-4333-8444-555555555555',
+                   'directory': str(root), 'maxBytes': 20 * 1024 * 1024}
+        return root, body, payload
+
+    def read_with_audio(self, payload, args=None):
+        with mock.patch.dict(os.environ, {'TRELIO_ASSISTANT_SOURCE_MEDIA': '1'}), \
+             mock.patch.object(sys, 'stdin', NS(buffer=io.BytesIO(json.dumps(payload).encode()))):
+            return self.read(args)
+
+    def test_captionless_voice_original_keeps_exact_bytes_and_separate_unread_content_coverage(self):
+        root, body, payload = self.audio_input()
+        result = self.read_with_audio(payload)
+        self.assertEqual(result['message']['text'], '')
+        self.assertTrue(result['message']['hasMedia'])
+        self.assertEqual(result['message']['mediaType'], 'voice')
+        self.assertEqual((root / 'original.bin').read_bytes(), body)
+        self.assertEqual(result['originalAudio'], {'schemaVersion': 1, 'requestId': payload['requestId'],
+            'state': 'saved', 'sizeBytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()})
+        self.assertFalse(result['coverage']['attachmentsContentRead'])
+        self.assertTrue(self.stream_closed)
+        self.assertEqual(self.provider.get_messages.await_count, 2)
+        self.provider.send_message.assert_not_awaited()
+        self.assertEqual(self.provider.calls, [], 'download may not transcribe, consume quota, ACK or register a view')
+        self.assertNotIn(str(root), json.dumps(result))
+        self.assertNotIn('SYNTHETIC PRIVATE ORIGINAL', json.dumps(result))
+
+    def test_ordinary_voice_read_does_not_download_or_consume_transcription_quota(self):
+        root, _body, _payload = self.audio_input()
+        with mock.patch.dict(os.environ):
+            os.environ.pop('TRELIO_ASSISTANT_SOURCE_MEDIA', None)
+            result = self.read()
+        self.assertNotIn('originalAudio', result)
+        self.provider.iter_download.assert_not_called()
+        self.assertFalse((root / 'original.bin').exists())
+
+    def test_audio_input_failure_precedes_native_client_and_never_chooses_a_cli_path(self):
+        root, _body, valid = self.audio_input()
+        for payload in [None, [], {**valid, 'schemaVersion': True}, {**valid, 'maxBytes': 1},
+                        {**valid, 'requestId': 'fake'}, {**valid, 'directory': '../relative'},
+                        {**valid, 'fileName': 'elsewhere'}, {**valid, 'directory': str(root / 'missing')}]:
+            with self.assertRaises(M.TelegramRuntimeError) as error:
+                self.read_with_audio(payload)
+            self.assertEqual(error.exception.code, 'TELEGRAM_REFERENCE_INPUT_INVALID')
+        self.client.assert_not_called()
+
+    def test_audio_download_bounds_short_overflow_and_failure_keep_truthful_unavailable_metadata(self):
+        for chunks in [[b'x'], [b'x' * 65537], [b'x' * 64], [RuntimeError('PRIVATE SDK DETAIL')]]:
+            root, _body, payload = self.audio_input(chunks=chunks)
+            result = self.read_with_audio(payload)
+            self.assertEqual(result['originalAudio']['state'], 'unavailable')
+            self.assertEqual(result['message']['mediaType'], 'voice')
+            self.assertTrue(self.stream_closed)
+            self.assertFalse((root / 'original.bin').exists())
+            self.assertNotIn('PRIVATE SDK DETAIL', json.dumps(result))
+
+    def test_oversized_original_does_not_start_stream_or_look_like_an_empty_message(self):
+        root, _body, payload = self.audio_input(size=20 * 1024 * 1024 + 1)
+        result = self.read_with_audio(payload)
+        self.assertEqual(result['originalAudio']['state'], 'too_large')
+        self.provider.iter_download.assert_not_called()
+        self.assertFalse((root / 'original.bin').exists())
+
+    def test_existing_file_is_not_overwritten_and_changed_revision_cannot_deliver_old_audio(self):
+        root, _body, payload = self.audio_input()
+        (root / 'original.bin').write_bytes(b'KEEP EXISTING')
+        result = self.read_with_audio(payload)
+        self.assertEqual(result['originalAudio']['state'], 'unavailable')
+        self.assertEqual((root / 'original.bin').read_bytes(), b'KEEP EXISTING')
+        self.provider.iter_download.assert_not_called()
+        (root / 'original.bin').unlink()
+        args = self.args()
+        before = self.native
+        replacement = message(text='CHANGED ORIGINAL')
+        self.provider.get_messages.side_effect = [before, replacement]
+        with self.assertRaises(M.TelegramRuntimeError) as error:
+            self.read_with_audio(payload, args)
+        self.assertEqual(error.exception.code, 'TELEGRAM_REFERENCE_CHANGED')
+        self.provider.send_message.assert_not_awaited()
 
     def test_expected_conversation_key_checks_scope_before_private_body_read(self):
         binding = asyncio.run(M.overview_binding(self.provider, self.identity, 'monitor/v1',

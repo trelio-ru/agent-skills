@@ -10,12 +10,101 @@ import {artifacts, childEnvironment, digest, downloadArtifact, installationPlan,
 import {argumentsObject, run} from '../scripts/audio-transcription.mjs';
 import {atomicJson, privateDirectory} from '../scripts/storage.mjs';
 import {buildRuntimePackage} from '../../tools/build-runtime-package.mjs';
+import {processSourceOriginal,readSourceOriginalInput,sourceFileFingerprint} from '../scripts/source-original.mjs';
 
 const fixtureFile = path.join(providerRoot, '.ci-state.json');
 const fixture = fs.existsSync(fixtureFile) ? JSON.parse(fs.readFileSync(fixtureFile)) : null;
 const temporary = () => privateDirectory(path.join(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'trelio-audio-test-')), 'private'));
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const artifact = value => ({url: 'https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/synthetic.bin', bytes: value.length, sha256: digest(value)});
+
+function sourceOriginalFixture(t){
+  const directory=temporary();t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const filePath=path.join(directory,'voice.ogg'),bytes=Buffer.from('OggS SYNTHETIC ORIGINAL');
+  fs.writeFileSync(filePath,bytes,{flag:'wx',mode:0o600});
+  return {directory,bytes,input:{schemaVersion:1,requestId:'11111111-2222-4333-8444-555555555555',
+    original:{filePath,sizeBytes:bytes.length,sha256:digest(bytes)},outputDirectory:path.join(directory,'job')}};
+}
+
+test('source processing requires ready ASR and never installs or consumes model-download consent',async t=>{
+  const {directory,input}=sourceOriginalFixture(t),calls=[];
+  const result=await processSourceOriginal(input,{root:path.join(directory,'cache'),run:async args=>{
+    calls.push(args);assert.deepEqual(args,['doctor']);return {ready:false,consentRequired:true,downloadPlan:{planHash:'UNAPPROVED'}};
+  }});
+  assert.equal(result.state,'setup_required');assert.equal(result.consentRequired,true);
+  assert.deepEqual(calls,[['doctor']]);assert.equal(fs.existsSync(input.outputDirectory),false);
+  assert.equal(fs.existsSync(path.join(directory,'.source-attempt.json')),false);
+  assert.doesNotMatch(JSON.stringify(result),/UNAPPROVED|voice\.ogg/);
+});
+
+test('source ASR starts once, returns byte-free progress and verifies complete original-bound output',async t=>{
+  const {directory,input}=sourceOriginalFixture(t),calls=[];
+  const execute=async args=>{
+    calls.push(args[0]);
+    if(args[0]==='doctor')return {ready:true,model:'v3_rnnt'};
+    if(args[0]==='start'){
+      assert.equal(args[2],path.join(directory,'source.ogg'));
+      assert.deepEqual(fs.readFileSync(args[2]),fs.readFileSync(input.original.filePath));
+      atomicJson(path.join(input.outputDirectory,'job.json'),{schemaVersion:1,input:args[2],
+        originalSize:input.original.sizeBytes,model:'v3_rnnt',state:'queued'});
+      return {ok:true,state:'queued'};
+    }
+    assert.equal(args[0],'status');return {ok:true,state:'completed'};
+  };
+  const pending=await processSourceOriginal(input,{root:directory,run:execute});
+  assert.equal(pending.state,'queued');assert.equal(pending.contentRead,false);
+  atomicJson(path.join(input.outputDirectory,'job.json'),{schemaVersion:1,input:path.join(directory,'source.ogg'),
+    originalSize:input.original.sizeBytes,model:'v3_rnnt',state:'completed',sourceSha256:input.original.sha256});
+  atomicJson(path.join(input.outputDirectory,'transcript.json'),{model:'v3_rnnt',complete:true});
+  const words=Buffer.from('проверенное тестовое голосовое');
+  fs.writeFileSync(path.join(input.outputDirectory,'transcript.txt'),words,{mode:0o600});
+  const completed=await processSourceOriginal(input,{root:directory,run:execute});
+  assert.equal(completed.state,'completed');assert.equal(completed.contentRead,false,'host must independently read and verify transcript bytes');
+  assert.deepEqual(completed.text,{sizeBytes:words.length,sha256:digest(words)});
+  assert.deepEqual(calls,['doctor','start','doctor','status']);
+  assert.doesNotMatch(JSON.stringify(completed),/проверенное|voice\.ogg|job/);
+  atomicJson(path.join(input.outputDirectory,'transcript.json'),{model:'v3_rnnt',complete:false});
+  await assert.rejects(processSourceOriginal(input,{root:directory,run:execute}),/AUDIO_SOURCE_INPUT_INVALID/);
+});
+
+test('an uncertain source start remains status-only and cannot launch another worker',async t=>{
+  const {directory,input}=sourceOriginalFixture(t);let starts=0;
+  const execute=async args=>{
+    if(args[0]==='doctor')return {ready:true,model:'v3_rnnt'};
+    starts++;throw Error('AUDIO_SYNTHETIC_LOST_START');
+  };
+  await assert.rejects(processSourceOriginal(input,{root:directory,run:execute}),/AUDIO_SYNTHETIC_LOST_START/);
+  const observed=await processSourceOriginal(input,{root:directory,run:execute});
+  assert.equal(observed.state,'unknown');assert.equal(starts,1);
+});
+
+test('source private input and file guards reject poison, links, false hashes and excessive bytes',async t=>{
+  const {directory,input}=sourceOriginalFixture(t);
+  const execute=async()=>{throw Error('MUST_NOT_REACH_DOCTOR');};
+  for(const value of [null,{...input,command:'setup'},{...input,requestId:'invented'},
+    {...input,original:{...input.original,sha256:'0'.repeat(64)}},
+    {...input,original:{...input.original,sizeBytes:1}},
+    {...input,outputDirectory:'relative/job'}]){
+    await assert.rejects(processSourceOriginal(value,{root:directory,run:execute}),/AUDIO_SOURCE_INPUT_INVALID/);
+  }
+  const chunks=async function*(value){yield Buffer.from(value);};
+  assert.deepEqual(await readSourceOriginalInput(chunks(JSON.stringify(input))),input);
+  for(const value of ['x'.repeat(8193),'{} PRIVATE',Buffer.from([0xff])]){
+    await assert.rejects(readSourceOriginalInput(chunks(value)),/AUDIO_SOURCE_INPUT_INVALID/);
+  }
+  const empty=path.join(directory,'empty.txt');fs.writeFileSync(empty,'',{mode:0o600});
+  assert.deepEqual(sourceFileFingerprint(empty,1,{allowEmpty:true}),{sizeBytes:0,sha256:digest(Buffer.alloc(0))});
+  assert.throws(()=>sourceFileFingerprint(empty,1),/AUDIO_SOURCE_INPUT_INVALID/);
+  const alias=path.join(directory,'hardlink.ogg');
+  fs.linkSync(input.original.filePath,alias);
+  assert.throws(()=>sourceFileFingerprint(alias,20*1024*1024),/AUDIO_SOURCE_INPUT_INVALID/);
+  fs.unlinkSync(alias);
+  const target=privateDirectory(path.join(directory,'target')),redirect=path.join(directory,'redirect');
+  fs.symlinkSync(target,redirect,process.platform==='win32'?'junction':'dir');
+  fs.writeFileSync(path.join(target,'voice.ogg'),'private',{mode:0o600});
+  assert.throws(()=>sourceFileFingerprint(path.join(redirect,'voice.ogg'),100),/AUDIO_SOURCE_INPUT_INVALID/);
+  fs.unlinkSync(redirect);
+});
 
 test('doctor/plan cannot download or create a cache; stale approval fails closed', async () => {
   const parent = temporary(), root = path.join(parent, 'new-cache');
@@ -298,6 +387,33 @@ test('real official GigaAM processes >25 seconds through async production CLI an
   assert.match(fs.readFileSync(path.join(directory, 'transcript.txt'), 'utf8'), /[А-Яа-яЁё]{3}/u);
   assert.match(fs.readFileSync(path.join(directory, 'transcript.srt'), 'utf8'), / --> /u);
   fs.rmSync(root, {recursive: true});
+});
+
+test('native source-original protocol decodes actual audio once with the prepared official model',
+  {skip:!fixture&&!process.env.CI,timeout:180000},async t=>{
+  assert.ok(fixture,'CI must prepare the real hash-pinned RNNT environment');
+  const parent=temporary();t.after(()=>fs.rmSync(parent,{recursive:true,force:true}));
+  const original=path.join(parent,'voice.ogg');
+  // Public hash-pinned spoken fixture; ffmpeg detects its real format from
+  // bytes, just as it does with the private original-file receipt in the host.
+  await downloadArtifact(JSON.parse(fs.readFileSync(path.join(providerRoot,'development/fixture.json'))),original);
+  if(process.platform!=='win32')fs.chmodSync(original,0o600);
+  const input={schemaVersion:1,requestId:'11111111-2222-4333-8444-555555555555',
+    original:{filePath:original,...sourceFileFingerprint(original,20*1024*1024)},outputDirectory:path.join(parent,'job')};
+  let starts=0;
+  const execute=async(args,options)=>{if(args[0]==='start')starts++;return run(args,options);};
+  let result=await processSourceOriginal(input,{root:fixture.root,run:execute});
+  const deadline=Date.now()+160000;
+  while(['queued','validating','loading','transcribing'].includes(result.state)&&Date.now()<deadline){
+    await sleep(200);result=await processSourceOriginal(input,{root:fixture.root,run:execute});
+  }
+  assert.equal(result.state,'completed',JSON.stringify(result));assert.equal(starts,1);
+  assert.equal(result.contentRead,false,'only the host independently verifies and exposes transcript bytes');
+  assert.deepEqual(result.text,sourceFileFingerprint(path.join(input.outputDirectory,'transcript.txt'),24*1024*1024));
+  assert.match(fs.readFileSync(path.join(input.outputDirectory,'transcript.txt'),'utf8'),/[А-Яа-яЁё]{3}/u);
+  assert.doesNotMatch(JSON.stringify(result),/voice\.ogg|filePath|transcript\.txt/);
+  const repeated=await processSourceOriginal(input,{root:fixture.root,run:execute});
+  assert.deepEqual(repeated,result);assert.equal(starts,1,'repeated intake context only observes this SAME decoder');
 });
 
 test('Windows cold private storage succeeds under a Restricted parent without inherited preference', {skip: process.platform !== 'win32'}, () => {

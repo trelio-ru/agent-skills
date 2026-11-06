@@ -4639,10 +4639,114 @@ def validate_reference_read(args: argparse.Namespace) -> None:
         raise TelegramRuntimeError("An exact native message reference and revision are required.", code="TELEGRAM_REFERENCE_INPUT_INVALID")
 
 
+def original_media_directory(directory: str):
+    """Fresh native path check before each file boundary, without repair."""
+    selected = Path(directory)
+    for part in (selected, *selected.parents):
+        info = part.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or getattr(info, "st_file_attributes", 0) & 0x400):
+            raise ValueError()
+    info = selected.lstat()
+    if os.name == "posix" and (info.st_uid != os.getuid() or info.st_mode & 0o777 != 0o700):
+        raise ValueError()
+    return info
+
+
+def read_original_media_input() -> dict[str, Any] | None:
+    """Optional HOST-private exact-read input; ordinary CLI keeps its old ABI.
+
+    No CLI filename/URL or broader native selector is introduced. The signed
+    host has already created this owner-private scratch directory and admits
+    the SAME original/reference/account, independently of this local marker.
+    """
+    marker = os.environ.get("TRELIO_ASSISTANT_SOURCE_MEDIA")
+    if marker is None:
+        return None
+    try:
+        raw = sys.stdin.buffer.read(8193)
+        value = json.loads(raw.decode("utf-8", errors="strict")) if len(raw) <= 8192 else None
+        if (marker != "1" or not isinstance(value, dict)
+                or set(value) != {"schemaVersion", "requestId", "directory", "maxBytes"}
+                or type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1
+                or not isinstance(value["requestId"], str)
+                or re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value["requestId"]) is None
+                or type(value["maxBytes"]) is not int or value["maxBytes"] != 20 * 1024 * 1024
+                or not isinstance(value["directory"], str) or "\x00" in value["directory"]
+                or len(value["directory"].encode("utf-8")) > 4096):
+            raise ValueError()
+        selected = Path(value["directory"])
+        if not selected.is_absolute():
+            raise ValueError()
+        original_media_directory(value["directory"])
+        return value
+    except (ValueError, UnicodeError, OSError, AttributeError) as error:
+        raise TelegramRuntimeError("A bounded host-private original-media input is required.",
+                                   code="TELEGRAM_REFERENCE_INPUT_INVALID") from error
+
+
+async def read_original_audio(client, message, selected: dict[str, Any]) -> dict[str, Any]:
+    """Stream one original audio, without transcription/quota/ACK side effects.
+
+    Downloaded bytes are NOT understood content. Only a bounded structural
+    receipt crosses stdout; the host verifies all file bytes before delivery.
+    It owns retention/cleanup and never accepts a provider-returned pathname.
+    """
+    receipt = {"schemaVersion": 1, "requestId": selected["requestId"]}
+    native = getattr(message, "document", None)
+    audio = [a for a in getattr(native, "attributes", []) if type(a).__name__ == "DocumentAttributeAudio"]
+    if native is None or len(audio) != 1:
+        return {**receipt, "state": "not_audio"}
+    size = getattr(native, "size", None)
+    if type(size) is not int or size < 1:
+        return {**receipt, "state": "unavailable"}
+    if size > selected["maxBytes"]:
+        return {**receipt, "state": "too_large"}
+    destination = Path(selected["directory"]) / "original.bin"
+    stream, created, complete = None, False, False
+    try:
+        before = original_media_directory(selected["directory"])
+        # Exclusive fixed basename, no native filename or user-selected path.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        fd = os.open(destination, flags, 0o600)
+        created = True
+        with os.fdopen(fd, "wb") as output:
+            count, digest = 0, hashlib.sha256()
+            stream = client.iter_download(native, request_size=65_536)
+            async for chunk in stream:
+                if not isinstance(chunk, (bytes, memoryview)) or len(chunk) > 65_536:
+                    raise ValueError()
+                count += len(chunk)
+                if count > size:
+                    raise ValueError()
+                digest.update(chunk)
+                output.write(chunk)
+            if count != size:
+                raise ValueError()
+            output.flush()
+            os.fsync(output.fileno())
+        ensure_private_file(destination)
+        after = original_media_directory(selected["directory"])
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise ValueError()
+        complete = True
+        return {**receipt, "state": "saved", "sizeBytes": count, "sha256": digest.hexdigest()}
+    except Exception:
+        # Preserve the original/caption and truthful unavailable coverage.
+        # Never return exception text, a path, bytes, or a guessed transcript.
+        return {**receipt, "state": "unavailable"}
+    finally:
+        if stream is not None:
+            await stream.close()
+        if created and not complete:
+            destination.unlink(missing_ok=True)
+
+
 async def command_message_read_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
     exact_reference = getattr(args, "command", None) == "read-reference"
     if exact_reference:
         validate_reference_read(args)
+    original_input = read_original_media_input() if exact_reference else None
     reference = message_reference(args)
     client = build_client(args, identity)
     failure = None
@@ -4667,9 +4771,19 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
             normalized["link"] = message_link(entity, message.id)
             if normalized["textTruncated"]:
                 raise TelegramRuntimeError("The exact Telegram text exceeds its read bound; no complete read was delivered.", code="TELEGRAM_REFERENCE_INCOMPLETE")
+            original_audio = None
+            if original_input is not None:
+                original_audio = await read_original_audio(client, message, original_input)
+                # The download may outlive an edit/delete. Re-resolve this SAME
+                # native peer/ID and semantic revision before releasing either
+                # caption or receipt. Do not silently adopt a new original.
+                _entity, current = await resolve_message_target(client, reference)
+                if monitor_message(current, utils, kind="new", channel_peer=int(args.chat))["revision"] != args.expected_revision:
+                    raise TelegramRuntimeError("The original Telegram message changed during media read.", code="TELEGRAM_REFERENCE_CHANGED")
             return {"schemaVersion": 1, "protocol": "telegram-message-read/v1",
                     "reference": {key: value for key, value in observed.items() if key != "kind"},
                     "message": normalized,
+                    **({"originalAudio": original_audio} if original_input is not None else {}),
                     "coverage": {"textComplete": True, "attachmentsContentRead": False, "contextIncluded": False},
                     "readState": {"mode": "history-only", "marksRead": False, "readReceiptsSent": False, "viewsRegistered": False}}
         normalized = (await public_messages([message], entity))[0]

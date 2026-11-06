@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.16.3`
-объявляет runtime `2.16.3`, требует Telethon `>=1.45,<2` и host >=3.25.0.
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.17.0`
+объявляет runtime `2.17.0`, требует Telethon `>=1.45,<2` и host >=3.25.0.
 Connection definition, package credential и namespace личной сессии сохраняются.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
 входа. Чтение не отправляет Telegram read receipts; исходящие действия
@@ -911,6 +911,29 @@ adapter цифрового ассистента, а не готовое подк
 регистрация просмотра, отправки и ACK не выполняются. Media возвращается как
 metadata, `attachmentsContentRead=false`; доступ к text не доказывает чтения файла.
 Текст больше обычного exact-read bound получает `TELEGRAM_REFERENCE_INCOMPLETE`.
+
+Signed `trelio-source-media.json` separately opts the SAME exact read into
+`source-original-audio/v1`, at most 20MiB. It does not add a task command or
+change the native reference grammar. A capable host alone sets the process-only
+`TRELIO_ASSISTANT_SOURCE_MEDIA=1` marker and supplies <=8192-byte private stdin:
+`schemaVersion:1`, unique `requestId`, its already-created private `directory`
+and fixed `maxBytes:20971520`. Unknown fields, unsafe/missing roots and changed
+scope refuse; a model never selects a destination/native ID/URL. Ordinary CLI
+and older hosts retain metadata-only behavior, with no stdin read/download.
+
+Only a native audio Document is streamed, in <=65536-byte chunks, to exclusive
+`original.bin` in that host-owned directory. The declared size, complete EOF,
+SHA-256 and exact original revision after the stream are independently checked.
+Stdout carries only `originalAudio` schema1/requestId and state
+`not_audio|too_large|unavailable|saved`; saved additionally carries sizeBytes
+and sha256. It never carries paths, audio bytes, a transcript or SDK diagnostics.
+The host independently validates the file and supplies its private local
+receipt/retention through the common attachment engine. A captionless voice
+must retain media metadata and never become an empty-message absence claim.
+`attachmentsContentRead=false` remains truthful: downloaded bytes do not prove
+transcription or understanding. No TranscribeAudioRequest/quota, send, view,
+read receipt or ACK occurs. ASR retains its separate signed-skill readiness and
+exact first-install consent; source access never grants installation.
 
 `TELEGRAM_REFERENCE_CHANGED` требует обработки нового события/решения host-а,
 а не замены записанного digest или silent reset. Ошибка источника/cleanup –

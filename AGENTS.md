@@ -39,6 +39,9 @@ New account hints use `--initial-account-cursor` instead: authenticate the old
 account checkpoint date and include messages already read on another device.
 Never use it to reset an existing cursor or claim historical edit recovery.
 `read-reference` сверяет exact native ID/revision без context/ACK и требует полный текст;
+Signed original-audio opt-in retains that SAME exact read and private stdin;
+bounded original bytes use the host-owned scratch/receipt, never model paths,
+automatic transcription/quota or ACK. See the exact-read media contract.
 `ack-reference` uses native range coverage, one non-retried write and read-back;
 only native host-attested exact incoming refs may cover unread history; own
 outgoing rows retain peer/order/end checks but need no incoming coverage. Verify-only reconciles an
@@ -250,6 +253,7 @@ Node launcher и Python worker до inference, без изменения сох�
 segment. Resume не теряет cancellation нового run и не меняет исходник.
 Обязательны нативные first-install/inference gates на всех заявленных OS;
 синтетический decoder не заменяет проверку настоящей официальной модели.
+Host-only source-original uses the SAME ready decoder/private binding and one durable start; uncertainty is status-only. No implicit setup, Telegram quota or new task. Native source inference/reparse/file-integrity gates are mandatory.
 Windows first-install проверяется без ambient `PROCESSOR_*`, как после signed
 host: provider сам задаёт архитектуру поддерживаемого managed Python.
 

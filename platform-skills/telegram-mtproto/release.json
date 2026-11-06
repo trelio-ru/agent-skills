@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.16.3",
-    "summary": "Завершение Windows-цепочки Telegram вместе с host и освобождение локальной сессии после аварии",
+    "version": "2.17.0",
+    "summary": "Защищённое чтение исходного аудио из точного входящего сообщения ассистента",
     "routingSummary": "Read, search, send, and manage Telegram messages, files, and chats."
   },
   "connection": {
@@ -19,7 +19,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.16.3",
+    "version": "2.17.0",
     "minimumHostVersion": "3.25.0",
     "entrypoint": {
       "path": "trelio-telegram.py",
@@ -31,6 +31,11 @@
       "local-accounts-v1"
     ],
     "files": [
+      {
+        "source": "scripts/trelio-source-media.json",
+        "path": "trelio-source-media.json",
+        "mode": 420
+      },
       {
         "source": "scripts/trelio-secret-setup.json",
         "path": "trelio-secret-setup.json",

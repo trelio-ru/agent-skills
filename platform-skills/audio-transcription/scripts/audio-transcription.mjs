@@ -7,7 +7,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 import {artifacts, childEnvironment, installationPlan, performSetup, providerRoot, pythonPath, ready, startSetup} from './bootstrap.mjs';
 import {atomicJson, privateDirectory, readJson, stateDirectory} from './storage.mjs';
 
-export const RUNTIME_VERSION = '1.1.1';
+export const RUNTIME_VERSION = '1.2.0';
 const busy = new Set(['queued', 'validating', 'loading', 'transcribing']);
 const supported = new Set(['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.aif', '.aiff', '.mp4', '.mov', '.mkv', '.webm']);
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
@@ -130,6 +130,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     if (process.argv[2] === '__setup' && process.env.TRELIO_AUDIO_SETUP_ROOT) {
       await performSetup(process.argv[3], process.env.TRELIO_AUDIO_SETUP_ROOT);
+    } else if(process.argv[2]==='source-original'||process.env.TRELIO_ASSISTANT_SOURCE_AUDIO!==undefined){
+      // A dedicated native source profile, not an ordinary CLI/setup alias.
+      // All paths/original bytes stay in the SAME bounded private pipe/job.
+      if(process.env.TRELIO_ASSISTANT_SOURCE_AUDIO!=='1'||process.argv.length!==3||process.argv[2]!=='source-original')
+        throw Error('AUDIO_SOURCE_INPUT_INVALID');
+      const {readSourceOriginalInput,processSourceOriginal}=await import('./source-original.mjs');
+      emit(await processSourceOriginal(await readSourceOriginalInput(process.stdin),{root:stateDirectory(),run}));
     } else emit(await run(process.argv.slice(2)));
   } catch (error) {
     emit({ok: false, errorCode: /^AUDIO_[A-Z_]+$/u.test(error.message) ? error.message : 'AUDIO_OPERATION_FAILED'});

@@ -93,6 +93,35 @@ worker отдельно отклоняют несовпадение `job.model` 
 Изменившийся model artifact меняет download plan: прежнее согласие на E2E-веса
 не разрешает незаметно скачать RNNT. Уже загруженные файлы не удаляются.
 
+## Защищённый оригинал входящего голосового
+
+`source-original` доступен только fixed host profile с process-only
+`TRELIO_ASSISTANT_SOURCE_AUDIO=1`, без дополнительного argv. Обычный CLI не
+получает такой команды. Единственный <=8KiB private stdin содержит nonce,
+путь/размер/SHA-256 оригинала и fixed job directory в уже закрытой папке host.
+Нативные owner/source/intake/recipient права проверяет host/backend, а provider
+повторно проверяет целые локальные bytes, EOF, identity, права и отсутствие
+symlink/junction/hardlink. Windows использует read-only native attributes/ACL
+helper, а не несуществующее поле FileAttributes в Node Stats.
+
+Offline doctor не устанавливает зависимости/модель. Если среда не готова,
+`setup_required` сохраняет требование настоящего download-plan consent. Если
+готова, exclusive fsynced `.source-attempt.json` предшествует одному ordinary
+`start`. Повторное чтение делает только `status` той же job. До start эти же проверенные bytes один раз фиксируются
+в закрытой папке job: часовой таймер исходной local-file receipt не удалит input
+работающего decoder. Эта копия живёт вместе с той же job, не в новом хранилище.
+Потерянный start без job остаётся `unknown`, никогда не resume/restart. Исходный source SHA/size,
+модель и полные выходные файлы проверяются заново. Changed package/model/source
+не разрешает второй decoder либо смешивание текста.
+
+Receipt не содержит audio/transcript/path: только closed state и размер/hash
+завершённого TXT с точной моделью. Даже completed receipt оставляет
+`contentRead:false` — host самостоятельно читает и проверяет весь UTF-8 перед
+передачей текста модели. ASR остаётся машинной расшифровкой. Нет Telegram quota,
+облака, нового аккаунта, Task/Run/ACK или права публикации. Native CI отдельно
+прогоняет этот source protocol с настоящей официальной моделью на каждой OS;
+синтетические start/status tests не заменяют inference.
+
 ## Результат и ограничения
 
 `status` возвращает только readiness/progress/coverage и пути результатов;

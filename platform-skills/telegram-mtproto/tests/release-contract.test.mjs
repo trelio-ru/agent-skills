@@ -29,7 +29,7 @@ const [
 ]);
 const releaseManifest = JSON.parse(releaseSource);
 
-test("Telegram MTProto release preserves privacy, search, scheduled-message, edit and Markdown contracts", () => {
+test("Telegram MTProto release preserves privacy, search, scheduled-message, edit and Markdown contracts", async () => {
   assert.match(skillInstructions, /members --chat ID_OR_USERNAME/u);
   for (const source of [skillInstructions, connectionDocs]) {
     for (const command of ["channel-stats", "send-album", "forward", "commentsCount", "groupedId", "TELEGRAM_BULK_DELIVERY_UNKNOWN", "topic-send", "poll-create", "poll-vote", "join-request", "message-stats", "TELEGRAM_ACTION_OUTCOME_UNKNOWN", "draft-save", "draft-clear", "invite-edit", "invite-revoke", "topic-create", "topic-rename", "topic-close", "topic-reopen", "edit-media", "group-create", "member-add", "--silent", "--no-link-preview", "chat-info", "send-as", "delete --chat", "--scope", "from_id"]) {
@@ -104,13 +104,17 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /`views`/u);
     assert.match(source, /views=null|`null`/u);
   }
-  assert.equal(releaseManifest.release.version, "2.16.3");
+  assert.equal(releaseManifest.release.version, "2.17.0");
   // Publication binds this reviewed source summary to the immutable release;
   // the catalog title/description must not become an inferred routing fallback.
   assert.match(releaseManifest.release.routingSummary, /^[\x20-\x7e]{12,180}$/u);
   assert.match(releaseManifest.release.routingSummary, /Telegram messages, files, and chats/u);
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.16.3");
+  assert.equal(releaseManifest.runtime.version, "2.17.0");
+  assert.deepEqual(releaseManifest.runtime.files.filter(file=>file.path==='trelio-source-media.json'),
+    [{source:'scripts/trelio-source-media.json',path:'trelio-source-media.json',mode:420}]);
+  assert.deepEqual(JSON.parse(await readFile(new URL('scripts/trelio-source-media.json',skillRoot),'utf8')),
+    {schemaVersion:1,protocol:'source-original-audio/v1',maximumBytes:20*1024*1024});
   assert.ok(releaseManifest.runtime.files.some(file => file.path === "conversation_tools.py"));
   for (const source of [skillInstructions, connectionDocs]) {
     for (const feature of ["--quote-text", "--quote-offset", "send-series", "chat-settings", "archive --chat", "unmute", "muteInherited", "TELEGRAM_SERIES_DELIVERY_UNKNOWN", "confirmedParts", "uncertainPart", "notAttemptedParts"]) {
