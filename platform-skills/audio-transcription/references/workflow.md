@@ -128,6 +128,8 @@ worker отдельно отклоняют несовпадение `job.model` 
 повторно проверяет целые локальные bytes, EOF, identity, права и отсутствие
 symlink/junction/hardlink. Windows использует read-only native attributes/ACL
 helper, а не несуществующее поле FileAttributes в Node Stats.
+Его отказ сохраняет только закрытую стадию IDENTITY/PATH/KIND/ACL/OWNER/AUDIENCE;
+пути, SID, ACL и native exception не выдаются. Стадия не разрешает repair/replay.
 
 Offline doctor не устанавливает зависимости/модель. Если среда не готова,
 `setup_required` сохраняет требование настоящего download-plan consent. Если

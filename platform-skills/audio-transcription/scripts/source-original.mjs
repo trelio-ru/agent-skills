@@ -36,7 +36,13 @@ function checkPath(file,{directory=false}={}){
     const helper=fileURLToPath(new URL('source-path.ps1',import.meta.url));
     const checked=spawnSync(executable,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',helper,
       '-LiteralPath',file,'-Kind',directory?'directory':'file'],{shell:false,windowsHide:true,encoding:'utf8',timeout:30000});
-    if(checked.status!==0||checked.stdout?.trim()!=='{"privateSource":true}')fail();
+    if(checked.status!==0||checked.stdout?.trim()!=='{"privateSource":true}'){
+      // Preserve only this helper's closed native verification stage for
+      // diagnostics. The ordinary CLI error message/refusal stays unchanged;
+      // raw stderr, filesystem paths and ownership values remain private.
+      const stage=/^AUDIO_SOURCE_INPUT_INVALID_(IDENTITY|PATH|KIND|ACL|OWNER|AUDIENCE)$/u.exec(checked.stderr?.trim()??'')?.[1];
+      throw Object.assign(Error('AUDIO_SOURCE_INPUT_INVALID'),{code:stage?`AUDIO_SOURCE_INPUT_INVALID_${stage}`:'AUDIO_SOURCE_INPUT_INVALID'});
+    }
   }
   return stat;
 }
