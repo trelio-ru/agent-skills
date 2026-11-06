@@ -1,0 +1,2 @@
+# Keep the upstream RIFF/PCM identity intact even with inherited text/eol rules.
+public-example.wav binary
