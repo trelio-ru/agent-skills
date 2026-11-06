@@ -263,6 +263,7 @@ Native ASR gates use the SAME full hash-pinned upstream public speech from the
 development-only fixture, never package it or replace actual model inference.
 Its scoped binary Git attribute preserves exact bytes against inherited EOL conversion.
 Windows source refusal exposes only a closed verification stage, never path/SID/ACL or repair authority.
+File default-owner admission derives from the current OS token and requires a protected user-owned private parent; foreign ACL/owner and directories remain strict. No blanket admin exception or repair.
 
 Канонический main остаётся чистым. Новая работа выполняется в отдельном
 физическом worktree и ветке codex/* от свежего origin/main. Перед правкой:

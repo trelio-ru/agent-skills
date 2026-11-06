@@ -128,6 +128,13 @@ worker отдельно отклоняют несовпадение `job.model` 
 повторно проверяет целые локальные bytes, EOF, identity, права и отсутствие
 symlink/junction/hardlink. Windows использует read-only native attributes/ACL
 helper, а не несуществующее поле FileAttributes в Node Stats.
+Windows file ownership uses the actual caller's OS token: a new file may have
+its default-owner SID rather than TokenUser. That alternate owner is accepted
+only for a file inside a protected directory owned by TokenUser, with the SAME
+user/SYSTEM-only allowed audience on both parent and leaf. No blanket group or
+administrator exception, foreign owner, ACL repair or ownership change exists;
+directory ownership remains TokenUser-only. Native CI exercises genuine token-
+created files, full ASR and rejection after adding an unrelated allowed reader.
 Его отказ сохраняет только закрытую стадию IDENTITY/PATH/KIND/ACL/OWNER/AUDIENCE;
 пути, SID, ACL и native exception не выдаются. Стадия не разрешает repair/replay.
 

@@ -129,6 +129,27 @@ test('source private input and file guards reject poison, links, false hashes an
   fs.unlinkSync(redirect);
 });
 
+test('Windows source ownership follows this token only inside a private user parent; foreign ACL still refuses',
+  {skip:process.platform!=='win32'},t=>{
+  const {input}=sourceOriginalFixture(t);
+  const executable=path.join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
+  const helper=path.join(providerRoot,'tests/source-path-fixture.ps1');
+  const invoke=operation=>{
+    const result=spawnSync(executable,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',helper,
+      '-LiteralPath',input.original.filePath,'-Operation',operation],{shell:false,windowsHide:true,encoding:'utf8',timeout:30000,maxBuffer:4096});
+    assert.equal(result.status,0,'owned native source fixture must complete');
+    return JSON.parse(result.stdout);
+  };
+  const observed=invoke('inspect');
+  assert.ok(observed.ownerMatchesUser||observed.ownerMatchesDefault);
+  assert.equal(observed.parentOwnedByUser,true);assert.equal(observed.parentProtected,true);
+  assert.deepEqual(sourceFileFingerprint(input.original.filePath,20*1024*1024),
+    {sizeBytes:input.original.sizeBytes,sha256:input.original.sha256});
+  assert.deepEqual(invoke('add-foreign-allow'),{fixtureChanged:true});
+  assert.throws(()=>sourceFileFingerprint(input.original.filePath,20*1024*1024),
+    error=>error.code==='AUDIO_SOURCE_INPUT_INVALID_AUDIENCE');
+});
+
 test('doctor/plan cannot download or create a cache; stale approval fails closed', async () => {
   const parent = temporary(), root = path.join(parent, 'new-cache');
   const doctor = await run(['doctor'], {root});

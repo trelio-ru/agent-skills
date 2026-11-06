@@ -8,7 +8,9 @@ try {
   # Read-only verification: do not create, follow a reparse point, repair ACLs
   # or take ownership of the original. Native attributes cover junctions that
   # are not represented by Node's symbolic-link bit.
-  $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+  $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+  $sid = $identity.User
+  $defaultOwner = $identity.Owner
   $stage = 'PATH'
   $full = [System.IO.Path]::GetFullPath($LiteralPath)
   $cursor = $full
@@ -31,7 +33,27 @@ try {
     $acl = [System.IO.FileInfo]::new($full).GetAccessControl()
   }
   $stage = 'OWNER'
-  if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'owner' }
+  $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+  if ($owner -ne $sid.Value) {
+    # Windows creates files with the token's default owner, which need not be
+    # TokenUser for an elevated caller. This is NOT an Administrators exception:
+    # only the fresh OS-selected owner of THIS caller may qualify, only for a
+    # file inside a protected same-user private directory. Other owners and
+    # directory ownership remain strict, and no ownership/ACL is ever repaired.
+    # https://learn.microsoft.com/windows/win32/secauthz/owner-of-a-new-object
+    if ($Kind -ne 'file' -or $null -eq $defaultOwner -or $owner -ne $defaultOwner.Value) { throw 'owner' }
+    $parent = [System.IO.Directory]::GetParent($full)
+    if ($null -eq $parent) { throw 'parent' }
+    $parentAcl = $parent.GetAccessControl()
+    if ($parentAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'parent-owner' }
+    $stage = 'ACL'
+    if (-not $parentAcl.AreAccessRulesProtected) { throw 'parent-acl' }
+    $stage = 'AUDIENCE'
+    foreach ($rule in $parentAcl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])) {
+      if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+          $rule.IdentityReference.Value -notin @($sid.Value,'S-1-5-18')) { throw 'parent-audience' }
+    }
+  }
   $stage = 'AUDIENCE'
   foreach ($rule in $acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])) {
     if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
