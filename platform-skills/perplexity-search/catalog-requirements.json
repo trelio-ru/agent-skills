@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "companySetup": false,
+  "personalAccount": "optional",
+  "authorization": "browser",
+  "connectionLabel": "Браузер; вход в Perplexity по требованию сайта"
+}

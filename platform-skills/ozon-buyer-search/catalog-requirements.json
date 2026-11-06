@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "companySetup": false,
+  "personalAccount": "optional",
+  "authorization": "browser",
+  "connectionLabel": "Браузер; для личных данных нужен аккаунт Ozon"
+}

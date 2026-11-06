@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "companySetup": true,
+  "personalAccount": "required",
+  "authorization": null,
+  "connectionLabel": "Настройка компании и личный доступ к 1С"
+}

@@ -158,3 +158,36 @@ Browser/backend/host/private tools получают generated exact copy; отд
 повторяется в model instructions; technical description/body остаются прежними.
 Изменения переносятся вместе с новой публикацией и проверяются read-back;
 редактирование source не переписывает текущую карточку или immutable tags.
+
+
+Публичные требования подключения принадлежат каждому навыку в отдельном
+`platform-skills/<id>/catalog-requirements.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "companySetup": false,
+  "personalAccount": "required",
+  "authorization": "browser",
+  "connectionLabel": "Личный аккаунт сервиса"
+}
+```
+
+Ровно пять полей: `companySetup` — boolean, `personalAccount` — `required`,
+`optional`, `not_required`; `authorization` — `browser`, `token`, `null`;
+`connectionLabel` — непустой однострочный текст до 240 символов. Это сведения
+для человека, не настройки/credentials/состояние аккаунта и не runtime authority.
+Не добавляй company content, пути, endpoint или новые поля без изменения контракта.
+Проверяй условия по полному workflow и входу навыка; local session сама по себе
+не доказывает обязательность аккаунта. Общий validator —
+`platform-skills/tools/catalog-requirements.mjs`; Trelio получает generated copy.
+
+JSON не включается в SKILL.md, model instructions или executable package.
+Publisher читает его из того же exact source commit и связывает с reviewed
+catalog metadata plan. Старый tag без файла сохраняет live requirements;
+невалидный файл блокирует публикацию. Для metadata-only правки после merge
+используется `ops/scripts/sync_agent_skill_catalog_requirements.mjs` репозитория
+Trelio: clean merged public source → source SHA/live catalog CAS plan → exact
+hash apply → read-back. Текущие live title/description сохраняются. Version/tag
+навыка, runtime и продуктовый релиз для такой правки не создаются; одна правка
+source сама по себе ещё не изменяет live каталог.

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "companySetup": false,
+  "personalAccount": "required",
+  "authorization": null,
+  "connectionLabel": "Личный аккаунт с доступом к VK Рекламе"
+}
