@@ -35,7 +35,10 @@
       "name": "v3_rnnt.ckpt",
       "url": "https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v3_rnnt.ckpt",
       "sha256": "6b902433bfdc707c0995f3cb94f033bddc16bd5d0a1cf3bf0ff10d6b5e36ed12",
-      "bytes": 446390032
+      "bytes": 446390032,
+      "fallbackUrls": [
+        "https://trelio.ru/media/model-artifacts/gigaam/6b902433bfdc707c0995f3cb94f033bddc16bd5d0a1cf3bf0ff10d6b5e36ed12/v3_rnnt.ckpt"
+      ]
     }
   ]
 }

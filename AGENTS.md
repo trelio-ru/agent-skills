@@ -256,6 +256,9 @@ segment. Resume не теряет cancellation нового run и не меня
 Host-only source-original uses the SAME ready decoder/private binding and one durable start; uncertainty is status-only. No implicit setup, Telegram quota or new task. Native source inference/reparse/file-integrity gates are mandatory.
 Windows first-install проверяется без ambient `PROCESSOR_*`, как после signed
 host: provider сам задаёт архитектуру поддерживаемого managed Python.
+Model download uses the fixed digest-addressed Trelio mirror only after upstream
+unavailability, with ONE deadline and unchanged full size/SHA checks. Integrity,
+origin, range, ACL and authorization errors never fail over; see ASR workflow.
 
 Канонический main остаётся чистым. Новая работа выполняется в отдельном
 физическом worktree и ветке codex/* от свежего origin/main. Перед правкой:

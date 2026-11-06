@@ -199,6 +199,86 @@ test('transient transport/server errors receive three safe attempts, without int
   fs.rmSync(root, {recursive: true});
 });
 
+const withMirror = value => ({...artifact(value), fallbackUrls: [
+  `https://trelio.ru/media/model-artifacts/gigaam/${digest(value)}/v3_rnnt.ckpt`,
+]});
+
+test('unavailable official TLS falls back to the byte-identical Trelio model; a valid cache needs no network', async t => {
+  const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true}));
+  const bytes=Buffer.from('synthetic pinned checkpoint'),selected=withMirror(bytes),target=path.join(root,'model'),calls=[];
+  await downloadArtifact(selected,target,{retryDelays:[],fetcher:async url=>{
+    calls.push(String(url));
+    if(calls.length===1)throw new TypeError('synthetic expired certificate',{cause:{code:'CERT_HAS_EXPIRED'}});
+    return new Response(bytes);
+  }});
+  assert.deepEqual(calls,[selected.url,selected.fallbackUrls[0]]);
+  assert.deepEqual(fs.readFileSync(target),bytes);
+  await downloadArtifact(selected,target,{fetcher:()=>{throw Error('a verified cache must not contact either server');}});
+});
+
+test('mirror resume shares the original deadline across bounded retries and still verifies the full file',async t=>{
+  const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true}));
+  const bytes=Buffer.from('abcdef'),selected=withMirror(bytes),target=path.join(root,'model'),signals=[];let calls=0;
+  fs.writeFileSync(target+'.part','abc');
+  await downloadArtifact(selected,target,{retryDelays:[0,0],fetcher:async(url,options)=>{
+    calls++;signals.push(options.signal);assert.equal(options.headers.Range,'bytes=3-');
+    if(String(url)===selected.url)return new Response(null,{status:503});
+    return new Response('def',{status:206,headers:{'content-range':'bytes 3-5/6'}});
+  }});
+  assert.equal(calls,4);assert.ok(signals.every(signal=>signal===signals[0]));
+  assert.deepEqual(fs.readFileSync(target),bytes);
+});
+
+test('integrity, range, size, origin and authorization failures never switch to a mirror',async t=>{
+  const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true}));
+  for(const [kind,response,code] of [
+    ['digest',()=>new Response('xxxxxx'),/DIGEST_MISMATCH/u],
+    ['size',()=>new Response('abcdefg'),/TOO_LARGE/u],
+    ['range',()=>new Response('def',{status:206,headers:{'content-range':'bytes 0-2/6'}}),/RANGE_INVALID/u],
+    ['origin',()=>new Response(null,{status:302,headers:{location:'https://untrusted.invalid/model'}}),/ORIGIN_DENIED/u],
+    ['authorization',()=>new Response(null,{status:403}),/DOWNLOAD_FAILED/u],
+  ]){
+    const target=path.join(root,kind);let calls=0;
+    if(kind==='range')fs.writeFileSync(target+'.part','abc');
+    await assert.rejects(downloadArtifact(withMirror(Buffer.from('abcdef')),target,{retryDelays:[],fetcher:async()=>{calls++;return response();}}),code);
+    assert.equal(calls,1,kind);assert.equal(fs.existsSync(target),false);
+  }
+});
+
+test('only the signed digest-addressed HTTPS model mirror is admitted before any request',async t=>{
+  const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true}));
+  const selected=withMirror(Buffer.from('abc'));
+  for(const url of [selected.fallbackUrls[0].replace('https:','http:'),selected.fallbackUrls[0]+'?override=1',
+    selected.fallbackUrls[0].replace(selected.sha256,'0'.repeat(64)),
+    'https://trelio.ru/api/private','https://other.invalid/model']){
+    let calls=0;
+    await assert.rejects(downloadArtifact({...selected,fallbackUrls:[url]},path.join(root,'model'),{
+      fetcher:()=>{calls++;throw Error('invalid mirror must fail before network');}}),/AUDIO_DOWNLOAD_ORIGIN_DENIED/u);
+    assert.equal(calls,0);
+  }
+});
+
+test('adding only a model mirror preserves a completed exact installation, not permission for a new setup',async t=>{
+  const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true}));
+  const {planHash,...material}=installationPlan(root);
+  assert.ok(material.models[0].fallbackUrls?.length);
+  const oldMaterial={...material,models:material.models.map(({fallbackUrls,...model})=>model),
+    sources:material.sources.filter(source=>source!=='trelio.ru')};
+  const oldHash=digest(JSON.stringify(oldMaterial));assert.notEqual(oldHash,planHash);
+  // Readiness checks installed identity/file presence, not inference. This
+  // sparse synthetic file is never loaded; native CI separately verifies the
+  // entire genuine checkpoint before actual inference on every supported OS.
+  fs.mkdirSync(path.dirname(pythonPath(root)),{recursive:true});fs.writeFileSync(pythonPath(root),'');
+  fs.mkdirSync(path.join(root,'models'));
+  for(const model of material.models){const file=path.join(root,'models',model.name);fs.writeFileSync(file,'');fs.truncateSync(file,model.bytes);}
+  atomicJson(path.join(root,'installed.json'),{planHash:oldHash,model:material.model});
+  const before=fs.readFileSync(path.join(root,'installed.json'));assert.equal(ready(root),true);
+  assert.deepEqual(fs.readFileSync(path.join(root,'installed.json')),before,'compatibility never rewrites historical consent');
+  atomicJson(path.join(root,'download-consent.json'),{planHash:oldHash});
+  await assert.rejects(performSetup(oldHash,root),/AUDIO_DOWNLOAD_CONSENT_REQUIRED/u);
+  assert.equal(fs.existsSync(path.join(root,'setup.lock')),false);
+});
+
 test('a worker that dies before its first checkpoint is reported as interrupted', async () => {
   const root = privateDirectory(temporary());
   atomicJson(path.join(root, 'job.json'), {schemaVersion: 1, model: artifacts.model, state: 'queued', runId: 'fixture', segments: []});

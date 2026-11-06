@@ -6,6 +6,7 @@ import {Readable, Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {gunzipSync, inflateRawSync} from 'node:zlib';
 import {fileURLToPath} from 'node:url';
+import {setTimeout as delay} from 'node:timers/promises';
 import {atomicJson, privateDirectory, readJson, stateDirectory} from './storage.mjs';
 
 export const providerRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -31,7 +32,7 @@ export function installationPlan(root = stateDirectory()) {
     lockSha256: digest(lock), projectSha256: digest(project), uv,
     models: artifacts.models, maximumDependencyDownloadBytes: 1536 * 1024 * 1024,
     requiredFreeBytes: 4 * 1024 ** 3,
-    sources: ['github.com/astral-sh/uv', 'github.com/astral-sh/python-build-standalone', 'pypi.org', 'files.pythonhosted.org', 'download.pytorch.org', 'cdn.chatwm.opensmodel.sberdevices.ru'],
+    sources: ['github.com/astral-sh/uv', 'github.com/astral-sh/python-build-standalone', 'pypi.org', 'files.pythonhosted.org', 'download.pytorch.org', 'cdn.chatwm.opensmodel.sberdevices.ru', 'trelio.ru'],
     localAudioOnly: true};
   return {...material, planHash: digest(JSON.stringify(material))};
 }
@@ -62,29 +63,59 @@ export function childEnvironment(root) {
 export function ready(root) {
   const plan = installationPlan(root);
   const receipt = readJson(path.join(root, 'installed.json'));
-  return receipt?.planHash === plan.planHash && fs.existsSync(pythonPath(root)) && artifacts.models.every(model => {
+  // Adding a byte-identical transport must not invalidate an already completed
+  // installation or force an assistant to reinstall a ready local decoder.
+  // Reconstruct ONLY the exact previous plan with the new mirror removed:
+  // model/dependency hashes, platform, directory and original sources remain
+  // bound. This accepts no prior-model/foreign installation and writes no
+  // historical consent. A NEW setup still requires the complete current plan.
+  const {planHash, ...material} = plan;
+  const previousHash = digest(JSON.stringify({...material,
+    models: material.models.map(({fallbackUrls, ...model}) => model),
+    sources: material.sources.filter(source => source !== 'trelio.ru')}));
+  return receipt?.model === plan.model && [planHash, previousHash].includes(receipt?.planHash)
+    && fs.existsSync(pythonPath(root)) && artifacts.models.every(model => {
     const stat = fs.lstatSync(path.join(root, 'models', model.name), {throwIfNoEntry: false});
     return stat?.isFile() && !stat.isSymbolicLink() && stat.size === model.bytes;
   });
 }
 
 export async function downloadArtifact(artifact, target, {fetcher = fetch, retryDelays = [2000, 5000]} = {}) {
-  for (let attempt = 0; ; attempt++) {
-    try { return await downloadOnce(artifact, target, fetcher); }
-    catch (error) {
-      // A transient transport failure can safely resume a bounded partial file.
-      // Integrity, origin, range and local permission refusals are terminal.
-      const transient = ['TypeError', 'TimeoutError', 'AbortError', 'AudioTransportError'].includes(error.name);
-      if (!transient || attempt >= retryDelays.length) throw error;
-      await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
+  const mirrors = artifact.fallbackUrls ?? [];
+  // This is a fixed public checkpoint mirror, never a model/env URL override
+  // or general Trelio HTTP client. Validate the COMPLETE signed source list
+  // before the first request; query strings/credentials/ports are not admitted.
+  const mirrorUrl = `https://trelio.ru/media/model-artifacts/gigaam/${artifact.sha256}/v3_rnnt.ckpt`;
+  if (!Array.isArray(mirrors) || mirrors.length > 1 || !/^[a-f0-9]{64}$/u.test(artifact.sha256)
+    || mirrors.some(url => url !== mirrorUrl)) throw Error('AUDIO_DOWNLOAD_ORIGIN_DENIED');
+  // Every origin, redirect, retry, backoff and body uses ONE original deadline.
+  // Failover is a bounded read of the SAME size/hash, not another installation
+  // attempt, a TLS bypass or permission to try different model bytes.
+  const signal = AbortSignal.timeout(artifact.bytes > 50 * 1024 * 1024 ? 15 * 60 * 1000 : 120000);
+  for (const url of [artifact.url, ...mirrors]) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await downloadOnce({...artifact, url}, target, fetcher, signal, mirrorUrl); }
+      catch (error) {
+        const transient = ['TypeError', 'TimeoutError', 'AbortError', 'AudioTransportError'].includes(error.name);
+        if (signal.aborted || !transient && error.name !== 'AudioUnavailableError') throw error;
+        if (transient && attempt < retryDelays.length) {
+          await delay(retryDelays[attempt], undefined, {signal});
+          continue;
+        }
+        if (url === mirrors.at(-1) || mirrors.length === 0) throw error;
+        break;
+      }
     }
   }
 }
 
-async function downloadOnce(artifact, target, fetcher) {
+async function downloadOnce(artifact, target, fetcher, signal, mirrorUrl) {
   const existing = fs.lstatSync(target, {throwIfNoEntry: false});
   if (existing?.isSymbolicLink()) throw Error('AUDIO_DOWNLOAD_PATH_INVALID');
-  if (existing?.isFile() && existing.size === artifact.bytes && await fileDigest(target) === artifact.sha256) return;
+  if (existing?.isFile() && existing.size === artifact.bytes && await fileDigest(target) === artifact.sha256) {
+    signal.throwIfAborted();
+    return;
+  }
   const part = `${target}.part`;
   const partial = fs.lstatSync(part, {throwIfNoEntry: false});
   if (partial && (!partial.isFile() || partial.isSymbolicLink() || partial.size > artifact.bytes)) throw Error('AUDIO_DOWNLOAD_PATH_INVALID');
@@ -92,10 +123,12 @@ async function downloadOnce(artifact, target, fetcher) {
   let url = new URL(artifact.url);
   let response;
   for (let redirects = 0; redirects < 6; redirects++) {
-    if (url.protocol !== 'https:' || url.username || url.password ||
-        !['github.com', 'release-assets.githubusercontent.com', 'cdn.chatwm.opensmodel.sberdevices.ru'].includes(url.hostname)) throw Error('AUDIO_DOWNLOAD_ORIGIN_DENIED');
+    signal.throwIfAborted();
+    if (url.protocol !== 'https:' || url.username || url.password || url.port ||
+        (!['github.com', 'release-assets.githubusercontent.com', 'cdn.chatwm.opensmodel.sberdevices.ru'].includes(url.hostname)
+          && !(artifact.fallbackUrls?.includes(mirrorUrl) && url.href === mirrorUrl))) throw Error('AUDIO_DOWNLOAD_ORIGIN_DENIED');
     response = await fetcher(url, {redirect: 'manual', headers: offset ? {Range: `bytes=${offset}-`} : {},
-      signal: AbortSignal.timeout(artifact.bytes > 50 * 1024 * 1024 ? 15 * 60 * 1000 : 120000)});
+      signal});
     if (![301, 302, 303, 307, 308].includes(response.status)) break;
     await response.body?.cancel();
     url = new URL(response.headers.get('location'), url);
@@ -104,11 +137,15 @@ async function downloadOnce(artifact, target, fetcher) {
     await response?.body?.cancel();
     const error = Error('AUDIO_DOWNLOAD_FAILED');
     if (response?.status === 429 || response?.status >= 500) error.name = 'AudioTransportError';
+    else if ([404, 410].includes(response?.status)) error.name = 'AudioUnavailableError';
     throw error;
   }
   if (response.status === 206) {
     const range = /^bytes (\d+)-(\d+)\/(\d+)$/u.exec(response.headers.get('content-range') || '');
-    if (!range || Number(range[1]) !== offset || Number(range[3]) !== artifact.bytes) throw Error('AUDIO_DOWNLOAD_RANGE_INVALID');
+    if (!range || Number(range[1]) !== offset || Number(range[3]) !== artifact.bytes) {
+      await response.body?.cancel();
+      throw Error('AUDIO_DOWNLOAD_RANGE_INVALID');
+    }
   } else offset = 0;
   let received = offset;
   const limiter = new Transform({transform(chunk, encoding, callback) {
@@ -116,11 +153,12 @@ async function downloadOnce(artifact, target, fetcher) {
     callback(received > artifact.bytes ? Error('AUDIO_DOWNLOAD_TOO_LARGE') : null, chunk);
   }});
   await pipeline(Readable.fromWeb(response.body), limiter,
-    fs.createWriteStream(part, {flags: offset ? 'a' : 'w', mode: 0o600}));
+    fs.createWriteStream(part, {flags: offset ? 'a' : 'w', mode: 0o600}), {signal});
   if (received !== artifact.bytes || await fileDigest(part) !== artifact.sha256) {
     fs.rmSync(part, {force: true});
     throw Error('AUDIO_DOWNLOAD_DIGEST_MISMATCH');
   }
+  signal.throwIfAborted();
   fs.renameSync(part, target);
 }
 

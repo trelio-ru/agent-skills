@@ -35,10 +35,35 @@ uv скачивается как закреплённый binary с провер
 `PROCESSOR_ARCHITEW6432` не наследуется и не меняет выбранную среду.
 
 Источники установки: публичные GitHub releases Astral uv/Python standalone,
-PyPI, CPU wheels PyTorch и официальный CDN GigaAM. Все используют обычный TLS;
-ошибка сертификата не разрешает `--insecure`. Hash mismatch не разрешает
-исполнение. Повтор загрузки может продолжить проверяемый `.part`, но executable
-или модель используются только после проверки полного файла.
+PyPI, CPU wheels PyTorch, официальный CDN GigaAM и резервное зеркало Trelio.
+Зеркало раздаёт только тот же публичный checkpoint, без аудио пользователя.
+Порядок: проверенный локальный файл → официальный источник → закреплённое
+HTTPS-зеркало при недоступности сети/TLS, HTTP 404/410, 429 или 5xx. Transient
+ошибки сохраняют максимум три прежних попытки на источник; один исходный
+deadline охватывает все источники, redirects, ожидания и bytes. Ошибка TLS не
+разрешает `--insecure`. Digest/размер/range/origin/ACL и HTTP 401/403 завершают
+загрузку без переключения. `.part` можно продолжить только для тех же size/SHA;
+исполнение разрешено лишь после проверки полного файла и исходного deadline.
+
+URL резервной модели содержит её полный SHA-256 и входит в подписанный
+`artifacts.json` и новый download plan. Нет URL override из модели/env/CLI,
+выбора других весов или автоматической установки при source ASR. Завершённая
+установка прежнего точного плана с теми же моделью, dependencies, платформой и
+каталогом остаётся готовой: добавление зеркала не требует переустановки и не
+переписывает согласие. Новый setup всё равно требует полного текущего плана;
+согласие на другую модель не принимается.
+
+Публичное зеркало: `https://trelio.ru/media/model-artifacts/gigaam/` + SHA-256 +
+`/v3_rnnt.ckpt`. Рядом доступны `LICENSE` и `provenance.json`. Это public static
+media вне product releases и company storage, а не endpoint распознавания.
+Maintainer публикует только проверенную копию 446 390 032 bytes с SHA-256
+`6b902433bfdc707c0995f3cb94f033bddc16bd5d0a1cf3bf0ff10d6b5e36ed12` и MIT
+notice GigaChat Team. Private staging под `/opt/trelio-media/.model-staging/`
+проверяется целиком до атомарного create-only rename в
+`/opt/trelio-media/public/model-artifacts/gigaam/<sha256>/`; прежний каталог
+никогда не перезаписывается. После публикации обязательны обычный HTTPS,
+Range и полное публичное size/SHA read-back. Новый checkpoint получает иной
+путь и отдельную reviewed публикацию, а не замену bytes под старым URL.
 
 Кеш на устройстве:
 

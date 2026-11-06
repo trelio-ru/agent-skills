@@ -3,7 +3,7 @@
   "release": {
     "skillId": "audio-transcription",
     "version": "1.2.0",
-    "summary": "Защищённая обработка исходного голосового сообщения ассистента готовой локальной средой без автоматической установки.",
+    "summary": "Защищённая обработка исходного голосового сообщения готовой локальной средой; резервное зеркало той же модели с проверкой целых байтов и без повторной установки готовой среды.",
     "routingSummary": "Transcribe Russian audio and video locally into text and subtitles."
   },
   "connection": null,
