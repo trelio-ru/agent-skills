@@ -49,20 +49,27 @@ function checkPath(file,{directory=false}={}){
 
 /** A complete bounded handle read with EOF and pathname identity recheck.
  * The file remains private; only its digest/size enter the process receipt. */
-function readSourceBytes(file,maximum,{allowEmpty=false}={}){
+function readSourceBytes(file,maximum,{allowEmpty=false,progressSnapshot=false,afterStat}={}){
   const before=checkPath(file);
   if(!Number.isSafeInteger(before.size)||before.size<(allowEmpty?0:1)||before.size>maximum||before.nlink!==1)fail();
+  // The worker atomically replaces its progress JSON. Windows ACL checking
+  // deliberately takes a native round trip, so that pathname can legitimately
+  // point at a newer inode before open. Only this internal mutable snapshot
+  // may report "changed" without bytes; original/final evidence stays strict.
+  const changed=()=>{throw Object.assign(Error(progressSnapshot?'AUDIO_SOURCE_SNAPSHOT_CHANGED':'AUDIO_SOURCE_INPUT_INVALID'),
+    {code:progressSnapshot?'AUDIO_SOURCE_SNAPSHOT_CHANGED':'AUDIO_SOURCE_INPUT_INVALID'});};
+  afterStat?.(); // Deterministic native filesystem-race fixture; no CLI/env hook.
   const fd=fs.openSync(file,fs.constants.O_RDONLY|(fs.constants.O_NOFOLLOW??0));
   const bytes=Buffer.alloc(before.size);
   try{
     const opened=fs.fstatSync(fd);
-    if(opened.dev!==before.dev||opened.ino!==before.ino||opened.size!==before.size)fail();
+    if(opened.dev!==before.dev||opened.ino!==before.ino||opened.size!==before.size)changed();
     let position=0;
     while(position<bytes.length){const count=fs.readSync(fd,bytes,position,bytes.length-position,position);if(!count)fail();position+=count;}
     if(fs.readSync(fd,Buffer.alloc(1),0,1,position))fail();
     const after=fs.fstatSync(fd),current=checkPath(file);
     if([after,current].some(info=>info.dev!==before.dev||info.ino!==before.ino||info.size!==before.size
-      ||info.mtimeMs!==before.mtimeMs||info.ctimeMs!==before.ctimeMs))fail();
+      ||info.mtimeMs!==before.mtimeMs||info.ctimeMs!==before.ctimeMs))changed();
     return bytes;
   }catch(error){bytes.fill(0);throw error;}finally{fs.closeSync(fd);}
 }
@@ -73,10 +80,14 @@ export function sourceFileFingerprint(file,maximum,options={}){
   finally{bytes.fill(0);}
 }
 
-function sourceJson(file,maximum=32*1024*1024){
-  const bytes=readSourceBytes(file,maximum);
+function sourceJson(file,maximum=32*1024*1024,options={}){
+  const bytes=readSourceBytes(file,maximum,options);
   try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}
   catch{fail();}finally{bytes.fill(0);}
+}
+
+export function readSourceProgressJson(file,options={}){
+  return sourceJson(file,32*1024*1024,{...options,progressSnapshot:true});
 }
 
 export async function readSourceOriginalInput(stream){
@@ -143,7 +154,15 @@ export async function processSourceOriginal(input,{root,run}){
   }else{
     if(!fs.existsSync(path.join(input.outputDirectory,'job.json')))return {...answer,state:'unknown',code:'AUDIO_SOURCE_START_UNKNOWN'};
     checkPath(input.outputDirectory,{directory:true});
-    const job=sourceJson(path.join(input.outputDirectory,'job.json'));
+    let job;
+    try{job=readSourceProgressJson(path.join(input.outputDirectory,'job.json'));}
+    catch(error){
+      if(error.code!=='AUDIO_SOURCE_SNAPSHOT_CHANGED')throw error;
+      // No text/read success and no decoder restart: the next ordinary intake
+      // read observes the SAME claimed job. Ownership/link/hash failures do
+      // not enter this branch, nor do original or terminal transcript reads.
+      return {...answer,state:'queued'};
+    }
     if(!job||job.input!==jobSource||job.originalSize!==input.original.sizeBytes)fail();
     result=await run(['status','--job-dir',input.outputDirectory],{root});
   }

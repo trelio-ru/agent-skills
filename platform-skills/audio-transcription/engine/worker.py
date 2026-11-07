@@ -1,6 +1,6 @@
 """Bounded, resumable local ASR; no network transport and no transcript stdout.
 
-Node owns setup/consent. This worker only reads hash-pinned installed artifacts
+Node owns the fixed first-use setup. This worker only reads hash-pinned installed artifacts
 and writes the exact user-selected job directory. An OS lock prevents two
 workers from advancing the same durable transcript concurrently.
 """

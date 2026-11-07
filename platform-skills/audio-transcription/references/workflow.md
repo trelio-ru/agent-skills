@@ -160,6 +160,9 @@ Offline doctor не устанавливает зависимости/модел
 provider вызывает тот же `ensure` и возвращает существующее host state `queued`
 до готовности. Host продолжает читать тот же intake; нет owner setup question
 или нового ABI. Failed/unknown подготовка сохраняет свой отказ/неопределённость.
+Atomic замена worker progress `job.json` во время его проверки даёт только
+`queued` без bytes и нового start; следующий read наблюдает ту же job. ACL/link
+отказ, original и terminal transcript сохраняют строгую проверку identity.
 Только после ready exclusive fsynced `.source-attempt.json` предшествует одному ordinary
 `start`. Повторное чтение делает только `status` той же job. До start эти же проверенные bytes один раз фиксируются
 в закрытой папке job: часовой таймер исходной local-file receipt не удалит input

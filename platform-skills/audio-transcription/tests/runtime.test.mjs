@@ -11,7 +11,7 @@ import {artifacts, childEnvironment, digest, downloadArtifact, ensureSetup, inst
 import {argumentsObject, run, RUNTIME_VERSION} from '../scripts/audio-transcription.mjs';
 import {atomicJson, privateDirectory} from '../scripts/storage.mjs';
 import {buildRuntimePackage} from '../../tools/build-runtime-package.mjs';
-import {processSourceOriginal,readSourceOriginalInput,sourceFileFingerprint} from '../scripts/source-original.mjs';
+import {processSourceOriginal,readSourceOriginalInput,readSourceProgressJson,sourceFileFingerprint} from '../scripts/source-original.mjs';
 
 const fixtureFile = path.join(providerRoot, '.ci-state.json');
 const fixture = fs.existsSync(fixtureFile) ? JSON.parse(fs.readFileSync(fixtureFile)) : null;
@@ -111,6 +111,21 @@ test('an uncertain source start remains status-only and cannot launch another wo
   await assert.rejects(processSourceOriginal(input,{root:directory,run:execute}),/AUDIO_SYNTHETIC_LOST_START/);
   const observed=await processSourceOriginal(input,{root:directory,run:execute});
   assert.equal(observed.state,'unknown');assert.equal(starts,1);
+});
+
+test('atomic progress replacement is pending without bytes; original and terminal identity stay strict',t=>{
+  const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const file=path.join(root,'job.json');atomicJson(file,{state:'queued'});
+  // Real atomic rename between stat/ACL and open, not a mocked stat return.
+  // This reproduces the native Windows race even on fast Linux/macOS hosts.
+  const replace=()=>atomicJson(file,{state:'transcribing',processedSamples:16000});
+  assert.throws(()=>readSourceProgressJson(file,{afterStat:replace}),
+    error=>error.code==='AUDIO_SOURCE_SNAPSHOT_CHANGED');
+  assert.deepEqual(readSourceProgressJson(file),{state:'transcribing',processedSamples:16000});
+  assert.throws(()=>sourceFileFingerprint(file,1024,{afterStat:()=>atomicJson(file,{state:'completed'})}),
+    error=>error.code==='AUDIO_SOURCE_INPUT_INVALID');
+  const link=path.join(root,'linked.json');fs.linkSync(file,link);
+  assert.throws(()=>readSourceProgressJson(file),/AUDIO_SOURCE_INPUT_INVALID/);
 });
 
 test('source private input and file guards reject poison, links, false hashes and excessive bytes',async t=>{
