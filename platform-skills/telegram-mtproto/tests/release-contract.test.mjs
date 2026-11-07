@@ -104,13 +104,13 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /`views`/u);
     assert.match(source, /views=null|`null`/u);
   }
-  assert.equal(releaseManifest.release.version, "2.17.0");
+  assert.equal(releaseManifest.release.version, "2.16.4");
   // Publication binds this reviewed source summary to the immutable release;
   // the catalog title/description must not become an inferred routing fallback.
   assert.match(releaseManifest.release.routingSummary, /^[\x20-\x7e]{12,180}$/u);
   assert.match(releaseManifest.release.routingSummary, /Telegram messages, files, and chats/u);
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
-  assert.equal(releaseManifest.runtime.version, "2.17.0");
+  assert.equal(releaseManifest.runtime.version, "2.16.4");
   assert.deepEqual(releaseManifest.runtime.files.filter(file=>file.path==='trelio-source-media.json'),
     [{source:'scripts/trelio-source-media.json',path:'trelio-source-media.json',mode:420}]);
   assert.deepEqual(JSON.parse(await readFile(new URL('scripts/trelio-source-media.json',skillRoot),'utf8')),
