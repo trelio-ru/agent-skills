@@ -23,8 +23,15 @@ GitHub не создаёт push/create events при отправке больш
 Каждая новая публикация signed runtime получает ещё не выпущенную для этого
 skill runtime version, в том числе когда меняются только инструкции. Backend
 отклоняет повторную версию с `AGENT_SKILL_RUNTIME_VERSION_EXISTS` даже при
-совпадении package bytes. Согласованно меняй release.json и runtime constant;
-minimum host повышается только при новой зависимости. Не переписывай уже
+совпадении package bytes. Согласованно меняй `runtime.version` в release.json
+и runtime constant;
+minimum host повышается только при новой зависимости. Каталожная `release.version`
+и executable `runtime.version` имеют независимые истории: patch каталога может
+содержать runtime с новой minor protocol version. Не выравнивай executable
+вниз по каталогу: существующие backend/host gates проверяют именно подписанный
+`skill.runtimeVersion`, а не номер карточки. До публикации проверь package
+с действующими admission gates; стенд с другой версией manifest этого не
+доказывает. Не переписывай уже
 созданный tag после неуспешной публикации: исправление получает новую skill
 version и новый tag, затем повторный exact CI и отдельный plan/apply.
 

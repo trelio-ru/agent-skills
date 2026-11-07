@@ -556,6 +556,9 @@ MAX read-only assist сохраняет штатный phone lookup для cold 
 точная home-search кнопка проверяется и host gate, и browser event fence.
 Для каждой новой signed-runtime публикации нужна уникальная runtime version,
 даже при изменении только инструкций; порядок — docs/release-process.md.
+Catalog `release.version` и executable `runtime.version` независимы. Patch
+каталога не понижает реализованный protocol SemVer: перед выпуском проверь
+готовый package на действующих native backend/host admission gates.
 Provider-релиз не повышает версию Trelio, plugin или generic host.
 Signing остаётся на production backend. Публикация – guarded plan/apply с exact
 artifact, digest, CAS и read-back. Сетевые ошибки: минимум три безопасных повтора;

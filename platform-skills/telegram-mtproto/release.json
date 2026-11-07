@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.16.4",
+    "version": "2.16.5",
     "summary": "Защищённое чтение исходного аудио из точного входящего сообщения ассистента",
     "routingSummary": "Read, search, send, and manage Telegram messages, files, and chats."
   },
@@ -19,7 +19,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.16.4",
+    "version": "2.17.0",
     "minimumHostVersion": "3.25.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

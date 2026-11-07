@@ -7,7 +7,7 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {artifacts, childEnvironment, digest, downloadArtifact, installationPlan, performSetup, providerRoot, pythonPath, ready, unpackUv} from '../scripts/bootstrap.mjs';
-import {argumentsObject, run} from '../scripts/audio-transcription.mjs';
+import {argumentsObject, run, RUNTIME_VERSION} from '../scripts/audio-transcription.mjs';
 import {atomicJson, privateDirectory} from '../scripts/storage.mjs';
 import {buildRuntimePackage} from '../../tools/build-runtime-package.mjs';
 import {processSourceOriginal,readSourceOriginalInput,sourceFileFingerprint} from '../scripts/source-original.mjs';
@@ -397,6 +397,13 @@ test('signed package binds upstream source, inference entrypoints and full guide
   assert.equal(built.skillId, 'audio-transcription');
   assert.ok(built.packageSizeBytes < 1024 * 1024);
   const bytes = JSON.parse(built.packageBytes);
+  // Catalog patch history is independent of the executable protocol. The
+  // actual signed identity must retain the source-original ABI that existing
+  // host/backend readers admit from runtime 1.2.0, even for a 1.1.x catalog fix.
+  const [major, minor] = bytes.skill.runtimeVersion.split('.').map(Number);
+  assert.equal(major, 1);
+  assert.ok(minor >= 2, 'the published executable must satisfy source-original admission');
+  assert.equal(bytes.skill.runtimeVersion, RUNTIME_VERSION);
   for (const name of ['scripts/audio-transcription.mjs', 'engine/worker.py', 'engine/uv.lock', 'references/workflow.md', 'engine/vendor/GigaAM-LICENSE']) assert.ok(bytes.files.some(file => file.path === name), name);
   assert.ok(!bytes.files.some(file => /\.(?:ckpt|wav|m4a|exe|whl)$/u.test(file.path)));
   const upstream = JSON.parse(fs.readFileSync(path.join(providerRoot, 'engine/vendor/origin.json')));

@@ -7,7 +7,10 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 import {artifacts, childEnvironment, installationPlan, performSetup, providerRoot, pythonPath, ready, startSetup} from './bootstrap.mjs';
 import {atomicJson, privateDirectory, readJson, stateDirectory} from './storage.mjs';
 
-export const RUNTIME_VERSION = '1.1.2';
+// The catalog has its own patch history. This executable implements the
+// source-original protocol admitted by the common host/backend from 1.2.0;
+// aligning it down to the catalog version would disable genuine voice reads.
+export const RUNTIME_VERSION = '1.2.0';
 const busy = new Set(['queued', 'validating', 'loading', 'transcribing']);
 const supported = new Set(['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.aif', '.aiff', '.mp4', '.mov', '.mkv', '.webm']);
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
