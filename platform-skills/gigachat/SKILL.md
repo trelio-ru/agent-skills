@@ -47,13 +47,22 @@ Workspace, файлы или историю. Закрытые данные тр�
 или чужие беседы для восстановления контекста. Если открылась чужая беседа,
 создай свою через UI, не читая её содержимое.
 
+On failure use Trelio's general skill recovery: choose an available compatible
+skill without asking only for a provider choice. Preserve explicit service choice,
+authorized recipients and unknown-send fences; name the actual service used.
+
 ## Отправка и интервал
 
 До первой отправки создай один controller в том же browser REPL. Каждый вопрос,
 включая уточнение и ответ на встречный вопрос, отправляй внутри
-`await gigaPacing.submit(callback)`: callback делает одну отправку без retry.
+`await gigaPacing.submit(sendOnce, { prepare })`: callback делает одну отправку без retry.
 Читай состояние через `await gigaPacing.observe(() => gigaTab.getAXState())`.
 После смысловой проверки полного нового ответа вызови `gigaPacing.answerReady()`.
+
+`prepare` fills only: no Enter/click/navigation/auto-submit. `sendOnce` dispatches
+once. Failed preparation preserves the clock: inspect the field and use declared
+DOM fill. After dispatch, errors stay `unknown`; no reset/replay. Auto-submitting
+input belongs in `sendOnce`.
 
 ```javascript
 var gigaPacing = (() => {
@@ -61,18 +70,18 @@ var gigaPacing = (() => {
   let observedAt = null;
   let nextQuestionAt = 0;
   return {
-    async submit(sendOnce) {
-      // Завершение прошлого ответа обязательно: ошибка UI может идти после
-      // уже принятого вопроса, поэтому новое действие не становится retry.
+    async submit(sendOnce, { prepare } = {}) {
+      // An unfinished/unknown question blocks any new dispatch.
       if (state !== "initial" && state !== "ready") {
         throw new Error("GIGACHAT_PREVIOUS_QUESTION_NOT_REVIEWED");
       }
+      const previousState = state;
+      let dispatchStarted = false;
       const needsPause = state === "ready";
       state = "waiting";
       try {
         if (needsPause) {
-          // Размышления и проверка источников входят в интервал. Ранний
-          // таймер не разрешает отправку до монотонного deadline.
+          // Count thinking time; early timers must respect the deadline.
           let remainingMs = nextQuestionAt - performance.now();
           while (remainingMs > 0) {
             await new Promise((resolve) => setTimeout(resolve, Math.ceil(remainingMs)));
@@ -80,12 +89,17 @@ var gigaPacing = (() => {
           }
         }
         observedAt = null;
+        // Failed non-submitting input cannot have invoked sendOnce.
+        state = "preparing";
+        if (prepare) await prepare();
         state = "submitting";
+        dispatchStarted = true;
         const result = await sendOnce();
         state = "awaiting-answer";
         return result;
       } catch (error) {
-        state = "unknown";
+        // After dispatch starts, exception text never proves non-delivery.
+        state = dispatchStarted ? "unknown" : previousState;
         throw error;
       }
     },
@@ -99,8 +113,7 @@ var gigaPacing = (() => {
       if ((state !== "awaiting-answer" && state !== "unknown") || observedAt === null) {
         throw new Error("GIGACHAT_NO_QUESTION_TO_REVIEW");
       }
-      // Снимок датируется до проверки моделью: её размышления тоже
-      // засчитываются. Смена времени ОС не меняет интервал.
+      // Include review time using the monotonic snapshot timestamp.
       nextQuestionAt = observedAt + 2_000 + Math.floor(Math.random() * 13_001);
       state = "ready";
     },

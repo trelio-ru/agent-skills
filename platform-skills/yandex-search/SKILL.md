@@ -9,7 +9,7 @@ metadata:
 # Яндекс: поиск и Алиса AI
 
 Instruction-only навык на browser tool, без отдельного Playwright/HTTP/API/runtime.
-Недоступность browser control сообщай; не подменяй Яндекс/Алису другим сервисом.
+Недоступность browser control сообщай; результат другого сервиса не называй Яндексом.
 
 ## Выбор сценария и контекст
 
@@ -44,10 +44,14 @@ CAPTCHA, login, access denied и site-safety interstitial не обходятс�
 Недоступность выбранного режима сообщай явно, без смены browser/HTTP transport
 ради обхода policy; поиск не выдавай за ответ Алисы.
 
+On failure use Trelio's general skill recovery: choose an available compatible
+skill without asking only for a provider choice. Preserve explicit service choice,
+authorized recipients and unknown-send fences; name the actual service used.
+
 ## Интервал между отправками
 
 До первого запроса создай один controller в browser REPL. Поисковую навигацию
-и каждый вопрос Алисе выполняй через `await yandexPacing.submit(callback)`:
+и каждый вопрос Алисе выполняй через `await yandexPacing.submit(sendOnce, { prepare })`:
 ровно одна отправка через UI без автоповтора. Controller общий; смена
 вкладки/режима/темы не обнуляет интервал.
 
@@ -57,17 +61,24 @@ CAPTCHA, login, access denied и site-safety interstitial не обходятс�
 на принятый вопрос, вызови `yandexPacing.responseReady()`.
 Старый ответ и одно доступное поле ввода готовность не доказывают.
 
+`prepare` fills only: no Enter/click/navigation/auto-submit. `sendOnce` dispatches
+once. Failed preparation preserves the clock: inspect the field and use declared
+DOM fill. After dispatch, errors stay `unknown`; no reset/replay. Auto-submitting
+input belongs in `sendOnce`.
+
 ```javascript
 var yandexPacing = (() => {
   let state = "initial";
   let observedAt = null;
   let nextRequestAt = 0;
   return {
-    async submit(sendOnce) {
+    async submit(sendOnce, { prepare } = {}) {
       // Completion gates every mode; a UI error may follow an accepted send.
       if (state !== "initial" && state !== "ready") {
         throw new Error("YANDEX_PREVIOUS_REQUEST_NOT_REVIEWED");
       }
+      const previousState = state;
+      let dispatchStarted = false;
       const needsPause = state === "ready";
       state = "waiting";
       try {
@@ -80,12 +91,17 @@ var yandexPacing = (() => {
           }
         }
         observedAt = null;
+        // Failed non-submitting input cannot have invoked sendOnce.
+        state = "preparing";
+        if (prepare) await prepare();
         state = "submitting";
+        dispatchStarted = true;
         const result = await sendOnce();
         state = "awaiting-response";
         return result;
       } catch (error) {
-        state = "unknown";
+        // After dispatch starts, exception text never proves non-delivery.
+        state = dispatchStarted ? "unknown" : previousState;
         throw error;
       }
     },
@@ -107,12 +123,10 @@ var yandexPacing = (() => {
 })();
 ```
 
-Первый запрос идёт без паузы. После каждого готового результата выбирается
-случайный минимальный интервал 2–15 секунд. Размышления и чтение источников
-входят в него: из 10 секунд после прошедших 7 остаётся 3, после минуты — ноль.
-Не добавляй полную паузу поверх раздумий и не пересоздавай controller.
-Открытие первоисточника — не новая отправка. Это не подтверждённый лимит Яндекса
-и не способ обхода CAPTCHA.
+Первый запрос без паузы; затем минимум 2–15 секунд от снимка готового
+результата. Размышления и чтение входят в интервал: после 7 из 10 секунд жди 3,
+после минуты — 0. Не пересоздавай controller. Открытие источника не считается
+отправкой. Это не лимит Яндекса и не обход CAPTCHA.
 
 При timeout/неясной отправке осмотри ту же страницу и установи исход.
 До готового результата controller блокирует новые отправки. Неизвестный исход
@@ -188,14 +202,9 @@ canonical URL и не обходи блокировки. Навигация, р�
 
 ## Продолжение и завершение
 
-Между связанными ходами сохраняй handle/id своей вкладки, тему и controller
-для продолжения того же чата/поиска. Если tool закрывает временные вкладки
-в конце хода, используй штатный handoff marker. В Codex IAB:
-`await targetTab.markHandoff()`; повторяй marker, пока вкладка нужна.
-Он не разрешает показывать браузер.
-
-При утрате вкладки обозначь потерю сессии и восстанови самостоятельный вопрос
-из текущего чата в новой беседе. Не просматривай чужие вкладки/историю
-и не обещай сохранение прежнего контекста. Неизвестный исход отправки
-не разрешает её replay. После завершения закрой только собственные вкладки,
-не пользовательский браузер, и не удаляй историю Яндекса/Алисы.
+Keep own tab handle/id, topic and controller across turns. If the tool cleans
+up temporary tabs, repeat `await targetTab.markHandoff()` each needed turn;
+it grants no visibility. If lost, report the lost session/context and reconstruct
+a standalone question from this chat in a new own conversation. Never inspect
+foreign tabs/history, promise preserved context or replay an unknown send.
+Finish by closing only own tabs, preserving the user's browser and history.

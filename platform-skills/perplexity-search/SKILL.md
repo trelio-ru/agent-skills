@@ -43,13 +43,22 @@ headless process. Не меняй host launch policy, не запускай со
 достигнут лимит, сообщи точную видимую причину. CAPTCHA и access denied не
 обходятся; auth-поля, cookies, storage, tokens и файлы профиля не считываются.
 
+On failure use Trelio's general skill recovery: choose an available compatible
+skill without asking only for a provider choice. Preserve explicit service choice,
+authorized recipients and unknown-send fences; name the actual service used.
+
 ## Отправка и уточнение
 
 Создай один controller в том же browser REPL перед первой отправкой и сохрани
-его для связанных вопросов. Ввод и единственную отправку одного вопроса
-выполняй внутри `await perplexityPacing.submit(callback)`. Снимки читай через
+его для связанных вопросов. Отправку выполняй один раз через
+`await perplexityPacing.submit(sendOnce, { prepare })`. Снимки читай через
 `await perplexityPacing.observe(() => perplexityTab.getAXState())`; после
 проверки завершения именно нового ответа вызови `perplexityPacing.answerReady()`.
+
+`prepare` fills only: no Enter/click/navigation/auto-submit. `sendOnce` dispatches
+once. Failed preparation preserves the clock: inspect the field and use declared
+DOM fill. After dispatch, errors stay `unknown`; no reset/replay. Auto-submitting
+input belongs in `sendOnce`.
 
 ```javascript
 var perplexityPacing = (() => {
@@ -57,18 +66,18 @@ var perplexityPacing = (() => {
   let observedAt = null;
   let nextQuestionAt = 0;
   return {
-    async submit(sendOnce) {
-      // Незавершённый или неоднозначный запрос запрещает следующую отправку.
-      // UI timeout может означать, что сайт уже принял вопрос: replay закрыт.
+    async submit(sendOnce, { prepare } = {}) {
+      // An unfinished/unknown question blocks any new dispatch.
       if (state !== "initial" && state !== "ready") {
         throw new Error("PERPLEXITY_PREVIOUS_QUESTION_NOT_REVIEWED");
       }
+      const previousState = state;
+      let dispatchStarted = false;
       const needsPause = state === "ready";
       state = "waiting";
       try {
         if (needsPause) {
-          // Размышления и чтение источников уже входят в интервал. Ждём
-          // остаток; ранний callback таймера не должен открыть отправку.
+          // Count thinking time; early timers must respect the deadline.
           let remainingMs = nextQuestionAt - performance.now();
           while (remainingMs > 0) {
             await new Promise((resolve) => setTimeout(resolve, Math.ceil(remainingMs)));
@@ -76,12 +85,17 @@ var perplexityPacing = (() => {
           }
         }
         observedAt = null;
+        // Failed non-submitting input cannot have invoked sendOnce.
+        state = "preparing";
+        if (prepare) await prepare();
         state = "submitting";
+        dispatchStarted = true;
         const result = await sendOnce();
         state = "awaiting-answer";
         return result;
       } catch (error) {
-        state = "unknown";
+        // After dispatch starts, exception text never proves non-delivery.
+        state = dispatchStarted ? "unknown" : previousState;
         throw error;
       }
     },
@@ -95,8 +109,7 @@ var perplexityPacing = (() => {
       if ((state !== "awaiting-answer" && state !== "unknown") || observedAt === null) {
         throw new Error("PERPLEXITY_NO_QUESTION_TO_REVIEW");
       }
-      // Timestamp снимка учитывает время до смысловой проверки моделью.
-      // Монотонные часы не зависят от перевода системных часов.
+      // Include review time using the monotonic snapshot timestamp.
       nextQuestionAt = observedAt + 2_000 + Math.floor(Math.random() * 13_001);
       state = "ready";
     },

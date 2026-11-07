@@ -151,3 +151,60 @@ test("failed observation cannot acknowledge readiness using an older snapshot", 
   await assert.rejects(controller.observe(() => { throw new Error("Snapshot unavailable"); }), /Snapshot unavailable/u);
   assert.throws(() => controller.answerReady(), /GIGACHAT_NO_QUESTION_TO_REVIEW/u);
 });
+
+// A browser field can reject AX input before Enter/click is even invoked.
+// Run the delivered preparation boundary: no fabricated error classification
+// or manual controller reset may be needed to recover that unsent request.
+test("failed input preparation never dispatches and can recover with another input method", async () => {
+  const { controller, delays } = createHarness();
+  const events = [];
+  await assert.rejects(controller.submit(() => events.push("send"), {
+    prepare: () => { events.push("AX input"); throw new Error("Field has no settable value"); },
+  }), /Field has no settable value/u);
+  assert.deepEqual(events, ["AX input"]);
+  await controller.submit(() => events.push("send"), { prepare: () => events.push("DOM fill") });
+  assert.deepEqual(events, ["AX input", "DOM fill", "send"]);
+  assert.deepEqual(delays, []);
+});
+
+test("failed preparation preserves the existing completion deadline without another random pause", async () => {
+  let randomCalls = 0;
+  const harness = createHarness({ random: () => { randomCalls += 1; return 1 - Number.EPSILON; } });
+  await harness.controller.submit(() => undefined);
+  await observeReady(harness);
+  harness.advance(7_000);
+  await assert.rejects(harness.controller.submit(() => assert.fail("Unprepared send"), {
+    prepare: () => { throw new Error("Input refused"); },
+  }), /Input refused/u);
+  await harness.controller.submit(() => undefined, { prepare: () => undefined });
+  assert.deepEqual(harness.delays, [8_000]);
+  assert.equal(randomCalls, 1, "Input failure cannot invent a new completion or random deadline.");
+});
+
+test("pending preparation owns the submission slot until it settles", async () => {
+  const { controller } = createHarness();
+  let rejectPreparation;
+  let sends = 0;
+  const preparation = new Promise((resolve, reject) => { rejectPreparation = reject; });
+  const pending = controller.submit(() => ++sends, { prepare: () => preparation });
+  const failed = assert.rejects(pending, /Input refused/u);
+  await assert.rejects(controller.submit(() => ++sends), /GIGACHAT_PREVIOUS_QUESTION_NOT_REVIEWED/u);
+  rejectPreparation(new Error("Input refused"));
+  await failed;
+  assert.equal(sends, 0);
+  assert.equal(await controller.submit(() => ++sends), 1);
+});
+
+test("successful preparation cannot make an uncertain dispatch safe to repeat", async () => {
+  const { controller } = createHarness();
+  let preparations = 0;
+  let sends = 0;
+  await assert.rejects(controller.submit(() => { sends += 1; throw new Error("Submit timeout"); }, {
+    prepare: () => { preparations += 1; },
+  }), /Submit timeout/u);
+  await assert.rejects(controller.submit(() => ++sends, {
+    prepare: () => { preparations += 1; },
+  }), /GIGACHAT_PREVIOUS_QUESTION_NOT_REVIEWED/u);
+  assert.equal(preparations, 1);
+  assert.equal(sends, 1);
+});
