@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {spawnSync} from 'node:child_process';
+import {spawn, spawnSync} from 'node:child_process';
+import {EventEmitter} from 'node:events';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import {artifacts, childEnvironment, digest, downloadArtifact, installationPlan, performSetup, providerRoot, pythonPath, ready, unpackUv} from '../scripts/bootstrap.mjs';
+import {artifacts, childEnvironment, digest, downloadArtifact, ensureSetup, installationPlan, performSetup, providerRoot, pythonPath, ready, startSetup, unpackUv} from '../scripts/bootstrap.mjs';
 import {argumentsObject, run, RUNTIME_VERSION} from '../scripts/audio-transcription.mjs';
 import {atomicJson, privateDirectory} from '../scripts/storage.mjs';
 import {buildRuntimePackage} from '../../tools/build-runtime-package.mjs';
@@ -49,15 +50,26 @@ function sourceOriginalFixture(t){
     original:{filePath,sizeBytes:bytes.length,sha256:digest(bytes)},outputDirectory:path.join(directory,'job')}};
 }
 
-test('source processing requires ready ASR and never installs or consumes model-download consent',async t=>{
+test('cold source use prepares the fixed engine without a consent question or an inference claim',async t=>{
   const {directory,input}=sourceOriginalFixture(t),calls=[];
   const result=await processSourceOriginal(input,{root:path.join(directory,'cache'),run:async args=>{
-    calls.push(args);assert.deepEqual(args,['doctor']);return {ready:false,consentRequired:true,downloadPlan:{planHash:'UNAPPROVED'}};
+    calls.push(args);
+    if(args[0]==='doctor')return {ready:false,downloadPlan:{planHash:'PRIVATE_PLAN'}};
+    assert.deepEqual(args,['ensure']);return {ok:true,state:'installing'};
   }});
-  assert.equal(result.state,'setup_required');assert.equal(result.consentRequired,true);
-  assert.deepEqual(calls,[['doctor']]);assert.equal(fs.existsSync(input.outputDirectory),false);
+  assert.equal(result.state,'queued');assert.equal(result.consentRequired,undefined);
+  assert.deepEqual(calls,[['doctor'],['ensure']]);assert.equal(fs.existsSync(input.outputDirectory),false);
   assert.equal(fs.existsSync(path.join(directory,'.source-attempt.json')),false);
-  assert.doesNotMatch(JSON.stringify(result),/UNAPPROVED|voice\.ogg/);
+  assert.doesNotMatch(JSON.stringify(result),/PRIVATE_PLAN|voice\.ogg/);
+  // Ordinary context reads wait through setup, then use the same one-start
+  // source protocol. No setup state may masquerade as a decoded transcript.
+  for(const preparation of [{ok:true,state:'unknown'},{ok:false,state:'failed'}]){
+    const observed=await processSourceOriginal(input,{root:directory,run:async args=>
+      args[0]==='doctor'?{ready:false}:preparation});
+    assert.equal(observed.state,preparation.state==='unknown'?'unknown':'unavailable');
+    assert.equal(observed.contentRead,false);assert.equal(observed.consentRequired,undefined);
+    assert.equal(fs.existsSync(path.join(directory,'.source-attempt.json')),false);
+  }
 });
 
 test('source ASR starts once, returns byte-free progress and verifies complete original-bound output',async t=>{
@@ -154,7 +166,8 @@ test('doctor/plan cannot download or create a cache; stale approval fails closed
   const parent = temporary(), root = path.join(parent, 'new-cache');
   const doctor = await run(['doctor'], {root});
   assert.equal(doctor.ready, false);
-  assert.equal(doctor.consentRequired, true);
+  assert.equal(doctor.consentRequired, false);
+  assert.equal(doctor.automaticSetupAvailable, true);
   assert.equal(fs.existsSync(root), false);
   assert.equal((await run(['setup'], {root})).downloadPlan.planHash, doctor.downloadPlan.planHash);
   await assert.rejects(run(['setup', '--approve', 'wrong'], {root}), /AUDIO_DOWNLOAD_CONSENT_REQUIRED/u);
@@ -168,6 +181,68 @@ test('unconsented internal installation cannot perform network IO', async () => 
   await assert.rejects(performSetup(installationPlan(root).planHash, root), /AUDIO_DOWNLOAD_CONSENT_REQUIRED/u);
   assert.deepEqual(fs.readdirSync(root), []);
   fs.rmSync(root, {recursive: true});
+});
+
+test('automatic setup records a single exact request, never human consent, and preserves unknown/failure',t=>{
+  const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  let starts=0;
+  const launcher=(executable,args,options)=>{
+    starts++;assert.equal(executable,process.execPath);
+    assert.equal(args[1],'__setup');assert.equal(args[2],installationPlan(root).planHash);
+    assert.equal(options.shell,false);assert.equal(options.env.PRIVATE_TOKEN,undefined);
+    const child=new EventEmitter();child.pid=process.pid;child.unref=()=>{};return child;
+  };
+  assert.equal(ensureSetup(root,{launcher}).state,'installing');
+  const file=path.join(root,'setup-dispatch.json'),bytes=fs.readFileSync(file);
+  const request=JSON.parse(bytes);
+  assert.equal(request.reason,'skill-use');assert.equal(request.planHash,installationPlan(root).planHash);
+  assert.equal(fs.existsSync(path.join(root,'download-consent.json')),false);
+  assert.equal(ensureSetup(root,{launcher}).state,'installing');assert.equal(starts,1);
+  assert.deepEqual(fs.readFileSync(file),bytes);
+  atomicJson(file,{...request,pid:null});
+  assert.equal(ensureSetup(root,{launcher}).state,'unknown');assert.equal(starts,1);
+  atomicJson(path.join(root,'setup.json'),{state:'failed',errorCode:'AUDIO_DOWNLOAD_DIGEST_MISMATCH'});
+  assert.equal(ensureSetup(root,{launcher}).errorCode,'AUDIO_DOWNLOAD_DIGEST_MISMATCH');
+  assert.equal(starts,1,'context polling must not silently retry a failed installation');
+  assert.equal(startSetup(installationPlan(root).planHash,root,{launcher}).state,'installing');
+  assert.equal(starts,2,'only the explicit diagnosed retry can replace a known failed attempt');
+  assert.ok(fs.readdirSync(root).some(name=>name.endsWith('.failed')));
+});
+
+test('automatic setup cannot consume a foreign plan or recover an orphan dispatch lock',t=>{
+  const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const launcher=()=>{throw Error('MUST_NOT_SPAWN');};
+  atomicJson(path.join(root,'setup-dispatch.json'),{schemaVersion:1,requestId:'11111111-2222-4333-8444-555555555555',
+    planHash:'0'.repeat(64),reason:'skill-use',requestedAt:new Date().toISOString(),pid:null});
+  assert.equal(ensureSetup(root,{launcher}).errorCode,'AUDIO_SETUP_PLAN_CHANGED');
+  fs.unlinkSync(path.join(root,'setup-dispatch.json'));
+  fs.writeFileSync(path.join(root,'setup-dispatch.lock'),'');
+  const past=new Date(Date.now()-11000);fs.utimesSync(path.join(root,'setup-dispatch.lock'),past,past);
+  assert.equal(ensureSetup(root,{launcher}).state,'unknown');
+  assert.equal(fs.existsSync(path.join(root,'setup-dispatch.lock')),true);
+});
+
+test('concurrent native parents dispatch exactly one automatic installer',async t=>{
+  const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const fixture=path.join(providerRoot,'tests/setup-dispatch-fixture.mjs');
+  const invoke=()=>new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[fixture,root],{shell:false,windowsHide:true,stdio:['ignore','pipe','pipe'],env:childEnvironment(root)});
+    let stdout='',stderr='';child.stdout.on('data',chunk=>stdout+=chunk);child.stderr.on('data',chunk=>stderr+=chunk);
+    child.on('error',reject);child.on('close',code=>code===0?resolve(JSON.parse(stdout)):reject(Error(stderr)));
+  });
+  const results=await Promise.all([invoke(),invoke(),invoke()]);
+  assert.ok(results.every(result=>['installing','unknown'].includes(result.state)));
+  assert.equal(fs.readFileSync(path.join(root,'fixture-dispatches'),'utf8').trim().split('\n').length,1);
+  assert.equal(fs.existsSync(path.join(root,'download-consent.json')),false);
+});
+
+test('invalid ordinary input and old-model resume never trigger first-use preparation',async t=>{
+  const root=temporary(),cache=path.join(root,'cache');t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  await assert.rejects(run(['start','--input','relative.ogg','--output-dir',path.join(root,'out')],{root:cache}),/AUDIO_INPUT_OR_OUTPUT_INVALID/);
+  const job=privateDirectory(path.join(root,'old-job'));
+  atomicJson(path.join(job,'job.json'),{schemaVersion:1,model:'old-model',state:'cancelled'});
+  await assert.rejects(run(['resume','--job-dir',job],{root:cache}),/AUDIO_JOB_MODEL_MISMATCH/);
+  assert.equal(fs.existsSync(cache),false);
 });
 
 test('an earlier E2E installation receipt cannot approve the RNNT model download', async () => {
@@ -189,7 +264,7 @@ test('an earlier E2E installation receipt cannot approve the RNNT model download
   const doctor = await run(['doctor'], {root});
   assert.equal(doctor.ready, false);
   assert.equal(doctor.model, 'v3_rnnt');
-  assert.equal(doctor.consentRequired, true);
+  assert.equal(doctor.consentRequired, false);
   assert.equal(doctor.downloadPlan.models.length, 1);
   assert.equal(doctor.downloadPlan.models[0].name, 'v3_rnnt.ckpt');
   assert.equal(doctor.downloadPlan.planHash, planHash);
@@ -438,6 +513,9 @@ test('prepared host actually uses a managed Python and official checksum-pinned 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /2\.8\.0/u);
   for (const item of artifacts.models) assert.equal(fs.statSync(path.join(fixture.root, 'models', item.name)).size, item.bytes);
+  const installed=fs.readFileSync(path.join(fixture.root,'installed.json'));
+  assert.equal(ensureSetup(fixture.root,{launcher:()=>{throw Error('READY_CACHE_MUST_NOT_LAUNCH');}}).state,'ready');
+  assert.deepEqual(fs.readFileSync(path.join(fixture.root,'installed.json')),installed);
 });
 
 test('native Windows Python gets its machine marker after a real host-filtered Node launch', {skip: process.platform !== 'win32' || !fixture && !process.env.CI}, () => {

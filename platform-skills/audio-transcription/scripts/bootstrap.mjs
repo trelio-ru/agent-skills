@@ -204,18 +204,90 @@ export function unpackUv(bytes, format) {
   return candidates[0];
 }
 
-export function startSetup(approvedHash, root = stateDirectory()) {
+/** Prepare only the fixed signed installation for an authorized skill use.
+ * The plan is still checked byte-for-byte; automatic preparation is recorded
+ * as a skill request, never as a human download-consent event. A durable
+ * exclusive dispatch precedes spawn, so simultaneous intake reads cannot
+ * launch several installers and a lost start cannot silently be replayed. */
+export function ensureSetup(root = stateDirectory(), options = {}) {
+  return startSetup(installationPlan(root).planHash, root, {...options, automatic: true});
+}
+
+export function startSetup(approvedHash, root = stateDirectory(), {automatic = false, launcher = spawn} = {}) {
   const plan = installationPlan(root);
   if (approvedHash !== plan.planHash) throw Error('AUDIO_DOWNLOAD_CONSENT_REQUIRED');
   privateDirectory(root);
   if (ready(root)) return {ok: true, state: 'ready', model: artifacts.model};
+  // Serialize the parent-side claim/retry as well as the existing worker OS
+  // lock. An orphan claim is unknown, never reclaimed merely by age/PID; this
+  // prevents a second retry from renaming a newly created dispatch as stale.
+  const lock = path.join(root, 'setup-dispatch.lock');
+  let fd;
+  try {fd = fs.openSync(lock, 'wx', 0o600);}
+  catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    let owner;
+    try {owner = readJson(lock);} catch { /* The other parent may still be writing its bounded claim. */ }
+    const observed = fs.lstatSync(lock, {throwIfNoEntry: false});
+    const creating = !observed || Date.now() - observed.mtimeMs < 10000;
+    return {ok: true, state: isProcessAlive(owner?.pid) || creating ? 'installing' : 'unknown'};
+  }
+  try {
+    fs.writeFileSync(fd, JSON.stringify({pid: process.pid})); fs.fsyncSync(fd);
+    return dispatchSetup(plan, root, {automatic, launcher});
+  }
+  finally {fs.closeSync(fd); fs.unlinkSync(lock);}
+}
+
+function dispatchSetup(plan, root, {automatic, launcher}) {
   const current = readJson(path.join(root, 'setup.json'));
   if (current?.state === 'installing' && isProcessAlive(current.pid)) return {ok: true, state: 'installing'};
-  // This literal approval is supplied only after the agent has presented this
-  // exact plan and received the user's explicit download/install consent.
-  atomicJson(path.join(root, 'download-consent.json'), {planHash: plan.planHash, approvedAt: new Date().toISOString(), deviceDirectory: root});
-  const worker = spawn(process.execPath, [fileURLToPath(new URL('audio-transcription.mjs', import.meta.url)), '__setup', plan.planHash],
-    {detached: true, stdio: 'ignore', shell: false, windowsHide: true, env: {...childEnvironment(root), TRELIO_AUDIO_SETUP_ROOT: root}});
+  const dispatchFile = path.join(root, 'setup-dispatch.json');
+  const previous = readJson(dispatchFile);
+  if (previous) {
+    if (previous.schemaVersion !== 1 || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(previous.requestId)
+      || !/^[0-9a-f]{64}$/u.test(previous.planHash) || !['skill-use', 'explicit-setup'].includes(previous.reason)
+      || !Number.isFinite(Date.parse(previous.requestedAt))
+      || previous.pid !== null && (!Number.isSafeInteger(previous.pid) || previous.pid < 1)) throw Error('AUDIO_STATE_INVALID');
+    // Only an observed terminal failure allows an explicit, diagnosed retry.
+    // Automatic context polling never retries a failed or unknown installer.
+    // PID liveness can confirm ongoing work but absence cannot prove that an
+    // unobserved spawn had no effect. Do not kill anything from these records.
+    if (automatic || current?.state !== 'failed') {
+      if (previous.planHash !== plan.planHash) return {ok: false, state: 'failed', errorCode: 'AUDIO_SETUP_PLAN_CHANGED'};
+      if (current?.state === 'failed') return {ok: false, state: 'failed', errorCode: current.errorCode || 'AUDIO_SETUP_FAILED'};
+      return {ok: true, state: current?.state === 'installing' && isProcessAlive(current.pid)
+        || isProcessAlive(previous.pid) ? 'installing' : 'unknown'};
+    }
+    if (isProcessAlive(previous.pid)) return {ok: true, state: 'installing'};
+    // Rename the known failed dispatch rather than erasing its evidence.
+    // The parent-side lock prevents concurrent retries from moving a new claim.
+    try {fs.renameSync(dispatchFile, `${dispatchFile}.${previous.requestId}.failed`);}
+    catch (error) {if (error.code !== 'ENOENT') throw error;}
+  } else if (automatic && current?.state === 'failed') {
+    return {ok: false, state: 'failed', errorCode: current.errorCode || 'AUDIO_SETUP_FAILED'};
+  }
+  const request = {schemaVersion: 1, requestId: randomUUID(), planHash: plan.planHash,
+    reason: automatic ? 'skill-use' : 'explicit-setup', requestedAt: new Date().toISOString(), pid: null};
+  try {
+    const fd = fs.openSync(dispatchFile, 'wx', 0o600);
+    try {fs.writeFileSync(fd, JSON.stringify(request)); fs.fsyncSync(fd);} finally {fs.closeSync(fd);}
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    return {ok: true, state: 'installing'};
+  }
+  atomicJson(path.join(root, 'setup.json'), {state: 'installing', stage: 'starting', pid: null});
+  let worker;
+  try {
+    worker = launcher(process.execPath, [fileURLToPath(new URL('audio-transcription.mjs', import.meta.url)), '__setup', plan.planHash],
+      {detached: true, stdio: 'ignore', shell: false, windowsHide: true, env: {...childEnvironment(root), TRELIO_AUDIO_SETUP_ROOT: root}});
+  } catch {
+    atomicJson(path.join(root, 'setup.json'), {state: 'failed', stage: 'starting', errorCode: 'AUDIO_SETUP_START_FAILED'});
+    return {ok: false, state: 'failed', errorCode: 'AUDIO_SETUP_START_FAILED'};
+  }
+  atomicJson(dispatchFile, {...request, pid: worker.pid ?? null});
+  worker.on('error', () => atomicJson(path.join(root, 'setup.json'),
+    {state: 'failed', stage: 'starting', errorCode: 'AUDIO_SETUP_START_FAILED'}));
   worker.unref();
   return {ok: true, state: 'installing', nextCommand: ['doctor']};
 }
@@ -228,7 +300,14 @@ function isProcessAlive(pid) {
 export async function performSetup(approvedHash, root, {installerFailure = null} = {}) {
   const plan = installationPlan(root);
   const consent = readJson(path.join(root, 'download-consent.json'));
-  if (consent?.planHash !== approvedHash || approvedHash !== plan.planHash) throw Error('AUDIO_DOWNLOAD_CONSENT_REQUIRED');
+  const request = readJson(path.join(root, 'setup-dispatch.json'));
+  // Legacy explicit receipts remain valid. New automatic preparation instead
+  // requires the provider-created request for these exact signed bytes; a
+  // bare internal worker invocation cannot download or author a fake consent.
+  if (approvedHash !== plan.planHash || consent?.planHash !== approvedHash
+    && !(request?.schemaVersion === 1 && request.planHash === approvedHash
+      && ['skill-use', 'explicit-setup'].includes(request.reason)))
+    throw Error('AUDIO_DOWNLOAD_CONSENT_REQUIRED');
   const lock = path.join(root, 'setup.lock');
   try {
     const old = readJson(lock);

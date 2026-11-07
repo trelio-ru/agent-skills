@@ -4,20 +4,20 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {fileURLToPath, pathToFileURL} from 'node:url';
-import {artifacts, childEnvironment, installationPlan, performSetup, providerRoot, pythonPath, ready, startSetup} from './bootstrap.mjs';
+import {artifacts, childEnvironment, ensureSetup, installationPlan, performSetup, providerRoot, pythonPath, ready, startSetup} from './bootstrap.mjs';
 import {atomicJson, privateDirectory, readJson, stateDirectory} from './storage.mjs';
 
 // The catalog has its own patch history. This executable implements the
 // source-original protocol admitted by the common host/backend from 1.2.0;
 // aligning it down to the catalog version would disable genuine voice reads.
-export const RUNTIME_VERSION = '1.2.0';
+export const RUNTIME_VERSION = '1.2.1';
 const busy = new Set(['queued', 'validating', 'loading', 'transcribing']);
 const supported = new Set(['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.aif', '.aiff', '.mp4', '.mov', '.mkv', '.webm']);
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
 
 export function argumentsObject(argv) {
   const result = {command: argv[0] || 'doctor'};
-  const allowed = {setup: ['approve'], start: ['input', 'output-dir'], status: ['job-dir'], resume: ['job-dir'], cancel: ['job-dir'], doctor: [], guides: []};
+  const allowed = {ensure: [], setup: ['approve'], start: ['input', 'output-dir'], status: ['job-dir'], resume: ['job-dir'], cancel: ['job-dir'], doctor: [], guides: []};
   if (!Object.hasOwn(allowed, result.command)) throw Error('AUDIO_COMMAND_INVALID');
   for (let i = 1; i < argv.length; i += 2) {
     const key = argv[i]?.replace(/^--/u, '');
@@ -95,9 +95,10 @@ export async function run(argv, {root = stateDirectory()} = {}) {
   }
   const plan = installationPlan(root);
   if (options.command === 'doctor') return {ok: true, ready: ready(root), model: artifacts.model, runtimeVersion: RUNTIME_VERSION,
-    setup: readJson(path.join(root, 'setup.json')), ...(!ready(root) ? {downloadPlan: plan, consentRequired: true} : {})};
+    setup: readJson(path.join(root, 'setup.json')), ...(!ready(root) ? {downloadPlan: plan, consentRequired: false, automaticSetupAvailable: true} : {})};
+  if (options.command === 'ensure') return ensureSetup(root);
   if (options.command === 'setup') {
-    if (!options.approve) return {ok: true, consentRequired: true, downloadPlan: plan};
+    if (!options.approve) return {ok: true, consentRequired: false, downloadPlan: plan, nextCommand: ['ensure']};
     return startSetup(options.approve, root);
   }
   if (options.command === 'status') {
@@ -115,14 +116,24 @@ export async function run(argv, {root = stateDirectory()} = {}) {
     if (active) atomicJson(path.join(directory, 'cancel.json'), {runId: launchAlive(launched) ? launched.runId : state.runId});
     return {ok: true, state: active ? 'cancellation-requested' : state.state, jobDirectory: directory};
   }
-  if (!ready(root)) return {ok: false, errorCode: 'AUDIO_SETUP_REQUIRED', consentRequired: true, downloadPlan: plan};
-  if (options.command === 'resume') return launchWorker(jobDirectory(options), root, {resume: true});
+  if (options.command === 'resume') {
+    const directory = jobDirectory(options), state = readJson(path.join(directory, 'job.json'));
+    if (!state || state.schemaVersion !== 1) throw Error('AUDIO_JOB_INVALID');
+    if (state.model !== artifacts.model) throw Error('AUDIO_JOB_MODEL_MISMATCH');
+    if (state.state === 'completed') return projection(directory, state);
+    if (!ready(root)) return {...ensureSetup(root), consentRequired: false, nextCommand: argv};
+    return launchWorker(directory, root, {resume: true});
+  }
   const input = options.input, output = options['output-dir'];
   if (!input || !output || !path.isAbsolute(input) || !path.isAbsolute(output) || !supported.has(path.extname(input).toLowerCase())) throw Error('AUDIO_INPUT_OR_OUTPUT_INVALID');
   const stat = fs.lstatSync(input, {throwIfNoEntry: false});
   if (!stat?.isFile() || stat.isSymbolicLink() || stat.size === 0) throw Error('AUDIO_INPUT_OR_OUTPUT_INVALID');
   const directory = privateDirectory(output);
   if (fs.readdirSync(directory).length) throw Error('AUDIO_OUTPUT_NOT_EMPTY');
+  // Validate the requested local job before starting a download. Preparation
+  // creates no inference claim; after ready the SAME command can create its
+  // one job in this still-empty directory, without another owner dialogue.
+  if (!ready(root)) return {...ensureSetup(root), consentRequired: false, nextCommand: argv};
   atomicJson(path.join(directory, 'job.json'), {schemaVersion: 1, id: randomUUID(), model: artifacts.model,
     state: 'queued', runId: randomUUID(), input: path.resolve(input), originalSize: stat.size, originalMtimeMs: stat.mtimeMs,
     segments: [], processedSamples: 0, createdAt: new Date().toISOString()});

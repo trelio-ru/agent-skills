@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {installationPlan, performSetup, ready} from '../scripts/bootstrap.mjs';
+import assert from 'node:assert/strict';
+import {setTimeout as delay} from 'node:timers/promises';
+import {installationPlan, ready} from '../scripts/bootstrap.mjs';
+import {run} from '../scripts/audio-transcription.mjs';
+import {processSourceOriginal, sourceFileFingerprint} from '../scripts/source-original.mjs';
 import {atomicJson, privateDirectory} from '../scripts/storage.mjs';
 
 if (process.argv[2] === 'package') {
@@ -24,15 +28,35 @@ if (process.argv[2] === 'package') {
   const parent = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'trelio-audio-ci-'));
   const root = privateDirectory(path.join(parent, 'private'));
   const plan = installationPlan(root);
-  // Explicit test-fixture consent exercises the same production installer.
-  // It is not an agent authorization or a receipt for a person's device.
-  atomicJson(path.join(root, 'download-consent.json'), {planHash: plan.planHash, testFixture: true});
-  await performSetup(plan.planHash, root, {installerFailure: result => {
-    // This isolated fixture has no account, recording, credential or user
-    // environment. Retain bounded public dependency diagnostics for native CI.
-    process.stderr.write(JSON.stringify({status: result.status, code: result.error?.code,
-      publicFixtureInstaller: result.stderr?.toString('utf8').slice(-16000)}) + '\n');
-  }});
+  // Exercise the actual first-use dispatch on every supported OS, rather than
+  // hand-authoring a consent fixture and calling the internal installer. The
+  // SAME environment/model must become ready without any human receipt, and
+  // repeated preparation must retain one native worker/dispatch identity.
+  assert.equal((await run(['doctor'], {root})).ready, false);
+  const sourceRoot = privateDirectory(path.join(parent, 'source'));
+  const original = path.join(sourceRoot, 'voice.ogg');
+  const fixture = JSON.parse(fs.readFileSync(path.join(provider, 'development', 'fixture.json')));
+  const sample = fs.readFileSync(path.join(provider, 'development', fixture.localFile));
+  fs.writeFileSync(original, sample, {flag: 'wx', mode: 0o600});
+  const fingerprint = sourceFileFingerprint(original, 20 * 1024 * 1024);
+  assert.equal(fingerprint.sha256, fixture.sha256);assert.equal(fingerprint.sizeBytes, fixture.bytes);
+  const input = {schemaVersion: 1, requestId: '11111111-2222-4333-8444-555555555555',
+    original: {filePath: original, ...fingerprint}, outputDirectory: path.join(sourceRoot, 'job')};
+  const first = await processSourceOriginal(input, {root, run});
+  assert.equal(first.state, 'queued');assert.equal(first.consentRequired, undefined);
+  const dispatch = fs.readFileSync(path.join(root, 'setup-dispatch.json'));
+  assert.equal(JSON.parse(dispatch).planHash, plan.planHash);
+  const repeated = await run(['ensure'], {root});
+  assert.ok(['installing', 'ready'].includes(repeated.state));
+  assert.deepEqual(fs.readFileSync(path.join(root, 'setup-dispatch.json')), dispatch);
+  assert.equal(fs.existsSync(path.join(sourceRoot, '.source-attempt.json')), false);
+  const deadline = Date.now() + 31 * 60 * 1000;
+  while (!ready(root) && Date.now() < deadline) {
+    const status = await run(['doctor'], {root});
+    if (status.setup?.state === 'failed') break;
+    await delay(1000);
+  }
+  assert.equal(fs.existsSync(path.join(root, 'download-consent.json')), false);
   if (!ready(root)) {
     process.stderr.write(JSON.stringify(JSON.parse(fs.readFileSync(path.join(root, 'setup.json')))) + '\n');
     throw Error('audio_ci_setup_failed');

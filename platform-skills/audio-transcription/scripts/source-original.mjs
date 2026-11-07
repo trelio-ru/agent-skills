@@ -1,6 +1,6 @@
 /** Host-private original processing reuses the ordinary signed ASR job engine.
- * This module cannot install anything, choose a model/service, send a message
- * or treat a downloaded file as a successful transcript. Unknown starts are
+ * It prepares only the fixed signed local engine, never selects another
+ * model/service, sends a message or treats a download as a transcript. Unknown starts are
  * status-only: an exclusive receipt precedes the one existing worker launch. */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -96,10 +96,20 @@ export async function processSourceOriginal(input,{root,run}){
   if(original.sizeBytes!==input.original.sizeBytes||original.sha256!==input.original.sha256)fail();
   const parent=path.dirname(input.outputDirectory);checkPath(parent,{directory:true});
   const answer={schemaVersion:1,protocol:'assistant-source-audio/v1',requestId:input.requestId,contentRead:false};
-  // SAME ordinary doctor, offline only. Sending a voice never consents to a
-  // first installation/model download. No setup command/fallback is admitted.
+  // Doctor remains offline. First authorized use prepares only this signed
+  // provider's fixed model/environment. Pending setup maps to the existing
+  // queued protocol, so the host keeps this SAME intake without an owner
+  // question, a new account/task or an expanded setup command surface.
   const doctor=await run(['doctor'],{root});
-  if(doctor.ready!==true)return {...answer,state:'setup_required',code:'AUDIO_SETUP_REQUIRED',consentRequired:true};
+  if(doctor.ready!==true){
+    const preparation=await run(['ensure'],{root});
+    if(preparation.state==='unknown')return {...answer,state:'unknown',code:'AUDIO_SOURCE_START_UNKNOWN'};
+    if(preparation.ok!==true)return {...answer,state:'unavailable',code:'AUDIO_SOURCE_PROCESSING_UNAVAILABLE'};
+    // Another installer may have completed between doctor and ensure. Keep
+    // this read pending until a fresh doctor confirms the exact model before
+    // creating the source's irreversible decoder claim.
+    return {...answer,state:'queued'};
+  }
   const claimFile=path.join(parent,'.source-attempt.json');
   const claim={schemaVersion:1,requestId:input.requestId,original:input.original};
   let claimed=false;

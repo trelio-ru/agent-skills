@@ -243,7 +243,7 @@ Native regression stages показывают только fixed names, не pat
 provider-копии и без повторного сохранения PNG после catalogue conflict.
 
 Локальная расшифровка следует [контракту](platform-skills/audio-transcription/references/workflow.md):
-план установки до сети, отдельное согласие на закреплённые model/runtime bytes,
+план установки до сети, автоматическая подготовка закреплённых model/runtime bytes,
 проверка SHA-256 перед загрузкой PyTorch checkpoint, закрытое локальное хранение.
 Основная модель – `v3_rnnt`, raw text без обязательного восстановления пунктуации.
 Отдельно запрошенное оформление сохраняет исходник и последовательность слов.
@@ -253,7 +253,7 @@ Node launcher и Python worker до inference, без изменения сох�
 segment. Resume не теряет cancellation нового run и не меняет исходник.
 Обязательны нативные first-install/inference gates на всех заявленных OS;
 синтетический decoder не заменяет проверку настоящей официальной модели.
-Host-only source-original uses the SAME ready decoder/private binding and one durable start; uncertainty is status-only. No implicit setup, Telegram quota or new task. Native source inference/reparse/file-integrity gates are mandatory.
+First authorized use prepares the fixed signed environment without an owner question; offline doctor stays read-only. One durable setup dispatch is separate from the SAME private source/inference binding; unknown is status-only. No Telegram quota/new task. Native cold-install/inference/reparse/file-integrity gates are mandatory.
 Windows first-install проверяется без ambient `PROCESSOR_*`, как после signed
 host: provider сам задаёт архитектуру поддерживаемого managed Python.
 Model download uses the fixed digest-addressed Trelio mirror only after upstream
@@ -302,7 +302,7 @@ native chooser с frozen originals: [контракт](platform-skills/avito/ref
 host >=3.28.3; min в release/doctor должен совпадать. Команда
 `download-audio`: [контракт](platform-skills/avito/references/workflow.md#голосовое-в-диалоге).
 Native player/blob original не заменять обычным play, system recording или HTTP.
-После получения – отдельный доступный local ASR с его setup consent;
+После получения – отдельный доступный local ASR с его штатной подготовкой;
 неподдержанный host/плеер не означает общий запрет Авито на аудио.
 Bounded входящие вложения идут через browser
 stream/local receipt, без URL/body в MCP и без popup focus; обычный navigate
