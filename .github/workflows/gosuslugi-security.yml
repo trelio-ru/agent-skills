@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: trelio-ru/agent-workspaces-runtime
-          ref: 41dedcb609881cdb42b5d53171b8c034c84779ca
+          ref: c0cf6b81624560c7cbedacf57077b4cbfcddc6a7
           path: _contracts/agent-workspaces-runtime
           persist-credentials: false
       - name: Build exact shared Windows private-state worker
