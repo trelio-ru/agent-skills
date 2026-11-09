@@ -279,6 +279,9 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 Для проверки движения иска и выбора канала обращения в ГАС читай обязательный раздел
 [проверки статуса](platform-skills/gas-pravosudie/scripts/instruction-guides/part-02.md#проверка-статуса)
 и его [forward-сценарии](platform-skills/gas-pravosudie/tests/status-check-scenarios.md).
+Для подготовки судебного комплекта читай обязательную
+[проверку требований и подтверждений](platform-skills/gas-pravosudie/scripts/instruction-guides/part-03.md#проверка-процессуальной-комплектности)
+и её [forward-сценарии](platform-skills/gas-pravosudie/tests/document-preparation-scenarios.md).
 
 Комментируй неочевидные инварианты, права, состояния, retries и восстановление.
 Для Avito, включая диалоги и ограничения первого контакта, читай

@@ -359,7 +359,7 @@ test('a replaced court tab is rebound without creating or focusing another page'
 
 test('runtime release binds the common protected-snapshot contract', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
-  assert.equal(release.release.version, '4.1.9');
+  assert.equal(release.release.version, '4.1.10');
   assert.equal(release.runtime.version, RUNTIME_VERSION);
   assert.equal(release.runtime.minimumHostVersion, '3.31.0');
   assert.deepEqual(release.runtime.browserSession, {
@@ -405,6 +405,42 @@ test('filing preparation protects signed bytes and verifies the actual uploaded 
   assert.match(preparation, /После загрузки и на итоговом экране/u);
   assert.match(preparation, /видимое[\s\S]*русское название с количеством листов/u);
   assert.match(instructions, /Финальное `Отправить`[\s\S]*прямого поручения/u);
+});
+
+// These are delivery/semantic guards for the agent's mandatory corpus, not a
+// claim that runtime code can decide jurisdiction or legal sufficiency. The
+// existing materialized-package contract independently checks these SAME
+// guide bytes and runs the packaged guides CLI before any protected IO.
+test('filing instructions link applicable requirements to source pages and actual uploaded evidence', async () => {
+  const instructions = readSkillInstructions(new URL('../', import.meta.url)).replace(/\r\n?/gu, '\n');
+  const review = instructions.split('### Проверка процессуальной комплектности\n')[1]
+    ?.split('\n### ')[0];
+  assert.ok(review, 'every filing must include the substantive evidence review before file preparation');
+  assert.match(review, /вид и стадию производства[\s\S]*основание выбора суда/u);
+  assert.match(review, /актуальные[\s\S]*официальным источникам/u);
+  assert.match(review, /требование[\s\S]*подтверждаемый факт[\s\S]*исходный документ и страница[\s\S]*окончательный[\s\S]*состояние или пробел/u);
+  assert.match(review, /неприменимого пункта[\s\S]*причину/u);
+  assert.match(review, /имя файла[\s\S]*не доказывают содержание/u);
+  assert.match(review, /Сначала найди[\s\S]*сохранённых[\s\S]*запроси только нужное/u);
+  assert.match(review, /останови подпись, загрузку и подачу/u);
+  assert.match(review, /каждое требование определения[\s\S]*общую проверку/u);
+  assert.match(review, /До подписи[\s\S]*окончательных PDF[\s\S]*После загрузки[\s\S]*фактически[\s\S]*загруженными приложениями/u);
+});
+
+// A passport label or identity spread must not satisfy address evidence. Keep
+// the applicability boundary as well: another venue rule cannot silently
+// turn this incident into a demand for everyone's full passport on any filing.
+test('registration evidence requires the actual stamp page only when applicable', async () => {
+  const main = (await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8')).replace(/\r\n?/gu, '\n');
+  const instructions = readSkillInstructions(new URL('../', import.meta.url)).replace(/\r\n?/gu, '\n');
+  assert.match(main, /основание выбора суда[\s\S]*местом жительства или пребывания[\s\S]*страницу со штампом регистрации/u);
+  assert.match(instructions, /Если используешь паспорт[\s\S]*страницу со штампом регистрации/u);
+  assert.match(instructions, /разворот с фотографией[\s\S]*регистрации не заменяет/u);
+  assert.match(instructions, /скана без читаемого текста[\s\S]*изображение[\s\S]*отсутствие OCR-текста не означает/u);
+  assert.match(instructions, /Сверь читаемый адрес[\s\S]*нужной дате/u);
+  assert.match(instructions, /расхождении или нечитаемом штампе[\s\S]*пробел/u);
+  assert.match(instructions, /не требует прикладывать весь паспорт или регистрацию[\s\S]*к любой подаче/u);
+  assert.match(instructions, /нужная страница должна попасть в подаваемый файл/u);
 });
 
 test('private guardian config allows one UTF-8 preamble but no second one', () => {
