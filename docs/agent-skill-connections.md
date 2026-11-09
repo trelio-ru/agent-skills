@@ -10,10 +10,11 @@
 
 ## Параллельные сценарии
 
-Планируемый host 3.31.0 предоставляет
+Host >=3.31.0 предоставляет
 `BROWSER_EXECUTION_SESSIONS_API=trelio.browser-execution-sessions/v1` из
 verified `TRELIO_EXECUTION_SESSION_MODULE_URL` (для browser остаётся прежний
-module URL). Сначала публикуется зависимость host; source не делает API live.
+module URL). Перед выпуском зависимого provider публикуется host;
+наличие исходников само по себе не делает API доступным в установленном runtime.
 Один observed runtime session владеет live browser/control/lease/stop.
 Account UUID, company assignment, cwd и ambient `CODEX_THREAD_ID` не заменяют
 этого владельца. Auth/key/AAD остаются общими для выбранного аккаунта.
