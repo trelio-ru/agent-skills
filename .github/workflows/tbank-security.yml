@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: trelio-ru/agent-workspaces-runtime
-          ref: a5742dba304c868219823b9282b4b3f29ea008b8
+          ref: 41dedcb609881cdb42b5d53171b8c034c84779ca
           path: _contracts/agent-workspaces-runtime
           persist-credentials: false
       - uses: actions/setup-node@v4
