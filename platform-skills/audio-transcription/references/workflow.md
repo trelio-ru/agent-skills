@@ -11,6 +11,24 @@ GigaAM inference source закреплён на commit
 читает официальный PyTorch checkpoint. Пользовательские веса и remote code
 не принимаются. ONNX-конвертация/Type не используются.
 
+## Работа цифрового ассистента в задаче
+
+Signed package включает `trelio-assistant-execution.json` v1 с точными prefix
+`guides`, `doctor`, `ensure`, `setup`, `start`, `status`, `resume`, `cancel`.
+Общий host проверяет этот opt-in до account/bootstrap и перед исполнением.
+`setup` здесь означает подготовку закреплённой локальной модели и среды,
+а не вход в аккаунт, получение credentials или согласие от имени владельца.
+Первое разрешённое использование автоматически готовит тот же download plan;
+повтор terminal failure допускается только после диагностики и устранения причины.
+`cancel` сохраняет отдельное прямое поручение остановить job; descriptor не
+расширяет основание действий и не разрешает повтор unknown start.
+
+Обычный task path не получает `source-original`, внутренний `__setup` либо
+process-only source marker. Native read-confirm/owner/source admission и его
+one-start binding остаются отдельным host-only протоколом. Task использует
+только разрешённый локальный исходник и новую папку своего writable Run;
+не заимствует job/claim другого pass и не считает `guides`/`doctor` расшифровкой.
+
 ## Автоматическая подготовка при использовании
 
 `doctor` и `setup` без `--approve` остаются offline preview. `ensure`, а также

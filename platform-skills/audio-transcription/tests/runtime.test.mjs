@@ -500,6 +500,23 @@ test('signed package binds upstream source, inference entrypoints and full guide
   for (const [name, expected] of Object.entries(upstream.files)) assert.equal(digest(fs.readFileSync(path.join(providerRoot, 'engine/vendor/gigaam', name))), expected);
 });
 
+test('assistant command policy is signed with the actual package and matches only ordinary parser leaves',()=>{
+  const built=JSON.parse(buildRuntimePackage(providerRoot).packageBytes);
+  const files=built.files.filter(file=>file.path==='trelio-assistant-execution.json');
+  assert.equal(files.length,1,'a catalogue instruction alone cannot grant task execution');
+  const bytes=Buffer.from(files[0].contentBase64,'base64');
+  assert.equal(digest(bytes),files[0].sha256);
+  const policy=JSON.parse(bytes);
+  assert.deepEqual(Object.keys(policy).sort(),['schemaVersion','taskCommands']);
+  assert.equal(policy.schemaVersion,1);
+  assert.deepEqual(policy.taskCommands,[['guides'],['doctor'],['ensure'],['setup'],['start'],['status'],['resume'],['cancel']]);
+  for(const [command] of policy.taskCommands)assert.equal(argumentsObject([command]).command,command);
+  for(const command of ['source-original','__setup','login','configure','monitor','send']){
+    assert.equal(policy.taskCommands.some(prefix=>prefix[0]===command),false,'private source/install entrypoints never become task commands');
+    assert.throws(()=>argumentsObject([command]),/AUDIO_COMMAND_INVALID/);
+  }
+});
+
 test('materialized package CLI returns its complete guide before model/cache IO', () => {
   const root = temporary(), directory = path.join(root, 'package');
   const built = JSON.parse(buildRuntimePackage(providerRoot).packageBytes);

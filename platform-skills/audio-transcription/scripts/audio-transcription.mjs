@@ -10,7 +10,7 @@ import {atomicJson, privateDirectory, readJson, stateDirectory} from './storage.
 // The catalog has its own patch history. This executable implements the
 // source-original protocol admitted by the common host/backend from 1.2.0;
 // aligning it down to the catalog version would disable genuine voice reads.
-export const RUNTIME_VERSION = '1.3.0';
+export const RUNTIME_VERSION = '1.3.1';
 const busy = new Set(['queued', 'validating', 'loading', 'transcribing']);
 const supported = new Set(['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.aif', '.aiff', '.mp4', '.mov', '.mkv', '.webm']);
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');

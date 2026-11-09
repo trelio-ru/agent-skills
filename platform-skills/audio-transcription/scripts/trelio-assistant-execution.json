@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "taskCommands": [
+    [
+      "guides"
+    ],
+    [
+      "doctor"
+    ],
+    [
+      "ensure"
+    ],
+    [
+      "setup"
+    ],
+    [
+      "start"
+    ],
+    [
+      "status"
+    ],
+    [
+      "resume"
+    ],
+    [
+      "cancel"
+    ]
+  ]
+}

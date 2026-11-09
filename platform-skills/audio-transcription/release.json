@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "audio-transcription",
-    "version": "1.1.4",
-    "summary": "Автоматическая подготовка закреплённой локальной модели и среды при первом использовании, включая голосовые цифрового ассистента, без отдельного вопроса владельцу; одна установка и повторное использование готового кеша.",
+    "version": "1.1.5",
+    "summary": "Локальная расшифровка доступна цифровому ассистенту в рабочих задачах через подписанный набор команд: справка, автоматическая подготовка среды, запуск и чтение результата. Закрытый обработчик входящих голосовых сохраняет отдельный допуск.",
     "routingSummary": "Transcribe Russian audio and video locally into text and subtitles."
   },
   "connection": null,
   "runtime": {
-    "version": "1.3.0",
+    "version": "1.3.1",
     "minimumHostVersion": "1.4.0",
     "entrypoint": {
       "path": "scripts/audio-transcription.mjs",
@@ -19,6 +19,11 @@
       "local-session"
     ],
     "files": [
+      {
+        "source": "scripts/trelio-assistant-execution.json",
+        "path": "trelio-assistant-execution.json",
+        "mode": 420
+      },
       {
         "source": "scripts/source-path.ps1",
         "path": "scripts/source-path.ps1",
