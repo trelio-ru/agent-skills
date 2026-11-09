@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "gas-pravosudie",
-    "version": "4.1.10",
-    "summary": "Перед судебной подачей агент сопоставляет применимые требования с конкретными документами и страницами, окончательными PDF и загруженными приложениями. При выборе суда по месту жительства отдельно проверяет страницу регистрации и не считает разворот с фотографией подтверждением адреса. Сохранены независимые сессии параллельных чатов через общий runtime. Минимальный общий runtime – 3.31.0.",
+    "version": "4.1.11",
+    "summary": "Повторный выпуск параллельных сессий после активации общего runtime 3.31.0. Проверка комплектности судебных документов из 4.1.10 сохранена.",
     "routingSummary": "Work with Russian court cases and electronic filings through GAS Pravosudie with delegated ESIA sign-in."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.15",
+    "version": "1.0.16",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "scripts/trelio-gas-pravosudie.mjs",
