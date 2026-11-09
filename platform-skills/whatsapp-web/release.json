@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "whatsapp-web",
-    "version": "2.2.6",
-    "summary": "Подключение WhatsApp восстанавливается при ENOTFOUND/EAI_AGAIN через ограниченный резервный HTTPS DNS только для адреса протокольного сервера. Проверка TLS, сохранённая привязка и журнал операций сохраняются; диагностика показывает использованный путь DNS."
+    "version": "2.2.7",
+    "summary": "Параллельная работа нескольких чатов через общие сессии и очередь runtime"
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,8 +17,8 @@
     ]
   },
   "runtime": {
-    "version": "2.2.6",
-    "minimumHostVersion": "3.7.0",
+    "version": "2.2.7",
+    "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "scripts/trelio-whatsapp.mjs",
       "interpreter": "node"

@@ -1,3 +1,4 @@
+import { parallelSessionRuntime } from './core.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -92,7 +93,7 @@ async function setPhase(next, error = null, httpFailure = {}) {
   phase = next;
   authorizationError = next === 'authorization_failed' ? error : null;
   authorizationHttpFailure = next === 'authorization_failed' ? httpFailure : {};
-  await atomicWrite(path.join(config.directory, 'status.json'), JSON.stringify(state()), config.helper);
+  await atomicWrite(path.join(config.liveDirectory || config.directory, 'status.json'), JSON.stringify(state()), config.helper);
 }
 
 async function readVault() {
@@ -119,20 +120,46 @@ async function readVault() {
     'vault_schema_invalid');
 }
 
+// Shared ciphertext stays in the account vault; the host serializes only
+// short state transactions and compares the exact base read by this worker.
+let snapshotRevision = null, snapshotCredentials = null;
+const credentialRevision = value => JSON.stringify({ credentials: value?.credentials ?? null, authGate: value?.authGate ?? null });
+const parallelHost = () => parallelSessionRuntime({ TRELIO_BROWSER_SESSION_MODULE_URL: config.browserSessionModuleUrl });
+async function readVaultCiphertext() {
+  const file = path.join(config.directory, 'vault.json');
+  try {
+    await verifyPrivate(file, config.helper);
+    requireThat((await fs.stat(file)).size < 6 * 1024 * 1024, 'vault_too_large');
+    return await fs.readFile(file, 'utf8');
+  } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+async function publishVault(encrypted, next) {
+  const runtime = await parallelHost();
+  const result = await runtime.saveBrowserAccountSnapshot({
+    accountDirectory: config.directory, revision: snapshotRevision, bytes: encrypted,
+    read: readVaultCiphertext,
+    write: bytes => atomicWrite(path.join(config.directory, 'vault.json'), bytes, config.helper),
+    retain: bytes => atomicWrite(path.join(config.liveDirectory || config.directory, 'vault-candidate.json'), bytes, config.helper),
+  });
+  requireThat(result.published || credentialRevision(next) === snapshotCredentials, 'saved_credentials_changed');
+  snapshotRevision = result.revision;
+  snapshotCredentials = credentialRevision(next);
+}
 async function save(storage = record.storage) {
   await permit();
   const next = { schema: 1, storage };
-  await atomicWrite(
-    path.join(config.directory, 'vault.json'),
-    encryptRecord(key, config.identity, next),
-    config.helper,
-  );
+  await publishVault(encryptRecord(key, config.identity, next), next);
   record = next;
 }
 
 async function initialize() {
   await permit();
-  await readVault();
+  const runtime = await parallelHost();
+  await runtime.withBrowserAccountState(config.directory, async () => {
+    await readVault();
+    snapshotRevision = runtime.browserSnapshotRevision(await readVaultCiphertext());
+    snapshotCredentials = credentialRevision(record);
+  });
   const playwright = await loadPlaywright(config.browserSessionModuleUrl);
   owned = await launchOwnedBrowser({ playwright, permit, channel: config.channel });
   owned.server.on('close', () => { if (!stopping) void stop(); });
@@ -197,7 +224,7 @@ async function stop() {
   record = null;
   if (config) {
     for (const name of ['control.json', 'lease.json']) {
-      const file = path.join(config.directory, name);
+      const file = path.join(config.liveDirectory || config.directory, name);
       try {
         if (JSON.parse(await fs.readFile(file, 'utf8')).leaseId === config.leaseId) await fs.rm(file);
       } catch {}
@@ -318,7 +345,7 @@ try {
     server.listen(0, '127.0.0.1', resolve);
   });
   await atomicWrite(
-    path.join(config.directory, 'control.json'),
+    path.join(config.liveDirectory || config.directory, 'control.json'),
     JSON.stringify({ leaseId: config.leaseId, port: server.address().port, token }),
     config.helper,
   );

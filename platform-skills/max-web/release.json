@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "max-web",
-    "version": "2.13.1",
-    "summary": "Исправлено скачивание фотографий и альбомов, в том числе когда несколько сообщений имеют одинаковое время и не показывают ID."
+    "version": "2.13.2",
+    "summary": "Параллельная работа нескольких чатов через общие сессии и очередь runtime"
   },
   "connection": {
     "schemaVersion": 1,
@@ -17,8 +17,8 @@
     ]
   },
   "runtime": {
-    "version": "2.13.1",
-    "minimumHostVersion": "3.18.0",
+    "version": "2.13.2",
+    "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "trelio-max.mjs",
       "interpreter": "node"

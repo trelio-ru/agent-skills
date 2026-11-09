@@ -6,6 +6,52 @@
 форму либо явный one-use Agent Secret checkout в поддержанном ниже сценарии;
 пароль, OTP, token и cookie не вводятся через чат или GitHub.
 
+<a id="parallel-skill-sessions"></a>
+
+## Параллельные сценарии
+
+Планируемый host 3.31.0 предоставляет
+`BROWSER_EXECUTION_SESSIONS_API=trelio.browser-execution-sessions/v1` из
+verified `TRELIO_EXECUTION_SESSION_MODULE_URL` (для browser остаётся прежний
+module URL). Сначала публикуется зависимость host; source не делает API live.
+Один observed runtime session владеет live browser/control/lease/stop.
+Account UUID, company assignment, cwd и ambient `CODEX_THREAD_ID` не заменяют
+этого владельца. Auth/key/AAD остаются общими для выбранного аккаунта.
+Без observed owner legacy explicit sessions сохраняются, но изоляция двух
+неразличимых implicit callers не обещается.
+
+Собственный supervisor берёт live root через `browserExecutionDirectory`;
+common persistent/visual browser helpers сами создают независимые contexts.
+Messenger forks переносят native auth stores, включая IndexedDB CryptoKeys,
+без History/passwords/cache. Protected state остаётся encrypted. Account writes
+используют `withBrowserAccountState` и base revision CAS через
+`saveBrowserAccountSnapshot`: late save сохраняет private candidate, не
+перезаписывая новый вход/выход. Provider-owned reconciliation critical metadata
+сохраняет актуальные cookies и независимо проверяет credentials/refusal fence.
+Setup/configure/reset/forget резервируют account и проверяют всех live owners,
+включая legacy root; чужой PID не завершается ради освобождения.
+
+Для единственной SDK/protocol session signed inventory включает
+`trelio-execution-resource.json` (0644, до 1024 bytes):
+`{"schemaVersion":1,"scope":"account"}` либо `device` для физического ресурса.
+Требуются `local-session` и minimum host 3.31.0. Builder проверяет closed schema;
+host сериализует invocation до native IO без replay и продления исходного
+бюджета. Stateless API дополнительный mutex не получают.
+
+`withSharedAccountService` отделяет logical leases чатов от одного физического
+linked device/экрана. Полные операции выполняются по очереди; закрытие одной
+lease не завершает остальных. Последний physical stop предваряется durable
+closing fence; потеря результата разрешает только status/read-back. Для shared
+screen input меняет generation до dispatch: старый кадр другого чата больше
+не разрешает координатный ввод, в том числе после unknown outcome.
+Native start обязан вернуть boolean `reused`: существующий service можно
+подключить только при совпадении с host registry. Legacy/unbound service
+закрывается его исходным владельцем, а не присваивается новому чату.
+Provider scope, sending approvals, request journals, native expiry и реальные
+ограничения сервиса сохраняются. Тестировать нужно два чата, foreign-session
+refusal, close-one/keep-other, CAS conflict, queue и unknown без повторения на
+каждой поддержанной OS. Package schema не доказывает эти behavioral checks.
+
 <a id="email-device-storage"></a>
 
 ## Хранение почты на устройстве

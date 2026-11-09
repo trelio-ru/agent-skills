@@ -5,7 +5,7 @@ import os from 'node:os';
 
 export const LEASE_MS = 30 * 60 * 1000;
 export const SKILL = 'gosuslugi';
-export const RUNTIME_VERSION = '3.6.0';
+export const RUNTIME_VERSION = '3.6.1';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // HTTP failure evidence is deliberately smaller than a browser response: a
 // status and a canonical HTTPS origin cannot contain OAuth paths, queries,
@@ -290,4 +290,40 @@ export function childEnvironment(env = process.env) {
   const keys = ['PATH', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'SystemRoot', 'SYSTEMROOT',
     'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'DISPLAY'];
   return Object.fromEntries(keys.filter(key => env[key]).map(key => [key, env[key]]));
+}
+
+// The verified host owns execution isolation and account-state transactions.
+// Provider code keeps only native credential/AAD and site-specific semantics;
+// it must not recreate a second chat identity or lock implementation.
+export async function parallelSessionRuntime(env = process.env) {
+  const url = String(env.TRELIO_BROWSER_SESSION_MODULE_URL || '');
+  requireThat(url.startsWith('file:'), 'browser_session_host_required');
+  const runtime = await import(url);
+  requireThat(runtime.BROWSER_EXECUTION_SESSIONS_API === 'trelio.browser-execution-sessions/v1',
+    'parallel_sessions_host_required');
+  return runtime;
+}
+
+
+// Cookie revisions rotate independently of saved credentials/refusal fences.
+// Compare the normalized critical record canonically, not JSON key order or a
+// whole-browser snapshot hash. This value stays only in the private worker RAM.
+export function credentialStateRevision(value) {
+  const stable = value => Array.isArray(value) ? value.map(stable)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right, 'en')).map(([key, item]) => [key, stable(item)])) : value;
+  return JSON.stringify(stable({ credentials: value?.credentials
+    ? normalizeCredentials({ ...value.credentials, totp: value.credentials.totp ?? '' }) : null,
+    authGate: value?.authGate ?? null }));
+}
+
+/** Reconcile only this provider's independently fenced critical metadata.
+ * Current browser state/role/legacy fields remain current; a newer credential
+ * or refusal record is never cleared by an older worker's proof. The host
+ * invokes this once inside its opaque shared-account transaction. */
+export function reconcileCredentialState(key, identity, current, next, baseRevision) {
+  requireThat(current !== null, 'saved_credentials_changed');
+  const saved = decryptRecord(key, identity, current);
+  requireThat(credentialStateRevision(saved) === baseRevision, 'saved_credentials_changed');
+  return encryptRecord(key, identity, { ...saved, credentials: next.credentials, authGate: next.authGate });
 }

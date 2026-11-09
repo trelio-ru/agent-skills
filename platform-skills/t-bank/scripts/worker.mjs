@@ -1,3 +1,4 @@
+import { parallelSessionRuntime, credentialStateRevision as credentialRevision, reconcileCredentialState } from './core.mjs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
@@ -36,12 +37,18 @@ lines.on('line', line => {
 async function permit(op = 'permit', extra = {}) {
   requireThat(!stopping, 'session_closed');
   requireThat(!config || Date.now() < config.expiresAt, 'session_expired');
+  if (key && record && snapshotCredentials !== null) {
+    const saved = await readVaultCiphertext();
+    requireThat(saved !== null && credentialRevision(decryptRecord(key, config.identity, saved)) === snapshotCredentials,
+      'saved_credentials_changed');
+  }
   const id = ++sequence;
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const timer = setTimeout(() => { pending.delete(id); reject(new RuntimeError('guardian_unavailable')); void stop(); }, 2000);
     pending.set(id, { resolve: () => { clearTimeout(timer); resolve(); }, reject });
     process.stdout.write(`${JSON.stringify({ op, id, ...extra })}\n`);
   });
+
 }
 let stopping = false, config, server, owned, portal, localPage, localContext, prompt, key, record, phase = 'starting';
 let phaseReason = null;
@@ -67,13 +74,46 @@ async function setPhase(next, reason = null) {
   // Only fixed control-flow reasons may leave the private worker. They explain
   // why T-ID stopped without exposing headings, DOM, credentials or OTP data.
   phaseReason = next === 'user_required' && SAFE_AUTH_PHASE_REASONS.has(reason) ? reason : null;
-  await atomicWrite(path.join(config.directory, 'status.json'), JSON.stringify(state()), config.helper);
+  await atomicWrite(path.join(config.liveDirectory || config.directory, 'status.json'), JSON.stringify(state()), config.helper);
+}
+// Shared ciphertext stays in the account vault; the host serializes only
+// short state transactions and compares the exact base read by this worker.
+let snapshotRevision = null, snapshotCredentials = null;
+const parallelHost = () => parallelSessionRuntime({ TRELIO_BROWSER_SESSION_MODULE_URL: config.browserSessionModuleUrl });
+async function readVaultCiphertext() {
+  const file = path.join(config.directory, 'vault.json');
+  try {
+    await verifyPrivate(file, config.helper);
+    requireThat((await fs.stat(file)).size < 6 * 1024 * 1024, 'vault_too_large');
+    return await fs.readFile(file, 'utf8');
+  } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+async function publishVault(encrypted, next) {
+  const runtime = await parallelHost();
+  let metadataOnly = false;
+  const result = await runtime.saveBrowserAccountSnapshot({
+    accountDirectory: config.directory, revision: snapshotRevision, bytes: encrypted,
+    read: readVaultCiphertext,
+    write: bytes => atomicWrite(path.join(config.directory, 'vault.json'), bytes, config.helper),
+    retain: bytes => atomicWrite(path.join(config.liveDirectory || config.directory, 'vault-candidate.json'), bytes, config.helper),
+    reconcile: current => {
+      if (credentialRevision(next) === snapshotCredentials) return null;
+      const encrypted = reconcileCredentialState(key, config.identity, current, next, snapshotCredentials);
+      metadataOnly = true;
+      return encrypted;
+    },
+  });
+  requireThat(result.published || credentialRevision(next) === snapshotCredentials, 'saved_credentials_changed');
+  // Reconciled metadata does not bless this worker's older browser snapshot.
+  // Its subsequent storage save must still conflict against the original base.
+  if (!metadataOnly) snapshotRevision = result.revision;
+  snapshotCredentials = credentialRevision(next);
 }
 async function save(storage = record.storage) {
   await permit();
   const next = { schema: 1, credentials: record.credentials, storage };
   const encrypted = encryptRecord(key, config.identity, next);
-  await atomicWrite(path.join(config.directory, 'vault.json'), encrypted, config.helper); record = next;
+  await publishVault(encrypted, next); record = next;
 }
 async function closePrompt() {
   prompt?.close(); prompt = null;
@@ -143,20 +183,39 @@ async function initialize() {
       onLost: stop,
     });
   }
-  key = await vaultKey(config.helper, config.keyHelper, config.directory,
-    identityKey(config.identity), !exists, config.requestTitle);
-  await permit();
+  // Existing immutable keys need fresh OS consent for THIS worker, but no
+  // account transaction is held while the person answers that dialog. Other
+  // chats can keep saving/reading their browser state. Destructive/setup leases
+  // are already excluded atomically by the CLI's account reservation.
   if (exists) {
-    record = decryptRecord(key, config.identity, await fs.readFile(vault, 'utf8'));
-    requireThat(record.schema === 1 && (record.credentials === null || typeof record.credentials?.password === 'string'), 'vault_schema_invalid');
-    if (!record.credentials) record = null;
-    else record.credentials = normalizeCredentials({ ...record.credentials, totp: record.credentials.totp ?? '' });
-  } else {
-    // Persist an encrypted empty record before opening the form. Cancelling
-    // setup can then reuse the already-created OS key on the next attempt.
-    // An OS key is never silently overwritten to recover an ambiguous failure.
-    await atomicWrite(vault, encryptRecord(key, config.identity, { schema: 1, credentials: null, storage: null }), config.helper);
+    key = await vaultKey(config.helper, config.keyHelper, config.directory,
+      identityKey(config.identity), false, config.requestTitle);
+    await permit();
   }
+  const runtime = await parallelHost();
+  await runtime.withBrowserAccountState(config.directory, async () => {
+    const initialCiphertext = await readVaultCiphertext();
+    requireThat(!exists || initialCiphertext !== null, 'saved_credentials_changed');
+    exists = initialCiphertext !== null;
+    if (!key) {
+      key = await vaultKey(config.helper, config.keyHelper, config.directory,
+        identityKey(config.identity), !exists, config.requestTitle);
+      await permit();
+    }
+    if (exists) {
+      record = decryptRecord(key, config.identity, initialCiphertext);
+      requireThat(record.schema === 1 && (record.credentials === null || typeof record.credentials?.password === 'string'), 'vault_schema_invalid');
+      if (!record.credentials) record = null;
+      else record.credentials = normalizeCredentials({ ...record.credentials, totp: record.credentials.totp ?? '' });
+    } else {
+      // Persist an encrypted empty record before opening the form. Cancelling
+      // setup can then reuse the already-created OS key on the next attempt.
+      // An OS key is never silently overwritten to recover an ambiguous failure.
+      await atomicWrite(vault, encryptRecord(key, config.identity, { schema: 1, credentials: null, storage: null }), config.helper);
+    }
+    snapshotRevision = runtime.browserSnapshotRevision(await readVaultCiphertext());
+    snapshotCredentials = credentialRevision(record);
+  });
   if (config.authorization) {
     requireThat(record?.credentials, 'credentials_required');
     await authenticate();
@@ -194,7 +253,7 @@ async function stop() {
   await owned?.server.close().catch(() => {});
   if (config) {
     for (const name of ['control.json', 'lease.json']) {
-      const file = path.join(config.directory, name);
+      const file = path.join(config.liveDirectory || config.directory, name);
       try { if (JSON.parse(await fs.readFile(file, 'utf8')).leaseId === config.leaseId) await fs.rm(file); } catch {}
     }
     if (!['configured', 'forgotten', 'authorized'].includes(phase)) { phase = 'closed'; await setPhase(phase).catch(() => {}); }
@@ -291,7 +350,7 @@ try {
   server.on('connection', socket => socket.setTimeout(15000, () => socket.destroy()));
   server.on('clientError', (_error, socket) => socket.destroy());
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-  await atomicWrite(path.join(config.directory, 'control.json'), JSON.stringify({ leaseId: config.leaseId, port: server.address().port, token }), config.helper);
+  await atomicWrite(path.join(config.liveDirectory || config.directory, 'control.json'), JSON.stringify({ leaseId: config.leaseId, port: server.address().port, token }), config.helper);
   await setPhase('starting');
   void initialize().catch(async error => {
     finalError = error instanceof RuntimeError ? error.code : 'initialization_failed';

@@ -5,7 +5,7 @@ import path from 'node:path';
 
 export const LEASE_MS = 30 * 60 * 1000;
 export const SKILL = 'gas-pravosudie';
-export const RUNTIME_VERSION = '1.0.13';
+export const RUNTIME_VERSION = '1.0.14';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // HTTP failure evidence is deliberately smaller than a browser response: a
@@ -204,4 +204,16 @@ export function childEnvironment(env = process.env) {
     'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'DISPLAY',
   ];
   return Object.fromEntries(keys.filter(key => env[key]).map(key => [key, env[key]]));
+}
+
+// The verified host owns execution isolation and account-state transactions.
+// Provider code keeps only native credential/AAD and site-specific semantics;
+// it must not recreate a second chat identity or lock implementation.
+export async function parallelSessionRuntime(env = process.env) {
+  const url = String(env.TRELIO_BROWSER_SESSION_MODULE_URL || '');
+  requireThat(url.startsWith('file:'), 'browser_session_host_required');
+  const runtime = await import(url);
+  requireThat(runtime.BROWSER_EXECUTION_SESSIONS_API === 'trelio.browser-execution-sessions/v1',
+    'parallel_sessions_host_required');
+  return runtime;
 }

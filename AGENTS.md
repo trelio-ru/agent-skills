@@ -118,6 +118,8 @@ creation evidence и exact membership read-back; missing invitees не разр�
 удаляет Telegram account. Перед lock/traversal/unlink очистка проверяет все
 ancestors, включая Windows junction/reparse points.
 
+Параллельные чаты/private skills используют [общий runtime-контракт](docs/agent-skill-connections.md#parallel-skill-sessions): отдельный live owner, общий auth/CAS, resource queue без replay. Алгоритмы не копируются в provider.
+
 Для нескольких личных аккаунтов читай [общий контракт](docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов): каталог и company bindings принадлежат host, protected storage и вход – provider-у.
 Для WhatsApp discovery, recency, date-only поиска, coverage и browser fallback
 читай [контракт WhatsApp](docs/whatsapp-web-agent-skill.md#поиск-последней-переписки).

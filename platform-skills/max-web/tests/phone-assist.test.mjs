@@ -1,3 +1,4 @@
+import './host-runtime-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,7 +29,7 @@ test("MAX permits only the exact home phone search action in read-only assist", 
 
 test("MAX cold contact lookup survives the actual read-only browser event fence", async () => {
   const previous = process.env.TRELIO_CONFIG_HOME;
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "max-phone-assist-"));
+  const temporary = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "max-phone-assist-")));
   process.env.TRELIO_CONFIG_HOME = temporary;
   try {
     const home = '<aside><input id="search" type="search" placeholder="Поиск">'

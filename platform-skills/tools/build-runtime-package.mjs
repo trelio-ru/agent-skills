@@ -603,6 +603,25 @@ export const buildRuntimePackage = (
     throw new Error("An executable entrypoint must use mode 0755.");
   }
 
+  // Scheduling policy is code authority only when it travels in the SAME
+  // content-addressed inventory. Reject malformed opt-ins before an author can
+  // review/publish a package that the host would later refuse to execute.
+  const resource = files.find(file => file.path === 'trelio-execution-resource.json');
+  if (resource) {
+    const bytes = Buffer.from(resource.contentBase64, 'base64');
+    let policy;
+    try { policy = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch {}
+    if (bytes.length > 1024 || resource.mode !== 420 || !policy || Array.isArray(policy)
+        || Object.keys(policy).sort().join() !== 'schemaVersion,scope' || policy.schemaVersion !== 1
+        || !['account', 'device'].includes(policy.scope) || !definition.capabilities.includes('local-session')) {
+      throw new Error('Invalid signed execution resource policy.');
+    }
+    const parts = definition.runtime.minimumHostVersion.split('.').map(Number);
+    if (parts[0] < 3 || parts[0] === 3 && parts[1] < 31) {
+      throw new Error('Execution resource policy requires minimumHostVersion 3.31.0 or newer.');
+    }
+  }
+
   // Property order and compact JSON are fixed so identical source produces
   // identical package bytes and therefore the same package SHA-256 everywhere.
   const runtimePackage = {

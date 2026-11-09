@@ -3,7 +3,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
-  readFile,
+  readFile, realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -18,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   IphoneMirroringRuntimeError,
   buildHelperInvocation,
-  runRuntime,
+  runRuntime, runSkillRuntime,
 } from "../scripts/trelio-iphone-mirroring.mjs";
 import { buildRuntimePackage } from "../../tools/build-runtime-package.mjs";
 
@@ -69,9 +69,9 @@ test("release packages the cross-platform gate and every native source", async (
   const packagePaths = release.runtime.files.map((file) => file.path).sort();
 
   assert.equal(release.release.skillId, "iphone-mirroring");
-  assert.equal(release.release.version, "2.2.1");
+  assert.equal(release.release.version, "2.2.2");
   assert.equal(release.connection, null);
-  assert.equal(release.runtime.version, "2.2.1");
+  assert.equal(release.runtime.version, "2.2.2");
   assert.equal(release.runtime.entrypoint.interpreter, "node");
   assert.equal(release.runtime.entrypoint.path, "trelio-iphone-mirroring.mjs");
   assert.deepEqual(release.runtime.capabilities, ["local-session"]);
@@ -464,5 +464,60 @@ test("compact output and one-shot observation preserve input evidence and privat
     assert.match(result.stdout, /Runtime output regressions passed/u);
   } finally {
     await rm(buildDirectory, { recursive: true, force: true });
+  }
+});
+
+
+test('two chat adapters share one synthetic native device with independent leases and stale-screen fencing', {
+  skip: process.platform !== 'darwin', timeout: 15000,
+}, async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'trelio-iphone-parallel-adapter-')));
+  const keys = ['TRELIO_CONFIG_HOME', 'TRELIO_SKILL_RUNTIME_SESSION_ID', 'TRELIO_EXECUTION_SESSION_MODULE_URL'];
+  const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  try {
+    await mkdir(path.join(root, 'scripts'));
+    await writeFile(path.join(root, 'scripts', 'mirrorctl'), `
+if [[ "$1 $2" == "session stop" ]]; then
+  print '{"sessionID":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","active":false,"exitReason":"explicit_stop"}'
+elif [[ "$1 $2" == "session start" ]]; then
+  if [[ -e "\${0:A:h}/started" ]]; then
+    print '{"sessionID":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","active":true,"reused":true,"hard_remaining":60,"output":"/synthetic/frame.png"}'
+  else
+    touch "\${0:A:h}/started"
+    print '{"sessionID":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","active":true,"reused":false,"hard_remaining":60,"output":"/synthetic/frame.png"}'
+  fi
+else
+  print '{"sessionID":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","active":true,"hard_remaining":60,"output":"/synthetic/frame.png"}'
+fi
+`);
+    process.env.TRELIO_CONFIG_HOME = root;
+    process.env.TRELIO_EXECUTION_SESSION_MODULE_URL = new URL('../../../_contracts/agent-workspaces-runtime/host-runtime/scripts/trelio-browser-session.mjs', import.meta.url).href;
+    const call = async (owner, args) => {
+      process.env.TRELIO_SKILL_RUNTIME_SESSION_ID = owner;
+      const original = process.stdout.write; let output = '';
+      process.stdout.write = value => { output += value; return true; };
+      try {
+        assert.equal(await runSkillRuntime(args, { moduleUrl: pathToFileURL(path.join(root, 'runtime.mjs')).href }), 0);
+        return JSON.parse(output);
+      } finally { process.stdout.write = original; }
+    };
+    const a = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', b = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    await writeFile(path.join(root, 'scripts', 'started'), 'synthetic-legacy');
+    await assert.rejects(call(a, ['session', 'start', '--compact', '--observe']), { code: 'BROWSER_SESSION_UNREGISTERED_SERVICE' });
+    assert.equal(await readFile(path.join(root, 'scripts', 'started'), 'utf8'), 'synthetic-legacy');
+    await rm(path.join(root, 'scripts', 'started'));
+    const first = await call(a, ['session', 'start', '--compact', '--observe']);
+    const second = await call(b, ['session', 'start', '--compact', '--observe']);
+    assert.notEqual(first.sessionID, second.sessionID);
+    await call(a, ['home', '--session', first.sessionID, '--compact', '--observe']);
+    await assert.rejects(call(b, ['click', '--session', second.sessionID, '--x', '0.5', '--y', '0.5']), { code: 'BROWSER_SESSION_OBSERVATION_STALE' });
+    await call(b, ['screenshot', '--session', second.sessionID, '--compact']);
+    await call(b, ['click', '--session', second.sessionID, '--x', '0.5', '--y', '0.5']);
+    assert.equal((await call(a, ['session', 'stop', '--session', first.sessionID])).sharedServiceActive, true);
+    assert.equal((await call(b, ['session', 'status', '--session', second.sessionID])).active, true);
+    assert.equal((await call(b, ['session', 'stop', '--session', second.sessionID])).active, false);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await rm(root, { recursive: true, force: true });
   }
 });

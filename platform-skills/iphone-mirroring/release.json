@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "iphone-mirroring",
-    "version": "2.2.1",
-    "summary": "Старт и повторное подключение дожидаются рабочего экрана iPhone. Серые переходные кадры больше не считаются подключением; проверяются системная навигация и два последовательных снимка."
+    "version": "2.2.2",
+    "summary": "Параллельная работа нескольких чатов через общие сессии и очередь runtime"
   },
   "connection": null,
   "runtime": {
-    "version": "2.2.1",
-    "minimumHostVersion": "1.4.0",
+    "version": "2.2.2",
+    "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "trelio-iphone-mirroring.mjs",
       "interpreter": "node"

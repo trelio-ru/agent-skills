@@ -22,13 +22,19 @@ const SKILL_ID = "telegram-web";
 const TELEGRAM_WEB_URL = "https://web.telegram.org/k/";
 const TELEGRAM_WEB_ORIGIN = new URL(TELEGRAM_WEB_URL).origin;
 let browserSessionRuntimePromise = null;
-const browserSessionRuntime = () => {
+let executionDirectory = null;
+const browserSessionRuntime = async () => {
   const moduleUrl = String(process.env.TRELIO_BROWSER_SESSION_MODULE_URL || "");
   if (!moduleUrl.startsWith("file:")) {
     throw new Error("Telegram Web requires the host browser-session runtime.");
   }
   browserSessionRuntimePromise ||= import(moduleUrl);
-  return browserSessionRuntimePromise;
+  const runtime = await browserSessionRuntimePromise;
+  if (process.env.TRELIO_SKILL_RUNTIME_SESSION_ID && runtime.BROWSER_EXECUTION_SESSIONS_API !== 'trelio.browser-execution-sessions/v1') {
+    throw new Error('parallel_sessions_host_required');
+  }
+  executionDirectory = runtime.browserExecutionDirectory || (directory => directory);
+  return runtime;
 };
 // HTTP status is checked before DOM/login classification. The shared host
 // observes only the current main document; provider authority stays here.
@@ -557,8 +563,15 @@ const downloadsPath = (options) => options.account
   "downloads",
 );
 
+// Account storage remains shared, while assist controllers, snapshots and
+// shutdown authority belong to the current host-observed execution owner.
+const liveConnectionRoot = options => {
+  if (!executionDirectory && process.env.TRELIO_SKILL_RUNTIME_SESSION_ID) throw new Error('parallel_sessions_host_required');
+  return executionDirectory ? executionDirectory(connectionRoot(options)) : connectionRoot(options);
+};
+
 const assistSessionPath = (options) => path.join(
-  connectionRoot(options),
+  liveConnectionRoot(options),
   "state",
   "assist-session.json",
 );
@@ -582,7 +595,7 @@ const processIsAlive = (pid) => {
 };
 
 const withAssistStartLock = async (options, callback) => {
-  const lock = path.join(connectionRoot(options), "locks", "assist-start.lock");
+  const lock = path.join(liveConnectionRoot(options), "locks", "assist-start.lock");
   ensurePrivateDirectory(path.dirname(lock));
   try {
     fs.mkdirSync(lock, { mode: 0o700 });
@@ -2783,7 +2796,7 @@ const removeAssistSessionIfExact = (options, sessionId) => {
     const current = readAssistSession(options);
     if (current?.sessionId === sessionId) {
       fs.rmSync(file, { force: true });
-      fs.rmSync(path.join(connectionRoot(options), 'state', 'assist-snapshots', sessionId),
+      fs.rmSync(path.join(liveConnectionRoot(options), 'state', 'assist-snapshots', sessionId),
         { recursive: true, force: true });
     }
   } catch {
@@ -3213,6 +3226,7 @@ const assertAssistActionAllowed = ({ config, snapshot, packet, fingerprint, now 
 };
 
 const runAssistWorker = async () => {
+  await browserSessionRuntime();
   const config = readAssistWorkerConfig();
   const options = {
     account: readAccountBinding(),
@@ -3371,7 +3385,7 @@ const runAssistWorker = async () => {
           bytes.fill(0);
           throw new TelegramWebRuntimeError('TELEGRAM_ASSIST_SNAPSHOT_CHANGED', 'The Telegram Web page changed during its screenshot. Take a fresh snapshot.');
         }
-        const directory = path.join(connectionRoot(options), 'state', 'assist-snapshots', config.sessionId);
+        const directory = path.join(liveConnectionRoot(options), 'state', 'assist-snapshots', config.sessionId);
         ensurePrivateDirectory(directory);
         const screenshotPath = path.join(directory, `${randomUUID()}.png`);
         try {
@@ -3567,7 +3581,7 @@ const runAssistWorker = async () => {
         clearTimeout(timer);
         if (pendingTransfers.size > 0) await Promise.allSettled([...pendingTransfers]);
         await new Promise((resolve) => server.close(resolve));
-        fs.rmSync(path.join(connectionRoot(options), 'state', 'assist-snapshots', config.sessionId),
+        fs.rmSync(path.join(liveConnectionRoot(options), 'state', 'assist-snapshots', config.sessionId),
           { recursive: true, force: true });
       }
       if (interactionFailure) throw interactionFailure;
@@ -4385,6 +4399,7 @@ const main = async () => {
     output({ ok: true, policy: loadPolicy(options), path: policyPath(options) });
     return;
   }
+  if (options.command.startsWith("assist-")) await browserSessionRuntime();
   if (options.command === "assist-start") {
     output({ ok: true, ...(await startAssistSession(options)) });
     return;

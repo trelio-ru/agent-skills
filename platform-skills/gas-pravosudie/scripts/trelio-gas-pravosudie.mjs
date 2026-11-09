@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { parallelSessionRuntime } from './core.mjs';
 import { getInstructionGuides } from './instruction-guides.mjs';
 import { validateWaitOptions, waitForSessionChange, withSessionContinuation, finishedReceiptPhase } from './session-wait.mjs';
 
@@ -215,7 +216,7 @@ async function leaseAlive(lease) {
 }
 
 async function doctor(directory, helper) {
-  const lease = await optionalJson(path.join(directory, 'lease.json'), helper);
+  const lease = await optionalJson(path.join((await parallelSessionRuntime()).browserExecutionDirectory(directory), 'lease.json'), helper);
   let storedSession = false;
   try { await verifyPrivate(path.join(directory, 'vault.json'), helper); storedSession = true; }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -262,13 +263,29 @@ export async function run(args, statusTimeoutMs = 30000) {
   }
   if (command === 'doctor') return doctor(directory, helper);
 
-  let lease = await optionalJson(path.join(directory, 'lease.json'), helper);
-  const control = await optionalJson(path.join(directory, 'control.json'), helper);
+  // Account credentials remain reusable; command-plane records belong only
+  // to this execution owner, including stop/recovery and their native lease.
+  const execution = await parallelSessionRuntime();
+  const liveDirectory = execution.browserExecutionDirectory(directory);
+  await ensurePrivateDirectory(liveDirectory, helper);
+  const accountAvailable = async exclusive => {
+    for (const ownerDirectory of await execution.browserExecutionDirectories(directory)) {
+      const previous = await optionalJson(path.join(ownerDirectory, 'lease.json'), helper);
+      if (previous && await leaseAlive(previous)) requireThat(
+        !exclusive && !previous.exclusiveAccount && ownerDirectory !== directory && ownerDirectory !== liveDirectory,
+        'stop_existing_account_session_first');
+    }
+  };
+  let lease = await optionalJson(path.join(liveDirectory, 'lease.json'), helper);
+  const control = await optionalJson(path.join(liveDirectory, 'control.json'), helper);
 
   if (command === 'forget') {
-    requireThat(!lease || !await leaseAlive(lease), 'stop_existing_session_first');
-    await deleteVaultKey(helper, directory, identityKey(identity));
-    await fs.rm(path.join(directory, 'vault.json'), { force: true });
+    await execution.withBrowserAccountState(directory, async () => {
+      await accountAvailable(true);
+      requireThat(!lease || !await leaseAlive(lease), 'stop_existing_session_first');
+      await deleteVaultKey(helper, directory, identityKey(identity));
+      await fs.rm(path.join(directory, 'vault.json'), { force: true });
+    });
     return { phase: 'forgotten', localSessionRemoved: true };
   }
 
@@ -282,9 +299,9 @@ export async function run(args, statusTimeoutMs = 30000) {
       return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt });
     }
     if (lease) {
-      await fs.rm(path.join(directory, 'lease.json'), { force: true });
+      await fs.rm(path.join(liveDirectory, 'lease.json'), { force: true });
       if (control && control.leaseId === lease.leaseId) {
-        await fs.rm(path.join(directory, 'control.json'), { force: true });
+        await fs.rm(path.join(liveDirectory, 'control.json'), { force: true });
       }
     }
     // Keychain access is explicitly non-interactive for this non-financial
@@ -299,8 +316,11 @@ export async function run(args, statusTimeoutMs = 30000) {
       expiresAt: now + LEASE_MS,
       guardPid: null,
     };
-    const leaseFile = path.join(directory, 'lease.json');
-    await createPrivateFile(leaseFile, JSON.stringify(lease), helper);
+    const leaseFile = path.join(liveDirectory, 'lease.json');
+    await execution.withBrowserAccountState(directory, async () => {
+      await accountAvailable(false);
+      await createPrivateFile(leaseFile, JSON.stringify(lease), helper);
+    });
     const child = spawn(helper, [
       'guard', process.execPath, path.join(SOURCE, 'worker.mjs'), String(LEASE_MS),
     ], {
@@ -323,6 +343,7 @@ export async function run(args, statusTimeoutMs = 30000) {
         identity,
         root,
         directory,
+        liveDirectory,
         helper,
         channel: options['--channel'],
         // The detached worker receives no ambient host bindings. Passing the
@@ -345,7 +366,7 @@ export async function run(args, statusTimeoutMs = 30000) {
 
   if (['status', 'stop'].includes(command) && lease && !await leaseAlive(lease)) {
     requireThat(options['--session'] === lease.leaseId, 'exact_session_required');
-    const last = await optionalJson(path.join(directory, 'status.json'), helper);
+    const last = await optionalJson(path.join(liveDirectory, 'status.json'), helper);
     return {
       sessionId: lease.leaseId,
       phase: 'closed',
@@ -355,7 +376,7 @@ export async function run(args, statusTimeoutMs = 30000) {
     };
   }
   if (command === 'status' && (!lease || !control)) {
-    const last = await optionalJson(path.join(directory, 'status.json'), helper);
+    const last = await optionalJson(path.join(liveDirectory, 'status.json'), helper);
     if (lease && !control && options['--session'] === lease.leaseId &&
       last?.sessionId !== lease.leaseId && await leaseAlive(lease))
       return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };

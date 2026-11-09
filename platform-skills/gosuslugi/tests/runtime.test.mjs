@@ -909,8 +909,8 @@ test('a submitted local form returns configured through wait after cleanup, with
 });
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
-  assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.24.0');
-  assert.equal(release.release.version, '4.6.0');
+  assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.31.0');
+  assert.equal(release.release.version, '4.6.1');
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: 'protected-snapshot',
@@ -987,4 +987,28 @@ for (const mode of ['hang', 'crash', 'guard-crash', 'elapsed-lease']) test(`nati
 });
 test('native guardian refuses a lease exceeding 30 minutes before spawning a worker', { skip: !supported }, async () => {
   await assert.rejects(runPrivate(helper, ['guard', process.execPath, fileURLToPath(new URL('guardian-worker.mjs', import.meta.url)), String(LEASE_MS + 1)], { input: '{}\n' }));
+});
+
+import { registerParallelSessionContract } from '../../tools/parallel-session-contract.mjs';
+import * as parallelCore from '../scripts/core.mjs';
+import * as parallelNative from '../scripts/native.mjs';
+registerParallelSessionContract(new URL('../', import.meta.url), { identity, storageDirectory: parallelCore.storageDirectory,
+  version: parallelCore.RUNTIME_VERSION, childEnvironment: parallelCore.childEnvironment, ...parallelNative });
+
+
+test('parallel metadata reconciliation keeps newer browser state and refuses a stale credential/refusal proof', () => {
+  const { credentialStateRevision: revision, reconcileCredentialState: reconcile } = parallelCore;
+  const key = crypto.randomBytes(32);
+  const base = { schema: 1, credentials: { login: '+70000000000', password: 'synthetic-only', totp: '' }, storage: { version: 1 } };
+  const newer = { ...base, storage: { version: 2 }, retainedLegacyField: true };
+  const next = { ...base, authGate: { schema: 1, reason: 'credentials_rejected', observedAt: 1, retryAt: null } };
+  const saved = encryptRecord(key, identity, newer);
+  const result = decryptRecord(key, identity, reconcile(key, identity, saved, next, revision(base)));
+  assert.deepEqual(result.storage, newer.storage);
+  assert.deepEqual(result.authGate, next.authGate);
+  assert.equal(result.retainedLegacyField, true);
+  assert.equal(revision(base), revision({ ...base, credentials: { totp: '', password: 'synthetic-only', login: '+70000000000' } }));
+  assert.throws(() => reconcile(key, identity, encryptRecord(key, identity, next), base, revision(base)), /saved_credentials_changed/);
+  assert.throws(() => reconcile(key, identity, null, next, revision(base)), /saved_credentials_changed/);
+  key.fill(0);
 });

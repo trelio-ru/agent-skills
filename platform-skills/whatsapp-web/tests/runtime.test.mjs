@@ -536,3 +536,73 @@ test('non-financial native key store reuses a synthetic key with encryption and 
     await fs.rm(root,{recursive:true,force:true});
   }
 });
+
+test('two real WhatsApp chat CLIs share a queued service but cannot stop each other', {
+  skip: !['darwin', 'win32'].includes(process.platform), timeout: 60000,
+}, async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { fileURLToPath } = await import('node:url');
+  const { storageDirectory } = await import('../scripts/core.mjs');
+  const { atomicWrite } = await import('../scripts/native.mjs');
+  const execute = promisify(execFile);
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'whatsapp-parallel-cli-')));
+  const moduleUrl = new URL('../../../_contracts/agent-workspaces-runtime/host-runtime/scripts/trelio-browser-session.mjs', import.meta.url).href;
+  const company = crypto.randomUUID(), member = crypto.randomUUID(), connection = crypto.randomUUID();
+  const identity = identityFromEnv({ TRELIO_SKILL_ID: 'whatsapp-web', TRELIO_SKILL_COMPANY_ID: company,
+    TRELIO_SKILL_MEMBER_ID: member, TRELIO_SKILL_CONNECTION_ID: connection });
+  const physical = crypto.randomUUID(), owners = [crypto.randomUUID(), crypto.randomUUID()];
+  let guardian, guardianClosed, server, stops = 0, activeRequests = 0, requests = 0;
+  try {
+    const helper = await nativeHelper(root), directory = storageDirectory(root, identity);
+    await ensurePrivateDirectory(directory, helper);
+    guardian = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { windowsHide: true, stdio: 'ignore', shell: false });
+    guardianClosed = new Promise(resolve => guardian.once('close', resolve));
+    await new Promise((resolve, reject) => { guardian.once('spawn', resolve); guardian.once('error', reject); });
+    const expiresAt = Date.now() + 60000;
+    server = http.createServer(async (request, response) => {
+      let body = ''; for await (const chunk of request) body += chunk;
+      const packet = JSON.parse(body); assert.equal(packet.sessionId, physical);
+      if (packet.command === 'stop') { stops++; guardian.kill(); }
+      if (packet.command === 'dialogs') {
+        activeRequests++; assert.equal(activeRequests, 1, 'the common host queue spans separate provider processes');
+        await new Promise(resolve => setTimeout(resolve, 30)); requests++; activeRequests--;
+      }
+      response.end(JSON.stringify({ phase: packet.command === 'stop' ? 'closed' : 'ready', sessionId: physical, expiresAt }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    await atomicWrite(path.join(directory, 'lease.json'), JSON.stringify({ leaseId: physical, runtimeVersion: RUNTIME_VERSION,
+      transport: 'browser', browserStorage: 'local_profile', headless: false, startedAt: Date.now(), expiresAt, guardPid: guardian.pid }), helper);
+    await atomicWrite(path.join(directory, 'control.json'), JSON.stringify({ leaseId: physical, port: server.address().port, token: 'a'.repeat(64) }), helper);
+    const input = path.join(root, 'request.json');
+    await atomicWrite(input, JSON.stringify({ command: 'dialogs', limit: 1 }), helper);
+    const call = async (index, args) => JSON.parse((await execute(process.execPath,
+      [fileURLToPath(new URL('../scripts/trelio-whatsapp.mjs', import.meta.url)), ...args], {
+        timeout: 15000, windowsHide: true, encoding: 'utf8', env: { ...childEnvironment(), TRELIO_CONFIG_HOME: root,
+          TRELIO_SKILL_ID: 'whatsapp-web', TRELIO_SKILL_COMPANY_ID: company, TRELIO_SKILL_MEMBER_ID: member,
+          TRELIO_SKILL_CONNECTION_ID: connection, TRELIO_SKILL_CONNECTION_CONFIG_JSON: '{}',
+          TRELIO_SKILL_RUNTIME_SESSION_ID: owners[index], TRELIO_BROWSER_SESSION_MODULE_URL: moduleUrl },
+      })).stdout);
+    // A running native service without the host's ownership record may belong
+    // to an older/unbound chat. Never adopt it and later stop that chat's worker.
+    await assert.rejects(call(0, ['start', '--mode', 'browser'])); assert.equal(stops, 0);
+    // This synthetic native fixture stands in for a freshly created service;
+    // normal production start persists this structural registry in the host.
+    await atomicWrite(path.join(directory, 'service-sessions.json'), JSON.stringify({
+      schemaVersion: 2, serviceId: physical, expiresAt, generation: 0, owners: {},
+    }), helper);
+    const a = await call(0, ['start', '--mode', 'browser']), b = await call(1, ['start', '--mode', 'browser']);
+    assert.notEqual(a.sessionId, b.sessionId); assert.notEqual(a.sessionId, physical);
+    await Promise.all([call(0, ['request', '--session', a.sessionId, '--input', input]), call(1, ['request', '--session', b.sessionId, '--input', input])]);
+    assert.equal(requests, 2);
+    await assert.rejects(call(0, ['stop', '--session', b.sessionId])); assert.equal(stops, 0);
+    assert.equal((await call(0, ['stop', '--session', a.sessionId])).phase, 'closed'); assert.equal(stops, 0);
+    assert.equal((await call(1, ['status', '--session', b.sessionId])).phase, 'ready');
+    assert.equal((await call(1, ['stop', '--session', b.sessionId])).phase, 'closed'); assert.equal(stops, 1);
+  } finally {
+    if (guardian?.exitCode === null && guardian?.signalCode === null) guardian.kill();
+    await guardianClosed;
+    if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});

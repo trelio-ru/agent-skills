@@ -104,7 +104,7 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     assert.match(source, /`views`/u);
     assert.match(source, /views=null|`null`/u);
   }
-  assert.equal(releaseManifest.release.version, "2.16.5");
+  assert.equal(releaseManifest.release.version, "2.16.6");
   // Publication binds this reviewed source summary to the immutable release;
   // the catalog title/description must not become an inferred routing fallback.
   assert.match(releaseManifest.release.routingSummary, /^[\x20-\x7e]{12,180}$/u);
@@ -112,7 +112,7 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
   // Keep the executable protocol version independent of the catalog patch.
   // Common host original-audio admission requires this reviewed 2.17 ABI.
-  assert.equal(releaseManifest.runtime.version, "2.17.0");
+  assert.equal(releaseManifest.runtime.version, "2.17.1");
   assert.deepEqual(releaseManifest.runtime.files.filter(file=>file.path==='trelio-source-media.json'),
     [{source:'scripts/trelio-source-media.json',path:'trelio-source-media.json',mode:420}]);
   assert.deepEqual(JSON.parse(await readFile(new URL('scripts/trelio-source-media.json',skillRoot),'utf8')),
@@ -196,4 +196,12 @@ test("Telegram package embeds only the declared distributable release input", ()
   );
   assert.equal(runtimePackage.files.length, releaseManifest.runtime.files.length);
   assert.deepEqual(runtimePackage.capabilities, ["local-session", "network", "local-accounts-v1"]);
+});
+
+
+test('Telegram declares its indivisible protocol session to the common runtime queue', () => {
+  assert.equal(releaseManifest.runtime.minimumHostVersion, '3.31.0');
+  const marker = releaseManifest.runtime.files.find(file => file.path === 'trelio-execution-resource.json');
+  assert.ok(marker);
+  assert.equal(marker.mode, 420);
 });

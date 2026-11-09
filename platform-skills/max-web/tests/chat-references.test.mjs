@@ -1,3 +1,4 @@
+import './host-runtime-fixture.mjs';
 import { readSkillInstructions } from "../../tools/read-skill-instructions.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -26,7 +27,7 @@ const options = { ...identity, command: "read", chat: "Виктория", contex
 // No test is allowed to discover or modify the owner's actual MAX profile.
 const withJournal = async (action) => {
   const previous = process.env.TRELIO_CONFIG_HOME;
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "max-chat-references-"));
+  const temporary = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "max-chat-references-")));
   process.env.TRELIO_CONFIG_HOME = temporary;
   try { await action(); } finally {
     if (previous === undefined) delete process.env.TRELIO_CONFIG_HOME;

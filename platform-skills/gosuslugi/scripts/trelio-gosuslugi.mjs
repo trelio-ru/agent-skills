@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { parallelSessionRuntime } from './core.mjs';
 import { validateWaitOptions, waitForSessionChange, withSessionContinuation, finishedReceiptPhase } from './session-wait.mjs';
 import { getInstructionGuides } from './instruction-guides.mjs';
 import fs from 'node:fs/promises';
@@ -132,7 +133,7 @@ async function leaseAlive(lease) {
   try { process.kill(lease.guardPid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; return true; }
 }
 async function doctor(directory, helper, root) {
-  const lease = await readOptionalState(path.join(directory, 'lease.json'), helper);
+  const lease = await readOptionalState(path.join((await parallelSessionRuntime()).browserExecutionDirectory(directory), 'lease.json'), helper);
   let configured = false, runtimeReady = false;
   try { await verifyPrivate(path.join(directory, 'vault.json'), helper); configured = true; } catch (e) { if (e.code !== 'ENOENT') throw e; }
   try { await loadPlaywright(root); runtimeReady = true; } catch {}
@@ -164,8 +165,21 @@ export async function run(args, statusTimeoutMs = 30000) {
   await ensurePrivateDirectory(directory, helper);
   if (command === 'bootstrap') { await bootstrapBrowser(root); return doctor(directory, helper, root); }
   if (command === 'doctor') return doctor(directory, helper, root);
-  let lease = await readOptionalState(path.join(directory, 'lease.json'), helper);
-  const control = await readOptionalState(path.join(directory, 'control.json'), helper);
+  // Account credentials remain reusable; command-plane records belong only
+  // to this execution owner, including stop/recovery and their native lease.
+  const execution = await parallelSessionRuntime();
+  const liveDirectory = execution.browserExecutionDirectory(directory);
+  await ensurePrivateDirectory(liveDirectory, helper);
+  const accountAvailable = async exclusive => {
+    for (const ownerDirectory of await execution.browserExecutionDirectories(directory)) {
+      const previous = await readOptionalState(path.join(ownerDirectory, 'lease.json'), helper);
+      if (previous && await leaseAlive(previous)) requireThat(
+        !exclusive && !previous.exclusiveAccount && ownerDirectory !== directory && ownerDirectory !== liveDirectory,
+        'stop_existing_account_session_first');
+    }
+  };
+  let lease = await readOptionalState(path.join(liveDirectory, 'lease.json'), helper);
+  const control = await readOptionalState(path.join(liveDirectory, 'control.json'), helper);
   // An unlocked worker belongs to the company that started it. Reusing the
   // account in another company requires a new worker after normal shutdown;
   // a catalogue binding never transfers an existing operation's authority.
@@ -205,8 +219,8 @@ export async function run(args, statusTimeoutMs = 30000) {
     // A dead supervisor permits recovery of only these exact disposable control
     // records. Ciphertext and native OS keys are never removed as crash cleanup.
     if (lease) {
-      await fs.rm(path.join(directory, 'lease.json'));
-      if (control && control.leaseId === lease.leaseId) await fs.rm(path.join(directory, 'control.json'));
+      await fs.rm(path.join(liveDirectory, 'lease.json'));
+      if (control && control.leaseId === lease.leaseId) await fs.rm(path.join(liveDirectory, 'control.json'));
     }
     // Check the login Keychain before requesting another Touch ID or creating
     // a lease. Reusing an active session above still requires neither step.
@@ -216,15 +230,24 @@ export async function run(args, statusTimeoutMs = 30000) {
     // in clients without that ID; the title is never persisted with the lease.
     const requestTitle = await resolveRequestTitle(options['--request-title']);
     const now = Date.now(); lease = { companyBinding: identity.account?.companyBinding ?? null, leaseId: crypto.randomUUID(), runtimeVersion: RUNTIME_VERSION, startedAt: authorization?.startedAt || now, expiresAt: authorization?.expiresAt || now + LEASE_MS, guardPid: null, authorizationRequest: authorization?.requestId || null };
-    const file = path.join(directory, 'lease.json');
-    await createPrivateFile(file, JSON.stringify(lease), helper);
+    const file = path.join(liveDirectory, 'lease.json');
+    await execution.withBrowserAccountState(directory, async () => {
+      let vaultExists = false;
+      try { await verifyPrivate(path.join(directory, 'vault.json'), helper); vaultExists = true; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      // Initial credential setup/replacement/crypto-erasure changes the whole
+      // account. Reserve it before native UI; ordinary chat browsers stay free.
+      lease.exclusiveAccount = ['configure', 'forget'].includes(command) || !vaultExists;
+      await accountAvailable(lease.exclusiveAccount);
+      await createPrivateFile(file, JSON.stringify(lease), helper);
+    });
     const child = spawn(helper, ['guard', process.execPath, path.join(SOURCE, 'worker.mjs'), String(Math.max(1, lease.expiresAt - now))], {
       detached: true, windowsHide: true, shell: false, env: childEnvironment(), stdio: ['pipe', 'ignore', 'ignore'] });
     try {
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', () => reject(new RuntimeError('guardian_start_failed'))); });
       lease.guardPid = child.pid; await atomicWrite(file, JSON.stringify(lease), helper);
       child.stdin.on('error', () => {});
-      child.stdin.end(`${JSON.stringify({ ...lease, identity, root, directory, helper, keyHelper, mode: command,
+      child.stdin.end(`${JSON.stringify({ ...lease, identity, root, directory, liveDirectory, browserSessionModuleUrl: process.env.TRELIO_BROWSER_SESSION_MODULE_URL, helper, keyHelper, mode: command,
         channel: options['--channel'], loginRole: loginRole(options['--role']), authorization,
         accountRecovered: options['--account-recovered'] === true,
         // Explanatory UI context is kept only in the guardian/worker pipe. It
@@ -240,12 +263,12 @@ export async function run(args, statusTimeoutMs = 30000) {
     // files. Never send a stale bearer to a port that may have been reused by
     // another process. Proven guardian exit means this lease is closed; its
     // encrypted vault remains untouched.
-    const last = await readOptionalState(path.join(directory, 'status.json'), helper);
+    const last = await readOptionalState(path.join(liveDirectory, 'status.json'), helper);
     return { sessionId: lease.leaseId, phase: command === 'status' ? finishedReceiptPhase(last, lease.leaseId) : 'closed', expiresAt: lease.expiresAt, requiredAction: null,
       ...(last?.sessionId === lease.leaseId ? closedDiagnostics(last) : {}) };
   }
   if (command === 'status' && (!lease || !control)) {
-    const last = await readOptionalState(path.join(directory, 'status.json'), helper);
+    const last = await readOptionalState(path.join(liveDirectory, 'status.json'), helper);
     if (lease && !control && options['--session'] === lease.leaseId &&
       last?.sessionId !== lease.leaseId && await leaseAlive(lease))
       return { phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt };

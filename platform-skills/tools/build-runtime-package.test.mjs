@@ -454,3 +454,28 @@ test("templates refuse missing, misplaced or unknown backend bindings", t => {
   fs.writeFileSync(file, JSON.stringify(definition));
   assert.throws(() => buildRuntimePackage(directory, {templateReleaseInputs: true}), /Unsupported backend release input binding/u);
 });
+
+
+test('signed resource policy is validated and packaged before private/provider publication', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trelio-resource-package-'));
+  try {
+    const directory = writeFixture(root), releasePath = path.join(directory, 'release.json');
+    const release = JSON.parse(fs.readFileSync(releasePath));
+    release.runtime.capabilities = ['local-session']; release.runtime.minimumHostVersion = '3.31.0';
+    release.runtime.files.push({ source: 'scripts/trelio-execution-resource.json', path: 'trelio-execution-resource.json', mode: 420 });
+    fs.writeFileSync(releasePath, JSON.stringify(release));
+    const marker = path.join(directory, 'scripts/trelio-execution-resource.json');
+    fs.writeFileSync(marker, '{"schemaVersion":1,"scope":"account"}');
+    const result = buildRuntimePackage(directory);
+    assert.ok(result.manifest.files.some(file => file.path === 'trelio-execution-resource.json'));
+    assert.deepEqual(result.packageBytes, buildRuntimePackage(directory).packageBytes);
+    for (const policy of [{ schemaVersion: 1, scope: 'chat' }, { schemaVersion: 2, scope: 'account' },
+      { schemaVersion: 1, scope: 'device', bypass: true }]) {
+      fs.writeFileSync(marker, JSON.stringify(policy));
+      assert.throws(() => buildRuntimePackage(directory), /Invalid signed execution resource policy/);
+    }
+    fs.writeFileSync(marker, '{"schemaVersion":1,"scope":"device"}');
+    release.runtime.minimumHostVersion = '3.30.17'; fs.writeFileSync(releasePath, JSON.stringify(release));
+    assert.throws(() => buildRuntimePackage(directory), /minimumHostVersion 3.31.0/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

@@ -1,5 +1,25 @@
 # Защищённый browser runtime ГАС «Правосудие»
 
+## Параллельные чаты
+
+Live supervisor/control/lease/status принадлежат observed runtime session через
+общий host API; account vault/key/AAD и native unlock сохраняются.
+[Общий контракт](../../../docs/agent-skill-connections.md#parallel-skill-sessions)
+задаёт owner roots, base CAS, encrypted conflict candidates и shared-state
+transaction. Новый start переиспользует только сессию текущего чата. Stop,
+status и продолжения не выбирают чужой worker. Configure/forget/первичная
+настройка требуют отсутствия других живых leases; они не закрывают их сами.
+Поздний save не затирает новый вход. Native permit и deadline каждого worker
+сохраняются; credential/ЕСИА flow по-прежнему принадлежит отдельному навыку.
+
+`court_login_entry_unavailable` означает, что после проверки официального
+документа runtime не нашёл единственную видимую ссылку `a[title="Вход"]` либо
+штатное меню, которое должно её показать. Код сам по себе не доказывает
+занятость сессии или потерю входа: так может выглядеть уже открытый кабинет,
+публичная страница без точки входа либо изменившийся интерфейс портала.
+Проверять нужно status собственной exact сессии и выбранную страницу входа.
+Чужой resume/stop, повтор входа или перезапуск не являются диагностикой этого кода.
+
 ## Граница и lifecycle
 
 Release 4.1.1 объявляет host `browserSession` v1 класса `protected-snapshot`,

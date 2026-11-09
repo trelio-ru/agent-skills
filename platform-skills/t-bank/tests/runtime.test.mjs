@@ -516,6 +516,7 @@ test('real CLI entrypoint returns value-free doctor state on the current OS', { 
   const output = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [fileURLToPath(new URL('../scripts/trelio-t-bank.mjs', import.meta.url)), 'doctor'], {
       windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...childEnvironment(),
+        TRELIO_BROWSER_SESSION_MODULE_URL: process.env.TRELIO_BROWSER_SESSION_MODULE_URL,
         TRELIO_CONFIG_HOME: nativeRoot, TRELIO_SKILL_ID: 't-bank',
         TRELIO_SKILL_COMPANY_ID: identity.company, TRELIO_SKILL_MEMBER_ID: identity.member } });
     let result = '', error = ''; child.stdout.on('data', data => { result += data; }); child.stderr.on('data', data => { error += data; });
@@ -581,8 +582,8 @@ test('start reuses the running exact lease; new calls cannot renew or use a prev
 });
 test('runtime version is tied to the immutable package manifest', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
-  assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.24.0');
-  assert.equal(release.release.version, '2.3.10');
+  assert.equal(release.runtime.version, RUNTIME_VERSION); assert.equal(release.runtime.minimumHostVersion, '3.31.0');
+  assert.equal(release.release.version, '2.3.11');
 });
 test('client obtains its controller from the common host before any native or credential I/O', {
   skip: !['darwin', 'win32'].includes(process.platform),
@@ -703,4 +704,28 @@ test('explicit show can reveal a private bank challenge without reading its fiel
   const { portal, state } = manualCodePortal({ afterWait() {} });
   await portal.show();
   assert.equal(state.focused, 1); assert.equal(state.saved, 0); assert.equal(state.waits, 0);
+});
+
+import { registerParallelSessionContract } from '../../tools/parallel-session-contract.mjs';
+import * as parallelCore from '../scripts/core.mjs';
+import * as parallelNative from '../scripts/native.mjs';
+registerParallelSessionContract(new URL('../', import.meta.url), { identity, storageDirectory: parallelCore.storageDirectory,
+  version: parallelCore.RUNTIME_VERSION, childEnvironment: parallelCore.childEnvironment, ...parallelNative });
+
+
+test('parallel metadata reconciliation keeps newer browser state and refuses a stale credential/refusal proof', () => {
+  const { credentialStateRevision: revision, reconcileCredentialState: reconcile } = parallelCore;
+  const key = crypto.randomBytes(32);
+  const base = { schema: 1, credentials: { login: '+70000000000', password: 'synthetic-only', totp: '' }, storage: { version: 1 } };
+  const newer = { ...base, storage: { version: 2 }, retainedLegacyField: true };
+  const next = { ...base, authGate: { schema: 1, reason: 'credentials_rejected', observedAt: 1, retryAt: null } };
+  const saved = encryptRecord(key, identity, newer);
+  const result = decryptRecord(key, identity, reconcile(key, identity, saved, next, revision(base)));
+  assert.deepEqual(result.storage, newer.storage);
+  assert.deepEqual(result.authGate, next.authGate);
+  assert.equal(result.retainedLegacyField, true);
+  assert.equal(revision(base), revision({ ...base, credentials: { totp: '', password: 'synthetic-only', login: '+70000000000' } }));
+  assert.throws(() => reconcile(key, identity, encryptRecord(key, identity, next), base, revision(base)), /saved_credentials_changed/);
+  assert.throws(() => reconcile(key, identity, null, next, revision(base)), /saved_credentials_changed/);
+  key.fill(0);
 });

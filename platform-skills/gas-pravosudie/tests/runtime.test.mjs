@@ -359,9 +359,9 @@ test('a replaced court tab is rebound without creating or focusing another page'
 
 test('runtime release binds the common protected-snapshot contract', async () => {
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
-  assert.equal(release.release.version, '4.1.8');
+  assert.equal(release.release.version, '4.1.9');
   assert.equal(release.runtime.version, RUNTIME_VERSION);
-  assert.equal(release.runtime.minimumHostVersion, '2.4.0');
+  assert.equal(release.runtime.minimumHostVersion, '3.31.0');
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: 'protected-snapshot',
@@ -435,3 +435,9 @@ test('native helper uses the noninteractive Keychain/DPAPI guardian mechanism', 
 test('Windows DPAPI synthetic roundtrip is available without CredUI', { skip: process.platform !== 'win32' }, async () => {
   assert.match((await runPrivate(helper, ['self-test'])).toString(), /dpapi-current-user-roundtrip-tamper-ok/);
 });
+
+import { registerParallelSessionContract } from '../../tools/parallel-session-contract.mjs';
+import * as parallelCore from '../scripts/core.mjs';
+import * as parallelNative from '../scripts/native.mjs';
+registerParallelSessionContract(new URL('../', import.meta.url), { identity, storageDirectory: parallelCore.storageDirectory,
+  version: parallelCore.RUNTIME_VERSION, childEnvironment: parallelCore.childEnvironment, ...parallelNative });

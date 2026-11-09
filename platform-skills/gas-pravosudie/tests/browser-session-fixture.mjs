@@ -8,3 +8,12 @@ export const readBrowserSessionBinding = ({ environment, expectedSessionClass })
   }
   return { ...policy, startedAt, deadlineAt, remainingMs: deadlineAt - Date.now() };
 };
+
+// Synthetic provider seam: the host suite tests real owner hashing and locks.
+// This locator lets the CLI regression prove that it uses the host-selected
+// live root rather than falling back to its reusable account vault directory.
+export const BROWSER_EXECUTION_SESSIONS_API = 'trelio.browser-execution-sessions/v1';
+export const browserExecutionDirectory = (directory, environment = process.env) =>
+  environment.TRELIO_TEST_SESSION_DIRECTORY || directory;
+
+export { withBrowserAccountState, browserExecutionDirectories } from '../../../_contracts/agent-workspaces-runtime/host-runtime/scripts/trelio-browser-session.mjs';

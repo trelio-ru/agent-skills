@@ -1,3 +1,4 @@
+import './host-runtime-fixture.mjs';
 import { registerInstructionGuideContract } from "../../tools/instruction-guide-contract.mjs";
 registerInstructionGuideContract(new URL("../", import.meta.url));
 import { readSkillInstructions } from "../../tools/read-skill-instructions.mjs";
@@ -194,9 +195,9 @@ test("MAX worker closure receipt is private, credential-free and cannot replace 
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.13.1");
-  assert.equal(release.runtime.version, "2.13.1");
-  assert.equal(release.runtime.minimumHostVersion, "3.18.0");
+  assert.equal(release.release.version, "2.13.2");
+  assert.equal(release.runtime.version, "2.13.2");
+  assert.equal(release.runtime.minimumHostVersion, "3.31.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
     sessionClass: "messenger-profile",

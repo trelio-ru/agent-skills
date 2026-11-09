@@ -1,3 +1,4 @@
+import './host-runtime-fixture.mjs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -166,7 +167,7 @@ test('MAX monitor preserves only safe main-document HTTP evidence', async () => 
 });
 
 test('MAX monitor exercises the ordinary DOM reader without returning bodies or marking read', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'max-monitor-dom-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'max-monitor-dom-')));
   const previousHome = process.env.TRELIO_CONFIG_HOME;
   process.env.TRELIO_CONFIG_HOME = root;
   try {

@@ -7,6 +7,19 @@ host contract задаёт внешний absolute process deadline, но не �
 continuous-clock barrier и fresh OS unlock. Plain Chromium profile остаётся
 запрещённым.
 
+## Параллельные чаты
+
+Live supervisor/control/lease/status принадлежат observed runtime session через
+общий host API; account vault/key/AAD и native unlock сохраняются.
+[Общий контракт](../../../docs/agent-skill-connections.md#parallel-skill-sessions)
+задаёт owner roots, base CAS, encrypted conflict candidates и shared-state
+transaction. Новый start переиспользует только сессию текущего чата. Stop,
+status и продолжения не выбирают чужой worker. Configure/forget/первичная
+настройка требуют отсутствия других живых leases; они не закрывают их сами.
+Auth gate/credentials проверяются заново до native permit; cookie rotation
+другого browser не отменяет разрешённую работу. Поздний save не затирает новый
+вход и не снимает более свежий отказ. Native deadline каждого worker не меняется.
+
 ## Граница хранения
 
 `vault.json` – единственный persistent credential/session record: JSON envelope

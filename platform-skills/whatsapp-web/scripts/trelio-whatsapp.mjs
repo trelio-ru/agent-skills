@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { parallelSessionRuntime } from './core.mjs';
 import { getInstructionGuides } from './instruction-guides.mjs';
 import { validateWaitOptions, waitForSessionChange, withSessionContinuation, finishedReceiptPhase } from './session-wait.mjs';
 import fs from 'node:fs/promises';
@@ -116,13 +117,13 @@ async function doctor(directory, helper, root, mode = 'protocol') {
       ? 'Восстановите доступ к связке login средствами macOS; повторный Touch ID не исправляет отказ Keychain.'
       : !runtimeReady ? 'bootstrap' : !configured ? 'start: QR-вход в локальном окне' : 'start: повторное использование сохранённой сессии WhatsApp' };
 }
-export async function run(args, statusTimeoutMs = 30000) {
+async function runPhysical(args, statusTimeoutMs = 30000) {
   // Metadata only: do not initialize the native guardian or browser runtime.
   if (args.length === 1 && args[0] === 'guides') return getInstructionGuides();
   if (args.length === 1 && args[0] === "__trelio_accounts_import") return importExistingAccounts();
   const { command, options } = parseArguments(args);
   if (command === 'wait') return waitForSessionChange(remaining =>
-    run(['status', '--session', options['--session']], remaining), options);
+    runPhysical(['status', '--session', options['--session']], remaining), options);
   // The signed package includes its request schema reference; catalog agents
   // need no private source checkout to discover command arguments.
   if (command === 'help') return { instructions: await fs.readFile(path.join(SOURCE, '../references/commands.md'), 'utf8') };
@@ -158,8 +159,8 @@ export async function run(args, statusTimeoutMs = 30000) {
       requireThat((lease.transport||'protocol')===transport, 'stop_other_transport_first');
       requireThat(Boolean(lease.headless)===Boolean(options['--headless']),'stop_other_browser_mode_first');
       requireThat(lease.expiresAt > Date.now(), 'expired_guard_still_running');
-      if (control && control.leaseId === lease.leaseId) return withSessionContinuation(await requestControl(control, { command: 'status', sessionId: lease.leaseId }));
-      return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt });
+      if (control && control.leaseId === lease.leaseId) return withSessionContinuation({ ...await requestControl(control, { command: 'status', sessionId: lease.leaseId }), reused: true });
+      return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt, reused: true });
     }
     // A dead supervisor permits recovery of only these exact disposable control
     // records. Ciphertext and native OS keys are never removed as crash cleanup.
@@ -194,7 +195,7 @@ export async function run(args, statusTimeoutMs = 30000) {
       child.stdin.end(`${JSON.stringify({ ...lease, identity, root, directory, helper, mode: command, channel: options['--channel'] })}\n`);
       child.unref();
     } catch (error) { child.stdin.destroy(); throw error; }
-    return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt, requiredAction: options['--headless'] ? 'Дождитесь ready; состояние загрузки не означает потерю привязки.' : 'При первой настройке отсканируйте QR-код в локальном окне WhatsApp.' });
+    return withSessionContinuation({ phase: 'starting', sessionId: lease.leaseId, expiresAt: lease.expiresAt, reused: false, requiredAction: options['--headless'] ? 'Дождитесь ready; состояние загрузки не означает потерю привязки.' : 'При первой настройке отсканируйте QR-код в локальном окне WhatsApp.' });
   }
   if (['status', 'stop'].includes(command) && lease && !await leaseAlive(lease)) {
     requireThat(options['--session'] === lease.leaseId, 'exact_session_required');
@@ -244,6 +245,33 @@ export async function run(args, statusTimeoutMs = 30000) {
     throw new RuntimeError('shutdown_not_confirmed');
   }
   return result;
+}
+
+// WhatsApp's linked protocol device and native IndexedDB keys cannot be
+// duplicated safely. The host gives chats independent logical leases and
+// serializes complete, explicit-target requests against one physical service.
+// A chat stop releases only its own lease; the last owner performs one fenced
+// native shutdown. Provider sending/unknown-outcome guards stay unchanged.
+export async function run(args, statusTimeoutMs = 30000) {
+  if (args.length === 1 && ['guides', '__trelio_accounts_import'].includes(args[0])) return runPhysical(args, statusTimeoutMs);
+  const { command, options } = parseArguments(args);
+  if (command === 'wait') return waitForSessionChange(remaining =>
+    run(['status', '--session', options['--session']], remaining), options);
+  if (!['start', 'status', 'stop', 'request'].includes(command)) return runPhysical(args, statusTimeoutMs);
+  const runtime = await parallelSessionRuntime();
+  const directory = storageDirectory(configRoot(), identityFromEnv());
+  try {
+    return await runtime.withSharedAccountService({ accountDirectory: directory, operation: command,
+      sessionId: options['--session'],
+      start: () => runPhysical(args, statusTimeoutMs),
+      dispatch: (operation, physical) => runPhysical(operation === 'request'
+        ? args.map((value, index) => args[index - 1] === '--session' ? physical : value)
+        : [operation, '--session', physical], statusTimeoutMs),
+    });
+  } catch (error) {
+    if (/^BROWSER_SESSION_[A-Z_]+$/.test(error?.code || '')) throw new RuntimeError(error.code.toLowerCase());
+    throw error;
+  }
 }
 
 // Resolve both sides: Windows can normalize a drive letter or an 8.3 path

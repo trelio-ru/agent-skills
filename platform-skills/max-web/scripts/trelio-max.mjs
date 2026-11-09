@@ -27,13 +27,19 @@ const MAX_WEB_URL = "https://web.max.ru/";
 const MAX_WEB_ORIGIN = new URL(MAX_WEB_URL).origin;
 const MAX_FAVORITES_URL = new URL("0", MAX_WEB_URL).toString();
 let browserSessionRuntimePromise = null;
-const browserSessionRuntime = () => {
+let executionDirectory = null;
+const browserSessionRuntime = async () => {
   const moduleUrl = String(process.env.TRELIO_BROWSER_SESSION_MODULE_URL || "");
   if (!moduleUrl.startsWith("file:")) {
     throw new Error("MAX requires the host browser-session runtime.");
   }
   browserSessionRuntimePromise ||= import(moduleUrl);
-  return browserSessionRuntimePromise;
+  const runtime = await browserSessionRuntimePromise;
+  if (process.env.TRELIO_SKILL_RUNTIME_SESSION_ID && runtime.BROWSER_EXECUTION_SESSIONS_API !== 'trelio.browser-execution-sessions/v1') {
+    throw new Error('parallel_sessions_host_required');
+  }
+  executionDirectory = runtime.browserExecutionDirectory || (directory => directory);
+  return runtime;
 };
 // HTTP status is checked before DOM/login classification. The shared host
 // observes only the current main document; provider authority stays here.
@@ -589,7 +595,8 @@ const profilePath = (options) => path.join(connectionRoot(options), "state", "ch
 
 // This is a locator journal, not an address book inferred from names. Provider
 // URLs are its primary keys; duplicate names always retain distinct records.
-// The existing profile lock serializes ordinary commands and assisted workers.
+// Parallel browser profiles have separate locks. Shared locator updates use
+// the host account transaction so two readers cannot lose each other's refs.
 const chatReferencesPath = (options) => path.join(connectionRoot(options), "state", "chat-references.json");
 const MAX_CHAT_REFERENCES_BYTES = 1024 * 1024;
 const writeChatReferences = (options, value) => {
@@ -704,6 +711,15 @@ const rememberChatReference = (options, reference, bindContext = false) => {
   return chatReferenceValue(chat, options.contextRef);
 };
 
+// Keep native provider locators shared across workflows without relying on a
+// browser-profile mutex. Read/merge/write happen once under the common host
+// transaction; failure never replays the browser action that found this ref.
+const rememberChatReferenceSafely = async (...args) => {
+  if (!hasChatReferenceIdentity(args[0])) return rememberChatReference(...args);
+  const runtime = await browserSessionRuntime();
+  return runtime.withBrowserAccountState(connectionRoot(args[0]), () => rememberChatReference(...args));
+};
+
 const contextChatReference = (options) => {
   if (!options.contextRef || !["read", "profile"].includes(options.command)) return null;
   const expected = normalizeDialogTitle(options.chat);
@@ -741,7 +757,7 @@ const inspectOpenedChatReference = async (page, fallbackTitle = "") => {
 const rememberOpenedChat = async (page, options, opened, bindContext = false) => {
   const reference = await inspectOpenedChatReference(page, opened?.matched || "");
   if (!reference || normalizeChatUrl(opened.url) !== reference.url) return null;
-  return rememberChatReference(options, reference, bindContext);
+  return rememberChatReferenceSafely(options, reference, bindContext);
 };
 
 const canRecoverAssistPreparation = (error, interactionMode) => error instanceof MaxRuntimeError
@@ -759,8 +775,15 @@ const downloadsPath = (options) => options.account
   "downloads",
 );
 
+// Account storage remains shared, while assist controllers, snapshots and
+// shutdown authority belong to the current host-observed execution owner.
+const liveConnectionRoot = options => {
+  if (!executionDirectory && process.env.TRELIO_SKILL_RUNTIME_SESSION_ID) throw new Error('parallel_sessions_host_required');
+  return executionDirectory ? executionDirectory(connectionRoot(options)) : connectionRoot(options);
+};
+
 const assistSessionPath = (options) => path.join(
-  connectionRoot(options),
+  liveConnectionRoot(options),
   "state",
   "assist-session.json",
 );
@@ -784,7 +807,7 @@ const processIsAlive = (pid) => {
 };
 
 const withAssistStartLock = async (options, callback) => {
-  const lock = path.join(connectionRoot(options), "locks", "assist-start.lock");
+  const lock = path.join(liveConnectionRoot(options), "locks", "assist-start.lock");
   ensurePrivateDirectory(path.dirname(lock));
   try {
     fs.mkdirSync(lock, { mode: 0o700 });
@@ -831,7 +854,7 @@ const readAssistSession = (options) => {
       return null;
     }
   }
-  const terminalFile = path.join(connectionRoot(options), "state", "assist-snapshots",
+  const terminalFile = path.join(liveConnectionRoot(options), "state", "assist-snapshots",
     record.sessionId, "terminal.json");
   if (!fs.existsSync(terminalFile)) return record;
   const terminalStat = fs.lstatSync(terminalFile);
@@ -865,7 +888,7 @@ const writeAssistTerminalState = (options, sessionId, fields) => {
   // namespace. Keep its outcome in its own UUID directory: even a retirement
   // racing this write cannot overwrite the new session's shared record.
   if (!current || current.sessionId !== sessionId || current.pid !== process.pid) return false;
-  const file = path.join(connectionRoot(options), "state", "assist-snapshots", sessionId, "terminal.json");
+  const file = path.join(liveConnectionRoot(options), "state", "assist-snapshots", sessionId, "terminal.json");
   writePrivateJson(file, { schemaVersion: 1, sessionId, pid: process.pid, ...fields });
   return true;
 };
@@ -2248,7 +2271,7 @@ const lookupContactByPhone = async (page, options, phone) => {
       { reason: "phone-lookup-outcome-unverified", finalMutationActionStarted: false });
   }
   const url = normalizeChatUrl(page.url());
-  rememberChatReference(options, { url, title: outcome.title, lookupPhone: phone });
+  await rememberChatReferenceSafely(options, { url, title: outcome.title, lookupPhone: phone });
   return {
     query: phone,
     contacts: [{ title: outcome.title, url, matchMethod: "provider-phone-lookup" }],
@@ -3510,7 +3533,7 @@ const removeAssistSessionIfExact = (options, sessionId) => {
       // A killed detached worker cannot run its own finally cleanup. Remove
       // only screenshots tied to this exact fenced session when its record is
       // retired; another active session keeps its separate directory.
-      fs.rmSync(path.join(connectionRoot(options), "state", "assist-snapshots", sessionId),
+      fs.rmSync(path.join(liveConnectionRoot(options), "state", "assist-snapshots", sessionId),
         { recursive: true, force: true });
     }
   } catch {
@@ -4318,6 +4341,7 @@ const assertAssistGateActionCompleted = async (page, blockedBefore) => {
 };
 
 const runAssistWorker = async () => {
+  await browserSessionRuntime();
   const config = readAssistWorkerConfig();
   const options = {
     ...parseArguments(["doctor"]),
@@ -4502,7 +4526,7 @@ const runAssistWorker = async () => {
         // display scale, including on Retina screens.
         const { fingerprint, controls, bytes } = await captureStableAssistFrame(page, membersOnly,
           config.fallbackFor === "download");
-        const directory = path.join(connectionRoot(options), "state", "assist-snapshots", config.sessionId);
+        const directory = path.join(liveConnectionRoot(options), "state", "assist-snapshots", config.sessionId);
         ensurePrivateDirectory(directory);
         const screenshotPath = path.join(directory, `${randomUUID()}.png`);
         try {
@@ -4523,7 +4547,7 @@ const runAssistWorker = async () => {
         // A later exact read can bind it to a task after contextual inspection.
         const reference = config.interactionMode === "read-only"
           ? await inspectOpenedChatReference(page) : null;
-        const chatReference = reference ? rememberChatReference(options, reference) : null;
+        const chatReference = reference ? await rememberChatReferenceSafely(options, reference) : null;
         return { ok: true, sessionId: config.sessionId, snapshotId: assistSnapshot.id,
           screenshotPath, controls, fingerprint: await safeUiFingerprint(page),
           chatReference,
@@ -4761,7 +4785,7 @@ const runAssistWorker = async () => {
         await attachmentTransfer?.stop();
         await closeAssistControlServer(server);
         for (const screenshot of screenshots) fs.rmSync(screenshot, { force: true });
-        fs.rmSync(path.join(connectionRoot(options), "state", "assist-snapshots", config.sessionId),
+        fs.rmSync(path.join(liveConnectionRoot(options), "state", "assist-snapshots", config.sessionId),
           { recursive: true, force: true });
       }
       if (interactionFailure) throw interactionFailure;
@@ -6619,7 +6643,10 @@ const executeBrowserCommand = async (page, options, readGuard) => {
     // Invalidate only locator metadata; cookies and credentials remain owned by
     // the normal login flow. Never reuse task bindings across such a handoff.
     loadChatReferences(options);
-    if (hasChatReferenceIdentity(options)) writeChatReferences(options, { schemaVersion: 1, chats: [] });
+    if (hasChatReferenceIdentity(options)) {
+      const runtime = await browserSessionRuntime();
+      await runtime.withBrowserAccountState(connectionRoot(options), () => writeChatReferences(options, { schemaVersion: 1, chats: [] }));
+    }
     await openHome(page, options, true);
     const handoffStartedAt = Date.now();
     const handoffCompletion = await waitForLoginHandoff(page, options.holdMs);
@@ -6846,6 +6873,7 @@ const main = async () => {
     output({ ok: true, policy: loadPolicy(options), path: policyPath(options) });
     return;
   }
+  if (options.command.startsWith("assist-")) await browserSessionRuntime();
   if (options.command === "assist-start") {
     output({ ok: true, ...(await startAssistSession(options)) });
     return;

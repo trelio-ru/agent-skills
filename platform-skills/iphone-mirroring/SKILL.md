@@ -49,13 +49,18 @@ legacy `runtimeExecution.command` требует recovery по контракт�
    `session stop --session SESSION_ID --compact`, затем `session status --compact`.
    Требуются `active=false`, `exitReason=explicit_stop`. Если сессия сама
    запустила Видеоповтор, дополнительно вызови `status --compact --no-ocr`
-   и проверь `app_running=false`. Уже работавшее до сессии приложение
+   и проверь `app_running=false`, если stop не вернул `sharedServiceActive=true`. Уже работавшее до сессии приложение
    возвращается на прежнее место и остаётся открытым.
 
 `--session` обязателен для управления. `focus --visible` и `center --visible`
 допустимы только вне hidden session по прямому запросу видимой диагностики.
 Ошибка скрытого режима не разрешает visible/Computer Use fallback или остановку
 lease ради клика. Не закрывай и не активируй посторонние приложения ради доступа.
+
+Сессии чатов имеют разные `sessionID`, команды идут в очередь. Stop с
+`sharedServiceActive=true` оставляет экран другим чатам. При
+`BROWSER_SESSION_OBSERVATION_STALE` нужен свежий screenshot и новый выбор
+действия. Второй start не продлевает общий hard deadline.
 
 ## Ожидание и сессия
 
