@@ -3,7 +3,8 @@
   "release": {
     "skillId": "iphone-mirroring",
     "version": "2.2.2",
-    "summary": "Параллельная работа нескольких чатов через общие сессии и очередь runtime"
+    "summary": "Очередь доступа к устройству и независимые владельцы чатов через runtime 3.31.0",
+    "routingSummary": "Control a paired physical iPhone through iPhone Mirroring on Mac."
   },
   "connection": null,
   "runtime": {

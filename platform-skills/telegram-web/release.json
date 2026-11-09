@@ -3,7 +3,8 @@
   "release": {
     "skillId": "telegram-web",
     "version": "2.5.2",
-    "summary": "Параллельная работа нескольких чатов через общие сессии и очередь runtime"
+    "summary": "Изоляция браузерных сессий чатов с общим сохранённым входом через runtime 3.31.0",
+    "routingSummary": "Read and manage Telegram Web chats, messages and files."
   },
   "connection": {
     "schemaVersion": 1,

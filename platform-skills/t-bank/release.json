@@ -3,7 +3,8 @@
   "release": {
     "skillId": "t-bank",
     "version": "2.3.11",
-    "summary": "Параллельная работа нескольких чатов через общие сессии и очередь runtime"
+    "summary": "Независимые браузерные сессии чатов и безопасное обновление общего входа через runtime 3.31.0",
+    "routingSummary": "Read personal T-Bank accounts and perform explicitly authorized banking operations."
   },
   "connection": null,
   "runtime": {

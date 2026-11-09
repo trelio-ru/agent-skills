@@ -3,7 +3,8 @@
   "release": {
     "skillId": "whatsapp-web",
     "version": "2.2.7",
-    "summary": "Параллельная работа нескольких чатов через общие сессии и очередь runtime"
+    "summary": "Общие native-подключения с отдельными владельцами чатов и очередью операций runtime 3.31.0",
+    "routingSummary": "Read and manage WhatsApp chats, messages, media and groups."
   },
   "connection": {
     "schemaVersion": 1,

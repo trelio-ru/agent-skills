@@ -3,7 +3,7 @@
   "release": {
     "skillId": "telegram-mtproto",
     "version": "2.16.6",
-    "summary": "Параллельная работа нескольких чатов через общие сессии и очередь runtime",
+    "summary": "Общая очередь доступа к аккаунту для параллельных чатов через runtime 3.31.0",
     "routingSummary": "Read, search, send, and manage Telegram messages, files, and chats."
   },
   "connection": {

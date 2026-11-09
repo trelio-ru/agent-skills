@@ -3,7 +3,8 @@
   "release": {
     "skillId": "max-web",
     "version": "2.13.2",
-    "summary": "Параллельная работа нескольких чатов через общие сессии и очередь runtime"
+    "summary": "Отдельные сессии чатов и очередь общего native-подключения через runtime 3.31.0",
+    "routingSummary": "Read and manage MAX chats, messages, files and Goskey requests."
   },
   "connection": {
     "schemaVersion": 1,

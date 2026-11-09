@@ -3,7 +3,7 @@
   "release": {
     "skillId": "gosuslugi",
     "version": "4.6.1",
-    "summary": "Параллельная работа нескольких чатов через общие сессии и очередь runtime",
+    "summary": "Изоляция браузера между чатами при общем защищённом входе через runtime 3.31.0",
     "routingSummary": "Use Gosuslugi services, submit approved POS appeals with verified receipts, send own documents to Goskey, and authorize permitted ESIA sign-ins."
   },
   "connection": null,
