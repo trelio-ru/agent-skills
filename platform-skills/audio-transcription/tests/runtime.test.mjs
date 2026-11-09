@@ -113,6 +113,77 @@ test('an uncertain source start remains status-only and cannot launch another wo
   assert.equal(observed.state,'unknown');assert.equal(starts,1);
 });
 
+function completedSourceFixture(t){
+  const scratch=temporary();t.after(()=>fs.rmSync(scratch,{recursive:true,force:true}));
+  const original=path.join(scratch,'voice.ogg'),bytes=Buffer.from('OggS COMPLETE SOURCE FIXTURE');
+  fs.writeFileSync(original,bytes,{mode:0o600,flag:'wx'});
+  const input={schemaVersion:1,requestId:'11111111-2222-4333-8444-555555555555',
+    original:{filePath:original,sizeBytes:bytes.length,sha256:digest(bytes)},
+    outputDirectory:path.join(privateDirectory(path.join(scratch,'download-new001')),'job')};
+  const complete=(name,text='готовая расшифровка')=>{
+    const parent=privateDirectory(path.join(scratch,name)),directory=privateDirectory(path.join(parent,'job'));
+    fs.writeFileSync(path.join(parent,'source.ogg'),bytes,{mode:0o600});
+    atomicJson(path.join(parent,'.source-attempt.json'),{schemaVersion:1,requestId:'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',original:input.original});
+    atomicJson(path.join(directory,'job.json'),{schemaVersion:1,state:'completed',model:'v3_rnnt',
+      input:path.join(parent,'source.ogg'),originalSize:bytes.length,sourceSha256:input.original.sha256});
+    atomicJson(path.join(directory,'transcript.json'),{complete:true,model:'v3_rnnt'});
+    fs.writeFileSync(path.join(directory,'transcript.txt'),text,{mode:0o600});return directory;
+  };
+  const execute=async args=>{assert.deepEqual(args,['doctor'],'completed reuse cannot invoke start/status/setup');return {ready:true,model:'v3_rnnt'};};
+  return {scratch,input,complete,execute};
+}
+
+test('a fresh exact source reuses complete output without adopting an old job or starting a decoder',async t=>{
+  const {scratch,input,complete,execute}=completedSourceFixture(t);
+  const old=complete('download-old001'),oldJob=fs.readFileSync(path.join(old,'job.json'));
+  complete('download-old002'); // Equivalent duplicates never mean newest wins.
+  const result=await processSourceOriginal(input,{root:scratch,run:execute});
+  assert.equal(result.state,'completed');assert.equal(result.contentRead,false);
+  assert.deepEqual(result.text,sourceFileFingerprint(path.join(old,'transcript.txt'),24*1024*1024));
+  assert.deepEqual(fs.readFileSync(path.join(input.outputDirectory,'transcript.txt')),fs.readFileSync(path.join(old,'transcript.txt')));
+  assert.deepEqual(fs.readFileSync(path.join(old,'job.json')),oldJob,'historical inference remains immutable');
+  assert.equal(fs.existsSync(path.join(input.outputDirectory,'job.json')),false,'a derived read is not a new inference job');
+  assert.equal(fs.existsSync(path.join(input.outputDirectory,'launch.json')),false);
+  assert.deepEqual(await processSourceOriginal(input,{root:scratch,run:execute}),result);
+  fs.appendFileSync(path.join(input.outputDirectory,'transcript.txt'),'tampered');
+  await assert.rejects(processSourceOriginal(input,{root:scratch,run:execute}),/AUDIO_SOURCE_INPUT_INVALID/);
+});
+
+test('partial, conflicting or changed-model source history cannot create another decoder',async t=>{
+  const {scratch,input,complete,execute}=completedSourceFixture(t);
+  const old=complete('download-old001');
+  const file=path.join(old,'job.json'),saved=JSON.parse(fs.readFileSync(file));
+  for(const state of ['transcribing','failed']){
+    atomicJson(file,{...saved,state});
+    const observed=await processSourceOriginal(input,{root:scratch,run:execute});
+    assert.equal(observed.state,'unknown');assert.equal(fs.existsSync(input.outputDirectory),false);
+  }
+  atomicJson(file,{...saved,model:'other_model'});
+  assert.equal((await processSourceOriginal(input,{root:scratch,run:execute})).state,'unknown');
+  atomicJson(file,saved);complete('download-old002','другая расшифровка');
+  await assert.rejects(processSourceOriginal(input,{root:scratch,run:execute}),/AUDIO_SOURCE_INPUT_INVALID/);
+  assert.equal(fs.existsSync(path.join(path.dirname(input.outputDirectory),'.source-attempt.json')),false);
+});
+
+test('a current unknown source start is never hidden by another completed result',async t=>{
+  const {scratch,input,complete,execute}=completedSourceFixture(t);complete('download-old001');
+  atomicJson(path.join(path.dirname(input.outputDirectory),'.source-attempt.json'),
+    {schemaVersion:1,requestId:input.requestId,original:input.original});
+  const result=await processSourceOriginal(input,{root:scratch,run:execute});
+  assert.equal(result.state,'unknown');assert.equal(fs.existsSync(input.outputDirectory),false);
+});
+
+test('source reuse rejects altered frozen audio, incomplete final JSON and oversized discovery',async t=>{
+  const {scratch,input,complete,execute}=completedSourceFixture(t),old=complete('download-old001');
+  atomicJson(path.join(old,'transcript.json'),{complete:false,model:'v3_rnnt'});
+  await assert.rejects(processSourceOriginal(input,{root:scratch,run:execute}),/AUDIO_SOURCE_INPUT_INVALID/);
+  atomicJson(path.join(old,'transcript.json'),{complete:true,model:'v3_rnnt'});
+  fs.appendFileSync(path.join(path.dirname(old),'source.ogg'),'changed');
+  await assert.rejects(processSourceOriginal(input,{root:scratch,run:execute}),/AUDIO_SOURCE_INPUT_INVALID/);
+  for(let i=0;i<256;i++)fs.mkdirSync(path.join(scratch,`bounded-${i}`));
+  await assert.rejects(processSourceOriginal(input,{root:scratch,run:execute}),/AUDIO_SOURCE_INPUT_INVALID/);
+});
+
 test('atomic progress replacement is pending without bytes; original and terminal identity stay strict',t=>{
   const root=temporary();t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const file=path.join(root,'job.json');atomicJson(file,{state:'queued'});
@@ -632,7 +703,8 @@ test('real official GigaAM processes >25 seconds through async production CLI an
 test('native source-original protocol decodes actual audio once with the prepared official model',
   {skip:!fixture&&!process.env.CI,timeout:180000},async t=>{
   assert.ok(fixture,'CI must prepare the real hash-pinned RNNT environment');
-  const parent=temporary();t.after(()=>fs.rmSync(parent,{recursive:true,force:true}));
+  const scratch=temporary(),parent=privateDirectory(path.join(scratch,'download-native'));
+  t.after(()=>fs.rmSync(scratch,{recursive:true,force:true}));
   const original=path.join(parent,'voice.ogg');
   // Public hash-pinned spoken fixture; ffmpeg detects its real format from
   // bytes, just as it does with the private original-file receipt in the host.
@@ -654,6 +726,11 @@ test('native source-original protocol decodes actual audio once with the prepare
   assert.doesNotMatch(JSON.stringify(result),/voice\.ogg|filePath|transcript\.txt/);
   const repeated=await processSourceOriginal(input,{root:fixture.root,run:execute});
   assert.deepEqual(repeated,result);assert.equal(starts,1,'repeated intake context only observes this SAME decoder');
+  const next={...input,requestId:'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    outputDirectory:path.join(privateDirectory(path.join(scratch,'download-copied')),'job')};
+  assert.deepEqual(await processSourceOriginal(next,{root:fixture.root,run:execute}),{...result,requestId:next.requestId});
+  assert.equal(starts,1,'fresh authorized source reads reuse actual complete inference, not another worker');
+  assert.equal(fs.existsSync(path.join(next.outputDirectory,'job.json')),false);
 });
 
 test('Windows cold private storage succeeds under a Restricted parent without inherited preference', {skip: process.platform !== 'win32'}, () => {

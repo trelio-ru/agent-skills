@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import uuid
 import wave
 
@@ -20,6 +21,15 @@ spec.loader.exec_module(worker)
 
 
 class WorkerTests(unittest.TestCase):
+    def test_inference_keeps_small_assistant_computers_responsive(self):
+        with mock.patch.object(worker.os, "sched_getaffinity", create=True, side_effect=OSError):
+            for cpus, expected in [(None, 1), (1, 1), (2, 1), (3, 2), (32, 4)]:
+                with mock.patch.object(worker.os, "cpu_count", return_value=cpus):
+                    self.assertEqual(worker.inference_threads(), expected)
+        with mock.patch.object(worker.os, "sched_getaffinity", create=True, return_value={1, 3}), \
+                mock.patch.object(worker.os, "cpu_count", return_value=32):
+            self.assertEqual(worker.inference_threads(), 1, "affinity, not the whole host, limits inference")
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)

@@ -7,7 +7,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {privateDirectory} from './storage.mjs';
+import {atomicJson,privateDirectory} from './storage.mjs';
 
 const fail=()=>{throw Error('AUDIO_SOURCE_INPUT_INVALID');};
 const exact=(value,keys)=>value&&typeof value==='object'&&!Array.isArray(value)
@@ -98,6 +98,74 @@ export async function readSourceOriginalInput(stream){
   catch{fail();}finally{bytes.fill(0);for(const chunk of chunks)chunk.fill(0);}
 }
 
+/** Only host-private source jobs participate. A fresh native original grant is
+ * still required on every invocation; an old job is never a read permission.
+ * Compare the frozen audio itself, model, terminal JSON and full text. Ordinary
+ * task output directories, partial jobs and unknown starts cannot be adopted.
+ * Discovery is bounded and exhaustive: neither newest-file selection nor the
+ * first of conflicting transcripts is a valid answer. */
+function completedOriginal(parent,original,model){
+  if(!/^download-[A-Za-z0-9]{6}$/u.test(path.basename(parent)))return null;
+  const scratch=path.dirname(parent);checkPath(scratch,{directory:true});
+  const entries=fs.readdirSync(scratch,{withFileTypes:true});
+  if(entries.length>256)fail();
+  let selected=null,matches=0;
+  try{
+    for(const entry of entries){
+      if(!/^download-[A-Za-z0-9]{6}$/u.test(entry.name))continue;
+      const candidate=path.join(scratch,entry.name);if(candidate===parent)continue;
+      // lstat is only a cheap existence check. Before reading any candidate,
+      // the SAME private/ancestor/ACL reader checks its claim and every file.
+      const claimPath=path.join(candidate,'.source-attempt.json');
+      try{fs.lstatSync(claimPath);}catch(error){if(error.code==='ENOENT')continue;throw error;}
+      const claim=sourceJson(claimPath,8192);
+      if(claim?.schemaVersion!==1||!uuid(claim.requestId)||claim.original?.sha256!==original.sha256
+        ||claim.original?.sizeBytes!==original.sizeBytes)continue;
+      if(!exact(claim,['schemaVersion','requestId','original'])||!exact(claim.original,['filePath','sha256','sizeBytes'])
+        ||typeof claim.original.filePath!=='string'||!path.isAbsolute(claim.original.filePath))fail();
+      if(++matches>8)fail();
+      const directory=path.join(candidate,'job'),jobPath=path.join(directory,'job.json');
+      try{fs.lstatSync(jobPath);}catch(error){if(error.code==='ENOENT')continue;throw error;}
+      let job;
+      try{job=readSourceProgressJson(jobPath);}catch(error){if(error.code==='AUDIO_SOURCE_SNAPSHOT_CHANGED')continue;throw error;}
+      if(job?.state!=='completed'||job.model!==model)continue;
+      const frozen=path.join(candidate,'source.ogg');
+      if(job.input!==frozen||job.originalSize!==original.sizeBytes||job.sourceSha256!==original.sha256)fail();
+      const audio=sourceFileFingerprint(frozen,20*1024*1024);
+      if(audio.sizeBytes!==original.sizeBytes||audio.sha256!==original.sha256)fail();
+      const transcript=sourceJson(path.join(directory,'transcript.json'));
+      if(transcript?.complete!==true||transcript.model!==model)fail();
+      const bytes=readSourceBytes(path.join(directory,'transcript.txt'),24*1024*1024,{allowEmpty:true});
+      try{
+        new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+        const text={sizeBytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};
+        if(selected&&(selected.text.sha256!==text.sha256||selected.text.sizeBytes!==text.sizeBytes))fail();
+        if(!selected)selected={text,bytes:Buffer.from(bytes)};
+      }finally{bytes.fill(0);}
+    }
+    // A matching old attempt without a verified terminal result is NOT a
+    // cache miss. Its unknown/partial start must never become a new decoder.
+    return selected??(matches?{pending:true}:null);
+  }catch(error){selected?.bytes.fill(0);throw error;}
+}
+
+/** A cache hit publishes a NEW read result, never a fictional inference job.
+ * The existing fsynced source claim is acquired before this copy. A crash with
+ * no complete receipt stays unknown, and can never fall through to a decoder.
+ * Text bytes are checked again on each read; no old grant/path is returned. */
+function completedCopy(input,answer,model){
+  const receiptPath=path.join(input.outputDirectory,'source-result.json');
+  try{fs.lstatSync(receiptPath);}catch(error){if(error.code==='ENOENT')return null;throw error;}
+  const receipt=sourceJson(receiptPath,8192);
+  if(!exact(receipt,['schemaVersion','requestId','original','model','text'])||receipt.schemaVersion!==1
+    ||receipt.requestId!==input.requestId||receipt.model!==model
+    ||!exact(receipt.original,['sha256','sizeBytes'])||receipt.original.sha256!==input.original.sha256
+    ||receipt.original.sizeBytes!==input.original.sizeBytes||!exact(receipt.text,['sha256','sizeBytes']))fail();
+  const text=sourceFileFingerprint(path.join(input.outputDirectory,'transcript.txt'),24*1024*1024,{allowEmpty:true});
+  if(text.sha256!==receipt.text.sha256||text.sizeBytes!==receipt.text.sizeBytes)fail();
+  return {...answer,state:'completed',model,text};
+}
+
 export async function processSourceOriginal(input,{root,run}){
   if(!exact(input,['schemaVersion','requestId','original','outputDirectory'])||input.schemaVersion!==1||!uuid(input.requestId)
     ||!exact(input.original,['filePath','sizeBytes','sha256'])||!digest(input.original.sha256)
@@ -123,16 +191,40 @@ export async function processSourceOriginal(input,{root,run}){
   }
   const claimFile=path.join(parent,'.source-attempt.json');
   const claim={schemaVersion:1,requestId:input.requestId,original:input.original};
+  // An EXISTING attempt always keeps its own one-start/unknown fence. Only a
+  // genuinely new source request may use completed derivations of these exact
+  // freshly verified bytes; no existing job/claim is resumed or overwritten.
+  let reused=null;
+  try{fs.lstatSync(claimFile);}catch(error){
+    if(error.code!=='ENOENT')throw error;
+    reused=completedOriginal(parent,input.original,doctor.model);
+  }
+  if(reused?.pending)return {...answer,state:'unknown',code:'AUDIO_SOURCE_START_UNKNOWN'};
   let claimed=false;
   try{
     const fd=fs.openSync(claimFile,'wx',0o600);
     try{fs.writeFileSync(fd,JSON.stringify(claim));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
     claimed=true;
-  }catch(error){if(error.code!=='EEXIST')throw error;}
-  const saved=sourceJson(claimFile,8192);
+  }catch(error){reused?.bytes.fill(0);if(error.code!=='EEXIST')throw error;}
+  let saved;
+  try{saved=sourceJson(claimFile,8192);}catch(error){reused?.bytes.fill(0);throw error;}
   if(!exact(saved,['schemaVersion','requestId','original'])||saved.schemaVersion!==1||saved.requestId!==input.requestId
     ||!exact(saved.original,['filePath','sha256','sizeBytes'])
-    ||['sha256','sizeBytes'].some(key=>saved.original[key]!==input.original[key])||typeof saved.original.filePath!=='string')fail();
+    ||['sha256','sizeBytes'].some(key=>saved.original[key]!==input.original[key])||typeof saved.original.filePath!=='string'){
+    reused?.bytes.fill(0);fail();
+  }
+  if(claimed&&reused){
+    try{
+      const current=sourceFileFingerprint(input.original.filePath,20*1024*1024);
+      if(current.sha256!==input.original.sha256||current.sizeBytes!==input.original.sizeBytes)fail();
+      privateDirectory(input.outputDirectory);
+      const fd=fs.openSync(path.join(input.outputDirectory,'transcript.txt'),'wx',0o600);
+      try{fs.writeFileSync(fd,reused.bytes);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+      atomicJson(path.join(input.outputDirectory,'source-result.json'),{schemaVersion:1,requestId:input.requestId,
+        original:{sha256:input.original.sha256,sizeBytes:input.original.sizeBytes},model:doctor.model,text:reused.text});
+    }finally{reused.bytes.fill(0);}
+  }else reused?.bytes.fill(0);
+  const copied=completedCopy(input,answer,doctor.model);if(copied)return copied;
   let result;
   const jobSource=path.join(parent,'source.ogg');
   if(claimed){

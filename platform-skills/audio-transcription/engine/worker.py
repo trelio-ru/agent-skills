@@ -123,6 +123,19 @@ def ffmpeg_arguments(executable, input_path):
             "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1"]
 
 
+def inference_threads():
+    # Background speech must leave a small assistant computer responsive.
+    # Four fixed OpenMP threads oversubscribe two-vCPU Windows machines and
+    # can starve the native read/verification processes observing this job.
+    # Prefer the process's actual affinity where available; no model/env
+    # override or system scheduling configuration is introduced.
+    try:
+        available = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        available = os.cpu_count() or 1
+    return max(1, min(4, available - 1))
+
+
 def load_model(state_root, cancelled):
     # A PyTorch checkpoint contains pickle. Check the exact published bytes
     # before torch.load; never accept a user-selected checkpoint or remote code.
@@ -141,7 +154,7 @@ def load_model(state_root, cancelled):
     sys.path.insert(0, str(ENGINE / "vendor"))
     import torch
     from gigaam.model import GigaAMASR
-    torch.set_num_threads(4)
+    torch.set_num_threads(inference_threads())
     checkpoint = torch.load(state_root / "models" / "v3_rnnt.ckpt", map_location="cpu", weights_only=False)
     config = checkpoint["cfg"]
     config.encoder.flash_attn = False

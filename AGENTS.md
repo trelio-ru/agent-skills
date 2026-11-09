@@ -260,6 +260,10 @@ segment. Resume не теряет cancellation нового run и не меня
 Task execution explicitly signs its bounded ordinary ASR command prefixes,
 including guides and fixed environment preparation; source-original/__setup
 remain outside that policy. See the workflow's task/source separation.
+Fresh host-source reads may reuse complete, byte-identical original/model results
+inside the SAME private scratch root; never borrow an old grant or decoder claim.
+Conflicts, incomplete jobs and current unknown starts remain fail-closed. See the
+workflow's completed-result recovery and native reuse regressions.
 First authorized use prepares the fixed signed environment without an owner question; offline doctor stays read-only. One durable setup dispatch is separate from the SAME private source/inference binding; unknown is status-only. No Telegram quota/new task. Native cold-install/inference/reparse/file-integrity gates are mandatory. Atomic progress rotation is pending only; original/final identity and ACL refusals stay strict.
 Windows first-install проверяется без ambient `PROCESSOR_*`, как после signed
 host: provider сам задаёт архитектуру поддерживаемого managed Python.
