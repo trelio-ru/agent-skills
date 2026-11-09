@@ -53,6 +53,8 @@ refusal, close-one/keep-other, CAS conflict, queue и unknown без повто�
 каждой поддержанной OS. Package schema не доказывает эти behavioral checks.
 Windows native helpers используют extended paths для owner roots и atomic temp
 files длиннее MAX_PATH, сохраняя exact SID/DACL и ancestor reparse checks.
+Framework long-path parsing включается в самом helper до первого System.IO
+через process-only AppContext switches, без изменения Windows/GPO.
 Проверяются создание, повторная запись и native verification обычного пути
 длиннее 300 символов; сокращение identity или ослабление ACL не является решением.
 

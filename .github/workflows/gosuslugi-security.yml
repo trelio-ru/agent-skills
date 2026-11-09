@@ -39,6 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Check out exact shared execution-session contract
         uses: actions/checkout@v4
@@ -65,7 +66,7 @@ jobs:
       - name: Validate the pinned storage codec
         run: node platform-skills/gosuslugi/development/build-storage-codec.mjs --check
       - name: Test real native crypto, ACL and crash cleanup
-        run: node --test platform-skills/gosuslugi/tests/instruction-guides.test.mjs platform-skills/gosuslugi/tests/runtime.test.mjs platform-skills/gosuslugi/tests/services.test.mjs platform-skills/gosuslugi/tests/authorization.test.mjs platform-skills/gosuslugi/tests/auth-safety.test.mjs platform-skills/gosuslugi/tests/esia-flow.test.mjs platform-skills/gosuslugi/tests/pos-submission.test.mjs
+        run: node --test --test-concurrency=1 platform-skills/gosuslugi/tests/instruction-guides.test.mjs platform-skills/gosuslugi/tests/runtime.test.mjs platform-skills/gosuslugi/tests/services.test.mjs platform-skills/gosuslugi/tests/authorization.test.mjs platform-skills/gosuslugi/tests/auth-safety.test.mjs platform-skills/gosuslugi/tests/esia-flow.test.mjs platform-skills/gosuslugi/tests/pos-submission.test.mjs
       - name: Install locked rich-text fixture
         # Match the public portal's actual editor; a textarea is not a Quill
         # regression. These locked fixture dependencies never enter the package.

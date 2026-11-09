@@ -59,7 +59,7 @@ jobs:
       - name: Test native crypto, ACL and independent crash cleanup
         run: node --test platform-skills/t-bank/tests/runtime.test.mjs
       - name: Test delegated T‑ID authorization boundary
-        run: node --test platform-skills/t-bank/tests/authorization.test.mjs platform-skills/t-bank/tests/t-id-flow.test.mjs platform-skills/t-bank/tests/http-errors.test.mjs
+        run: node --test --test-concurrency=1 platform-skills/t-bank/tests/authorization.test.mjs platform-skills/t-bank/tests/t-id-flow.test.mjs platform-skills/t-bank/tests/http-errors.test.mjs
       - name: Test one headed browser with synthetic TOTP and SMS
         run: node --test platform-skills/t-bank/tests/browser-smoke.test.mjs
       - name: Test caller-owned Playwright context with synthetic T‑ID

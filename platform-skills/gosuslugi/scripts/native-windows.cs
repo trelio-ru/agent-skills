@@ -310,6 +310,12 @@ internal static class GosuslugiNative {
     [STAThread]
     static int Main(string[] args) {
         try {
+            // Extended paths require modern Framework parsing before the first
+            // System.IO call, including a second normalization of an already
+            // prefixed path. These are process-only switches, not Windows/GPO
+            // settings; all exact owner/DACL and reparse checks remain active.
+            AppContext.SetSwitch("Switch.System.IO.UseLegacyPathHandling", false);
+            AppContext.SetSwitch("Switch.System.IO.BlockLongPaths", false);
             // Setting Console.InputEncoding calls SetConsoleCP, which fails for
             // DETACHED_PROCESS. Bind the redirected handles directly instead;
             // no console window is created merely to transport private JSON.
