@@ -574,7 +574,10 @@ test('two real WhatsApp chat CLIs share a queued service but cannot stop each ot
     await atomicWrite(path.join(directory, 'lease.json'), JSON.stringify({ leaseId: physical, runtimeVersion: RUNTIME_VERSION,
       transport: 'browser', browserStorage: 'local_profile', headless: false, startedAt: Date.now(), expiresAt, guardPid: guardian.pid }), helper);
     await atomicWrite(path.join(directory, 'control.json'), JSON.stringify({ leaseId: physical, port: server.address().port, token: 'a'.repeat(64) }), helper);
-    const input = path.join(root, 'request.json');
+    // The native account directory has an explicit user SID/DACL. mkdtemp's
+    // elevated Windows owner can be Administrators, so never stage private
+    // input directly in that disposable outer root or weaken verification.
+    const input = path.join(directory, 'request.json');
     await atomicWrite(input, JSON.stringify({ command: 'dialogs', limit: 1 }), helper);
     const call = async (index, args) => JSON.parse((await execute(process.execPath,
       [fileURLToPath(new URL('../scripts/trelio-whatsapp.mjs', import.meta.url)), ...args], {

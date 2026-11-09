@@ -51,6 +51,10 @@ Provider scope, sending approvals, request journals, native expiry и реаль
 ограничения сервиса сохраняются. Тестировать нужно два чата, foreign-session
 refusal, close-one/keep-other, CAS conflict, queue и unknown без повторения на
 каждой поддержанной OS. Package schema не доказывает эти behavioral checks.
+Windows native helpers используют extended paths для owner roots и atomic temp
+files длиннее MAX_PATH, сохраняя exact SID/DACL и ancestor reparse checks.
+Проверяются создание, повторная запись и native verification обычного пути
+длиннее 300 символов; сокращение identity или ослабление ACL не является решением.
 
 <a id="email-device-storage"></a>
 

@@ -124,7 +124,7 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
     }
   }
   assert.ok(releaseManifest.runtime.files.some(file => file.path === "inbox_tools.py"));
-  assert.equal(releaseManifest.runtime.minimumHostVersion, "3.25.0");
+  assert.equal(releaseManifest.runtime.minimumHostVersion, "3.31.0");
   assert.deepEqual(
     releaseManifest.connection.configFields.map((field) => field.key),
     [],

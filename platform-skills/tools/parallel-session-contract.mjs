@@ -17,7 +17,28 @@ const moduleUrl = new URL('../../_contracts/agent-workspaces-runtime/host-runtim
  * login, user browser, external request or real guardian is ever opened. Only
  * the two Node children created here can be terminated by these fixtures. */
 export function registerParallelSessionContract(skillUrl, { identity, storageDirectory, version,
-  nativeHelper, ensurePrivateDirectory, atomicWrite, childEnvironment }) {
+  nativeHelper, ensurePrivateDirectory, atomicWrite, verifyPrivate, childEnvironment }) {
+  test('native Windows private state supports long owner paths with unchanged SID and ACL checks', {
+    skip: process.platform !== 'win32', timeout: 60000,
+  }, async () => {
+    const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-long-owner-state-')));
+    try {
+      const helper = await nativeHelper(root);
+      // Use ordinary caller paths, not an already-prefixed test-only shortcut.
+      // The production native helper must normalize before its ACL/file APIs.
+      const directory = path.join(root, 'private', 'x'.repeat(90), 'y'.repeat(90), 'z'.repeat(90));
+      const file = path.join(directory, 'state.json');
+      assert.ok(file.length > 300);
+      await ensurePrivateDirectory(directory, helper);
+      await atomicWrite(file, '{"synthetic":1}', helper);
+      await verifyPrivate(file, helper);
+      await atomicWrite(file, '{"synthetic":2}', helper);
+      await ensurePrivateDirectory(directory, helper);
+      await verifyPrivate(file, helper);
+      assert.equal(await fs.readFile(file, 'utf8'), '{"synthetic":2}');
+    } finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+  });
+
   test('two real chat CLIs address separate workers and stop only their own synthetic guardian', {
     skip: !['darwin', 'win32'].includes(process.platform), timeout: 60000,
   }, async () => {

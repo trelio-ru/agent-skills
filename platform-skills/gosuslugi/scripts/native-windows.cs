@@ -114,8 +114,19 @@ internal static class GosuslugiNative {
             if (token != IntPtr.Zero) CloseHandle(token);
         }
     }
+    static string StoragePath(string location) {
+        // Owner-isolated session roots add a full digest below the existing
+        // account path. Framework ACL overloads still need the extended Win32
+        // namespace even when Node accepts that long path. Normalize the SAME
+        // target before ACL/create/read; no truncation, GPO change or weaker
+        // owner/reparse verification is permitted.
+        string full = Path.GetFullPath(location);
+        if (full.StartsWith(@"\\?\", StringComparison.Ordinal)) return full;
+        return full.StartsWith(@"\\", StringComparison.Ordinal)
+            ? @"\\?\UNC\" + full.Substring(2) : @"\\?\" + full;
+    }
     static void NoReparse(string location) {
-        string current = Path.GetFullPath(location);
+        string current = StoragePath(location);
         while (!String.IsNullOrEmpty(current)) {
             if (Directory.Exists(current) || File.Exists(current))
                 Check((File.GetAttributes(current) & FileAttributes.ReparsePoint) == 0, "native_reparse_point");
@@ -130,6 +141,7 @@ internal static class GosuslugiNative {
         return acl;
     }
     static void VerifyAcl(string file, bool directory) {
+        file = StoragePath(file);
         NoReparse(file);
         FileSystemSecurity acl = directory ? (FileSystemSecurity)Directory.GetAccessControl(file) : File.GetAccessControl(file);
         Check(Owner.Equals(acl.GetOwner(typeof(SecurityIdentifier))), "native_owner_mismatch");
@@ -141,7 +153,7 @@ internal static class GosuslugiNative {
         Check(allowed, "native_acl_not_private");
     }
     static void PrivateDirectory(string directory) {
-        directory = Path.GetFullPath(directory); NoReparse(directory);
+        directory = StoragePath(directory); NoReparse(directory);
         if (Directory.Exists(directory)) { VerifyAcl(directory, true); return; }
         var missing = new Stack<string>(); string cursor = directory;
         while (!Directory.Exists(cursor)) { missing.Push(cursor); cursor = Path.GetDirectoryName(cursor); Check(cursor != null); }
@@ -149,6 +161,7 @@ internal static class GosuslugiNative {
         VerifyAcl(directory, true);
     }
     static void CreatePrivateFile(string file, byte[] value) {
+        file = StoragePath(file);
         NoReparse(file); VerifyAcl(Path.GetDirectoryName(file), true);
         var acl = new FileSecurity(); acl.SetOwner(Owner); acl.SetAccessRuleProtection(true, false);
         acl.AddAccessRule(new FileSystemAccessRule(Owner, FileSystemRights.FullControl, AccessControlType.Allow));
@@ -171,6 +184,7 @@ internal static class GosuslugiNative {
         }
     }
     static void Key(string op, string file, string identity, string requestTitle) {
+        file = StoragePath(file);
         Check(identity.Length == 64 && System.Text.RegularExpressions.Regex.IsMatch(identity, "^[a-f0-9]+$"));
         VerifyAcl(Path.GetDirectoryName(file), true);
         if (File.Exists(file)) VerifyAcl(file, false);
