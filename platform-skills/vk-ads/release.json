@@ -2,14 +2,14 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk-ads",
-    "version": "1.7.1",
-    "summary": "Фолбэк ВК Рекламы разрешён только через навык «ВКонтакте». Прямой доступ агента через браузер запрещён, включая чтение и диагностику; отдельные подключения и запрет повтора неизвестной записи сохраняются.",
+    "version": "1.7.2",
+    "summary": "Общая очередь runtime 3.31.0 защищает состояние аккаунта при работе нескольких чатов без повторения операций.",
     "routingSummary": "Manage VK Ads campaigns, groups, creatives and audiences; read performance and recent delivery statistics with scoped plans and verified results."
   },
   "connection": null,
   "runtime": {
-    "version": "1.7.1",
-    "minimumHostVersion": "3.7.0",
+    "version": "1.7.2",
+    "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "scripts/trelio-vk-ads.mjs",
       "interpreter": "node"
@@ -20,10 +20,26 @@
       "local-accounts-v1"
     ],
     "files": [
-      {"source":"scripts/auth-recovery.mjs","path":"scripts/auth-recovery.mjs","mode":420},
-      {"source":"references/auth-recovery.md","path":"references/auth-recovery.md","mode":420},
-      {"source":"scripts/status-recovery.mjs","path":"scripts/status-recovery.mjs","mode":420},
-      {"source":"references/status-recovery.md","path":"references/status-recovery.md","mode":420},
+      {
+        "source": "scripts/auth-recovery.mjs",
+        "path": "scripts/auth-recovery.mjs",
+        "mode": 420
+      },
+      {
+        "source": "references/auth-recovery.md",
+        "path": "references/auth-recovery.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/status-recovery.mjs",
+        "path": "scripts/status-recovery.mjs",
+        "mode": 420
+      },
+      {
+        "source": "references/status-recovery.md",
+        "path": "references/status-recovery.md",
+        "mode": 420
+      },
       {
         "source": "scripts/api.mjs",
         "path": "scripts/api.mjs",
@@ -92,6 +108,11 @@
       {
         "source": "references/audience-management.md",
         "path": "references/audience-management.md",
+        "mode": 420
+      },
+      {
+        "source": "trelio-execution-resource.json",
+        "path": "trelio-execution-resource.json",
         "mode": 420
       }
     ]

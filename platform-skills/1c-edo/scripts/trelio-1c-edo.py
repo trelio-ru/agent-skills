@@ -48,7 +48,7 @@ from typing import Any, BinaryIO, Callable, Iterable, Iterator
 
 
 SKILL_ID = "1c-edo"
-RUNTIME_VERSION = "1.1.0"
+RUNTIME_VERSION = "1.1.1"
 X_ODATA_ENV = "TRELIO_1C_EDO_X_ODATA"
 CONNECTION_CONFIG_ENV = "TRELIO_SKILL_CONNECTION_CONFIG_JSON"
 ACCESS_STATES = ("unknown", "no_access", "connected", "needs_reconnect")

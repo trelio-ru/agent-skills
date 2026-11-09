@@ -8,12 +8,11 @@ metadata:
 
 # ВК Реклама
 
-Перед первой командой один раз загрузи `get_agent_skill`,
-`sections=[instructions,execution]`. Соблюдай company/project instructions,
-профиль и `skill.personalRules`. Reload: compaction/утрата текста, смена области,
-снятый access blocker, правка личных правил, 12 часов и один раз при
-`AGENT_SKILL_RELEASE_CHANGED`. Host admission – до 12 часов без продления;
-не загружай инструкции перед каждой подкомандой.
+Перед работой один раз загрузи `get_agent_skill`, `sections=[instructions,execution]`.
+Соблюдай company/project instructions, профиль и `skill.personalRules`.
+Перечитай после compaction/утраты текста, смены области, снятия access blocker,
+правки личных правил, через 12 часов и один раз при `AGENT_SKILL_RELEASE_CHANGED`.
+Host admission – до 12 часов без продления; не перечитывай перед каждой командой.
 
 Исполняй только текущую `runtimeExecution.localAction` через её server/tool,
 добавляя аргументы в `parameters.arguments`. Host проверяет release/assignment/
@@ -25,7 +24,7 @@ Fallback – только через [навык `vk`](references/workflow.md#fa
 
 ## Подключение
 
-Каталог `local-accounts-v1`, host >=3.7.0: сначала `account list`, существующий
+Каталог `local-accounts-v1`, host >=3.31.0: сначала `account list`, существующий
 или новый аккаунт. Привязка к компании требует выбора пользователя. Передавай
 exact `--local-account UUID`; account/binding задаёт host. Имена/комментарии –
 через `account update`. При неоднозначности без default уточни выбор;
@@ -57,10 +56,9 @@ Linux в этой версии не поддерживает credential storage 
 
 ## Чтение и подготовка
 
-Команды и поля: [API и сценарии](references/workflow.md). Для полного контракта
-вызови `reference --name workflow` перед подготовкой первой записи;
-`reference --name security` – перед настройкой/диагностикой защиты.
-Оба читают только эти подписанные packaged references, без credentials/API.
+Команды: [API и сценарии](references/workflow.md). До первой записи прочитай
+`reference --name workflow`, до настройки/диагностики защиты –
+`reference --name security`. Оба читают только signed packaged references без credentials/API.
 
 - `list --entity plans|groups|banners`, `get --entity … --id …`
 - `catalog --name packages|patterns|fields|regions|interests`

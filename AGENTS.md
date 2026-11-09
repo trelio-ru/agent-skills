@@ -119,6 +119,7 @@ creation evidence и exact membership read-back; missing invitees не разр�
 ancestors, включая Windows junction/reparse points.
 
 Параллельные чаты/private skills используют [общий runtime-контракт](docs/agent-skill-connections.md#parallel-skill-sessions): отдельный live owner, общий auth/CAS, resource queue без replay. Алгоритмы не копируются в provider.
+1С ЭДО и ВК Реклама используют signed account resource policy: HTTP reads могут менять access state/OAuth cache, а прежние receipt/recovery fences сохраняются. Stateless mail reads остаются параллельными без общего invocation mutex.
 Windows owner roots и atomic temp files проверяются native helpers также за MAX_PATH; exact SID/DACL и reparse guards сохраняются.
 
 Для нескольких личных аккаунтов читай [общий контракт](docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов): каталог и company bindings принадлежат host, protected storage и вход – provider-у.

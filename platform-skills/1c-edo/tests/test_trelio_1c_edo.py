@@ -122,8 +122,15 @@ class OneCEdoRuntimeTest(unittest.TestCase):
         self.assertNotIn("runtimeExecution.command` **without", source)
 
         release = json.loads(RELEASE.read_text(encoding="utf-8"))
-        self.assertEqual(release["release"]["version"], "1.1.1")
-        self.assertEqual(release["runtime"]["version"], "1.1.0")
+        self.assertEqual(release["release"]["version"], "1.1.2")
+        self.assertEqual(release["runtime"]["version"], "1.1.1")
+        # Read commands also persist personal access status. Scheduling belongs
+        # to the signed host policy, while this provider retains its namespace.
+        self.assertEqual(release["runtime"]["minimumHostVersion"], "3.31.0")
+        marker = RELEASE.parent / "trelio-execution-resource.json"
+        self.assertEqual(json.loads(marker.read_text()), {"schemaVersion": 1, "scope": "account"})
+        self.assertTrue(any(item["path"] == marker.name and item["mode"] == 420
+                            for item in release["runtime"]["files"]))
 
     def store_connected_credentials(self):
         identity, config = self.identity_and_config()
@@ -133,7 +140,7 @@ class OneCEdoRuntimeTest(unittest.TestCase):
         return identity, config, credentials
 
     def test_browser_connect_release_and_cli_contract(self) -> None:
-        self.assertEqual(MODULE.RUNTIME_VERSION, "1.1.0")
+        self.assertEqual(MODULE.RUNTIME_VERSION, "1.1.1")
 
         default_args = MODULE.build_parser().parse_args(["connect"])
         terminal_args = MODULE.build_parser().parse_args(

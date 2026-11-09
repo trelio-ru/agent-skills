@@ -1096,3 +1096,14 @@ test('Linux setup fails closed rather than creating an unprotected credential st
   const store = await fixture(t);
   const native = new Store(store.root, store.owner); await assert.rejects(native.seal({ secret: 'synthetic' }), { code: 'secure_storage_unsupported' });
 });
+
+
+test('signed host queue protects the same account without changing provider receipts', async () => {
+  // Validate actual delivered policy, not a second implementation of the lock.
+  // OAuth and mutation journals retain their own no-replay/unknown fences.
+  const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url)));
+  assert.equal(release.runtime.minimumHostVersion, '3.31.0');
+  const marker = JSON.parse(await fs.readFile(new URL('../trelio-execution-resource.json', import.meta.url)));
+  assert.deepEqual(marker, {schemaVersion: 1, scope: 'account'});
+  assert.ok(release.runtime.files.some(file => file.path === 'trelio-execution-resource.json' && file.mode === 420));
+});
