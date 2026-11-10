@@ -2,22 +2,22 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "google-calendar-web",
-    "version": "0.1.0",
-    "summary": "Google Календарь через управляемый браузер Trelio: скрытая работа, отдельный ручной вход и проверка результата без Google API",
+    "version": "0.1.1",
+    "summary": "Автозакрытие окна после подтверждённого входа в Google Календарь с защищённым сохранением сессии",
     "routingSummary": "Read Google Calendar schedules and manage events through the managed browser without the Google Calendar API."
   },
   "connection": {
     "schemaVersion": 1,
     "intro": [
       "Войдите в Google в отдельном видимом Chromium Trelio. Аккаунт из встроенного браузера Codex и личного Chrome не импортируется.",
-      "Закройте окно или сообщите «готово»: авторизация сохранится локально в защищённом снимке. Обычная работа идёт без окна. Google может потребовать повторный ручной вход."
+      "После успешного входа окно закроется автоматически, а авторизация сохранится локально в защищённом снимке. Если готовый Календарь не распознан, можно закрыть окно или сообщить «готово». Обычная работа идёт без окна."
     ],
     "configFields": [],
     "secretFields": []
   },
   "runtime": {
-    "version": "0.1.0",
-    "minimumHostVersion": "3.31.4",
+    "version": "0.1.1",
+    "minimumHostVersion": "3.32.0",
     "entrypoint": {
       "path": "trelio-google-calendar.mjs",
       "interpreter": "node"

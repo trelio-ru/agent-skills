@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { executeWorkflow, parseWorkflowSpec, workflowCommands, workflowWrites, WorkflowError, fieldCheckPolicy } from './calendar-workflows.mjs';
 
-export const SKILL_VERSION = '0.1.0';
-export const MINIMUM_HOST_VERSION = '3.31.4';
+export const SKILL_VERSION = '0.1.1';
+export const MINIMUM_HOST_VERSION = '3.32.0';
 // Use Google's Calendar sign-in entry directly in the already guarded tab.
 // The public landing page's Sign in opens a new, initially unguarded tab; its
 // headerless redirect is deliberately rejected by the host's file/MIME fence.
@@ -22,6 +22,17 @@ const setupUrl = 'https://accounts.google.com/ServiceLogin?service=cl&continue=h
 const origins = ['https://calendar.google.com', 'https://accounts.google.com', 'https://workspace.google.com',
   'https://accounts.youtube.com', 'https://accounts.google.ru',
   'https://google.com', 'https://google.ru', 'https://youtube.com'];
+// Read-only success conditions belong to this signed provider, not model argv.
+// Calendar's own account link plus working calendar navigation distinguish the
+// authenticated app from the public landing page, account chooser and MFA.
+// The host requires two stable observations and performs the existing stopped
+// profile save before it releases the manual gate; no business input is sent.
+export const manualCompletion = { success: [{ origin: 'https://calendar.google.com', pathPrefix: '/calendar/',
+  selectors: [
+    'a[aria-label^="Аккаунт Google:"],a[aria-label^="Google Account:"]',
+    '[aria-label^="Сегодня,"],[aria-label^="Today,"]',
+    '[aria-label="Настройки"],[aria-label="Settings"]',
+  ], blocked: ['[role="dialog"]', 'input[type="password"]', 'input[autocomplete="one-time-code" i]'] }] };
 const commands = Object.freeze({
   commands: {}, guides: {}, doctor: {}, setup: {}, 'show-login': {}, ready: {}, status: {}, wait: {}, close: {}, disconnect: {},
   ...workflowCommands,
@@ -123,6 +134,7 @@ export async function runCalendar(argv, env = process.env) {
     const supported = runtime.VISUAL_PRESENTATION_API === 'trelio.visual-presentation/v1'
       && runtime.VISUAL_SEMANTIC_CONTROLS_API === 'trelio.visual-semantic-controls/v1'
       && runtime.VISUAL_FORM_CHECKS_API === 'trelio.visual-form-checks/v1'
+      && runtime.VISUAL_MANUAL_COMPLETION_API === 'trelio.visual-manual-completion/v1'
       && typeof runtime.runVisualSession === 'function';
     checks.push({ check: 'HOST_INTERFACE', result: supported ? 'passed' : 'failed' });
     // An old live worker may still be inspected and closed, but it must never
@@ -131,9 +143,9 @@ export async function runCalendar(argv, env = process.env) {
     if (typeof runtime.runVisualSession !== 'function') throw new CalendarError('CALENDAR_HOST_REQUIRED');
     dispatched = true;
     if (Object.hasOwn(workflowCommands, operation)) return await executeWorkflow(operation, parsed.workflowSpec,
-      (operation, args) => runtime.runVisualSession({ origins, presentation: 'hidden', semanticControls: true, fieldCheckPolicy,
+      (operation, args) => runtime.runVisualSession({ origins, presentation: 'hidden', semanticControls: true, fieldCheckPolicy, manualCompletion,
         observationMode: 'text', operation, args, env }));
-    const value = await runtime.runVisualSession({ origins, presentation: 'hidden', semanticControls: true, fieldCheckPolicy, observationMode: 'text',
+    const value = await runtime.runVisualSession({ origins, presentation: 'hidden', semanticControls: true, fieldCheckPolicy, manualCompletion, observationMode: 'text',
       operation, args: operation === 'setup' ? { url: setupUrl } : parsed.args, env });
     if (!value || !states.has(value.state) || !['trelio.visual-browser/v1', 'trelio.browser-text/v1'].includes(value.kind)) {
       return calendarFailure({ code: 'CALENDAR_RESULT_INVALID', operation, write, host, checks,

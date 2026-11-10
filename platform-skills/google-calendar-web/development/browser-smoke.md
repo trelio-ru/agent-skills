@@ -82,3 +82,25 @@ smoke, проверку всех языков/поясов и обязатель
 заблокировала сам Save: это dry-run формы, не третье созданное событие. Свой
 черновик отменён. Финальный find-events по test anchor подтвердил полный пустой
 выбранный день. Все обычные чтения/recipes выполнялись без screenshots.
+
+
+## Патч автозакрытия 0.1.1
+
+Provider base — `skill-google-calendar-web-v0.1.0` (3ffbf2942b10a67b627ddf8af67a109f897a970a).
+Новый host ABI `trelio.visual-manual-completion/v1` требует host 3.32.0;
+ранний stable minimum 3.31.4 больше не подтверждает эту возможность. До выпуска
+обязательны full native host CI, provider CI на всех трёх OS и полный cold/fault
+question-system stand с exact новым runtime pin. Source merge сам не является
+production release; patch публикуется только после signed host dependency.
+
+На macOS actual native fixture прошёл password/challenge → stable authenticated
+page → автоматический stop/save ровно один раз → hidden restore. Ни password,
+ни dialog не закрывают окно; image/input gate сохраняется. Pure tests отдельно
+проверяют origin/path, loading, duplicate controls, blockers и owner policy pin.
+
+Живой managed Google в прежнем отдельном maintainer account восстановил вход,
+показал кабинет и самостоятельно перешёл в saved_unverified без ready и без
+сообщения человека. Затем list-calendars в скрытом режиме успешно прочитал
+sidebar; close завершил собственный worker. Данные календарей и auth не
+сохранялись в source; событий не создавалось и не менялось. Это source smoke;
+проверка опубликованного patch выполняется отдельно после production read-back.

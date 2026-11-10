@@ -70,7 +70,8 @@ Google API. Обычная работа скрыта; вход выполняе�
 При изменении вёрстки агент использует текущие text/PNG controls в той же сессии.
 Типовые команды используют fresh semantic labels и приватную проверку полей,
 а не screenshots. Требуются presentation/semantic-controls/form-checks API host
-(host >=3.31.4).
+(host >=3.32.0). После распознавания готового кабинета окно входа закрывается
+автоматически через общий stopped-profile save; неизвестный challenge остаётся человеку.
 Source и синтетические тесты не означают опубликованную готовность Google-входа;
 проверки и ограничения — в [browser smoke](platform-skills/google-calendar-web/development/browser-smoke.md).
 

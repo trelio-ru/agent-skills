@@ -52,11 +52,14 @@ coverage и переход к agent control после UI failures.
 ## Подключение и ручное управление
 
 `setup` открывает штатный Google Calendar sign-in в исходной защищённой вкладке.
-Человек вводит пароль/коды. `show-login` показывает открытый setup; `ready` либо
-закрытие окна сохраняют snapshot как saved_unverified. Затем обычный `navigate`
-проверяет кабинет в скрытом режиме. Host >=3.31.4 и markers
+Человек вводит пароль/коды. После двух подтверждений готового кабинета host сам
+закрывает своё окно и сохраняет snapshot как saved_unverified. Неизвестный экран,
+password/OTP, dialog или незавершённая загрузка оставляют окно человеку.
+`show-login` показывает открытый setup; `ready` либо закрытие человеком также
+сохраняют snapshot. Затем обычный `navigate`
+проверяет кабинет в скрытом режиме. Host >=3.32.0 и markers
 `trelio.visual-presentation/v1`, `trelio.visual-semantic-controls/v1`,
-`trelio.visual-form-checks/v1` обязательны.
+`trelio.visual-form-checks/v1`, `trelio.visual-manual-completion/v1` обязательны.
 Не продлевай lease и не импортируй аккаунт из IAB/Chrome/другого навыка.
 
 Низкоуровневые команды: `navigate`, `read-text`, `screenshot`, `click`,

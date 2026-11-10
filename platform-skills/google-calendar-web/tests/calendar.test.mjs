@@ -41,13 +41,14 @@ async function hostFixture(t, marker = 'trelio.visual-presentation/v1') {
   await fs.writeFile(host, `export const VISUAL_PRESENTATION_API=${JSON.stringify(marker)};
     export const VISUAL_SEMANTIC_CONTROLS_API='trelio.visual-semantic-controls/v1';
     export const VISUAL_FORM_CHECKS_API='trelio.visual-form-checks/v1';
+    export const VISUAL_MANUAL_COMPLETION_API='trelio.visual-manual-completion/v1';
     export const calls=[];
     export function runVisualSession(input) { calls.push(input);
       if(input.env.FAIL) throw Error('PRIVATE_PROVIDER_EXCEPTION');
       return JSON.parse(input.env.RESULT || '{"kind":"trelio.visual-browser/v1","state":"closed","reason":"none"}'); }
   `);
   const env = { TRELIO_SKILL_ID: 'google-calendar-web', TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(host).href,
-    TRELIO_HOST_RUNTIME_VERSION: '3.31.4' };
+    TRELIO_HOST_RUNTIME_VERSION: '3.32.0' };
   return { env, ...(await import(pathToFileURL(host).href)) };
 }
 
@@ -66,6 +67,9 @@ test('signed route pins hidden text mode and exact Google origins; an old host c
   assert.deepEqual(input.origins, ['https://calendar.google.com', 'https://accounts.google.com', 'https://workspace.google.com',
     'https://accounts.youtube.com', 'https://accounts.google.ru', 'https://google.com', 'https://google.ru', 'https://youtube.com']);
   assert.deepEqual(input.args, { url: 'https://accounts.google.com/ServiceLogin?service=cl&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr' });
+  assert.equal(input.manualCompletion.success[0].origin, 'https://calendar.google.com');
+  assert.equal(input.manualCompletion.success[0].selectors.length, 3);
+  assert.ok(input.manualCompletion.success[0].blocked.includes('[role="dialog"]'));
   assert.equal(input.externalNavigation, undefined);
   assert.equal(input.authentication, undefined, 'no password recipe or imported browser profile');
 });
