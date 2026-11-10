@@ -17,7 +17,7 @@
   },
   "runtime": {
     "version": "0.1.0",
-    "minimumHostVersion": "3.32.0",
+    "minimumHostVersion": "3.31.4",
     "entrypoint": {
       "path": "trelio-google-calendar.mjs",
       "interpreter": "node"

@@ -47,7 +47,7 @@ async function hostFixture(t, marker = 'trelio.visual-presentation/v1') {
       return JSON.parse(input.env.RESULT || '{"kind":"trelio.visual-browser/v1","state":"closed","reason":"none"}'); }
   `);
   const env = { TRELIO_SKILL_ID: 'google-calendar-web', TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(host).href,
-    TRELIO_HOST_RUNTIME_VERSION: '3.32.0' };
+    TRELIO_HOST_RUNTIME_VERSION: '3.31.4' };
   return { env, ...(await import(pathToFileURL(host).href)) };
 }
 

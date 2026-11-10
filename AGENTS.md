@@ -357,6 +357,7 @@ Google Календарь (`google-calendar-web`) использует [свой
 signed visual runtime Trelio со скрытой работой и видимым human setup; Browser Codex
 и retired API skill не подставляются. Recipes используют semantic labels и
 private fieldCheckPolicy comparisons, не значения полей/DOM/saved coordinates.
+Минимальный host 3.31.4 уже содержит presentation/semantic/form-checks API.
 Shared host отключает browser-level sign-in. Общий browser recovery и unknown-write
 read-back сохраняются; live события проверяются только в разрешённом scope.
 GigaChat следует [контракту](platform-skills/gigachat/SKILL.md): instruction-only

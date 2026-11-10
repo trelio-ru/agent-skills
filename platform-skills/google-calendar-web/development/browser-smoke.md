@@ -14,7 +14,9 @@ signed `trelio.visual-presentation/v1`, `trelio.visual-semantic-controls/v1`,
 Backend recovery default интегрирован: `1ce86cb6a3f475f7cceb435aaa30311feaf304a2`.
 Его exact hosted run был остановлен billing gate; coordinator выполнил
 разрешённый focused local fallback. Это не успешный hosted CI и не deploy.
-Необходимый stable host минимум 3.32.0 пока является планом выпуска.
+Требуемые presentation/semantic/form-checks API входят в опубликованный host
+3.31.4 (release commit a72ce3fa32a340241cc38927a232d8bbe7eab2e6). Минимум
+manifest/doctor приведён к этой фактической версии до первого provider release.
 
 Изменяется общий host ABI, поэтому перед выпуском комбинации нужны native
 host/provider gates на macOS/Windows/Linux и полный cold/fault question-system

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { executeWorkflow, parseWorkflowSpec, workflowCommands, workflowWrites, WorkflowError, fieldCheckPolicy } from './calendar-workflows.mjs';
 
 export const SKILL_VERSION = '0.1.0';
-export const MINIMUM_HOST_VERSION = '3.32.0';
+export const MINIMUM_HOST_VERSION = '3.31.4';
 // Use Google's Calendar sign-in entry directly in the already guarded tab.
 // The public landing page's Sign in opens a new, initially unguarded tab; its
 // headerless redirect is deliberately rejected by the host's file/MIME fence.

@@ -34,7 +34,7 @@ YouTube используются только для входа, не други
 несохранённая форма не переносится. До него установи исход начатой записи.
 Сбой селектора не повод повторять вход. После ручного завершения обычная
 навигация снова скрыта, под исходной lease. Истёкшая lease не продлевается.
-Host >=3.32.0 и markers `trelio.visual-presentation/v1`, `trelio.visual-semantic-controls/v1` и
+Host >=3.31.4 и markers `trelio.visual-presentation/v1`, `trelio.visual-semantic-controls/v1` и
 `trelio.visual-form-checks/v1` обязательны до browser I/O.
 Если marker отсутствует, нужен поддерживающий host; не подменяй транспорт.
 
