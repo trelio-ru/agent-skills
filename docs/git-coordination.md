@@ -50,27 +50,3 @@ state; boolean, raw push и старый wrapper допуска не дают.
 Обычный FF main использует exact PR evidence и не запускает тот же gate заново.
 Канонический pre-push продолжает проверять каждый protected push. Tag jobs
 сохраняют собственные прежние release-проверки и publication/read-back.
-
-<a id="active-turn-cwd"></a>
-
-## Завершение worktree и рабочая папка hooks
-
-Clean merged worktree нельзя удалять, пока он является `cwd` текущего хода
-или primary checkout чата. Командные hooks запускаются из cwd сессии
-([контракт Codex](https://learn.chatgpt.com/docs/hooks#config-shape)). При удалённой
-папке ОС может отказать ещё до запуска hook; защищённый MCP-вызов тогда получает
-`TRELIO_RUNTIME_HOOK_REQUIRED: missing`, хотя plugin, trust и runtime сохранны.
-
-Явный `workdir` shell-команды в canonical main не переносит cwd hook.
-Новая папка, показанная в карточке чата, также не доказывает смену контекста
-уже идущего хода. Перед cleanup сравни exact target с cwd из текущего
-`environment_context`/`turn_context`, а не только с `pwd` команды удаления.
-При совпадении сохрани папку до завершения хода; удали её штатным helper только
-из нового хода с подтверждённым другим cwd и без защиты primary checkout.
-Не обходи отказ native cleanup другой командой удаления.
-
-Если работу нужно целиком закончить и убрать в одном ходе, заранее используй
-дополнительный task-worktree, который не меняет primary/cwd этого чата.
-При `missing` после cleanup сначала проверь наличие cwd хода и реальные
-PreToolUse/results. Новый вход OAuth, сброс pairing, изменение hook trust и
-ручное добавление proof не являются исправлением удалённой рабочей папки.
