@@ -298,7 +298,7 @@ def monitor_failure(error: Exception, *, stage: str) -> TelegramRuntimeError:
 class Identity:
     company_id: str
     member_id: str
-    connection_id: str
+    connection_id: str | None
     account: dict[str, Any] | None = None
 
 
@@ -490,9 +490,21 @@ def selected_local_account() -> dict[str, Any] | None:
     return account
 
 
-def identity_from_args(args: argparse.Namespace) -> Identity:
+def identity_from_args(args: argparse.Namespace, *, legacy_import: bool = False) -> Identity:
+    account = selected_local_account()
+    # A host-selected personal account owns its storage independently of the
+    # current company's optional legacy connection. Keep that absence as None:
+    # borrowing the imported owner's connection ID would replace live scope.
+    # Only the fixed importer may inspect an unselected context without that
+    # old ID. Ordinary legacy commands still fail before bootstrap/auth/IO.
+    missing_connection = args.connection_id is None and HOST_CONNECTION_ID_ENV not in os.environ
+    connection_id = None if missing_connection and (account is not None or legacy_import) else resolve_host_identity_part(
+        args.connection_id,
+        environment_name=HOST_CONNECTION_ID_ENV,
+        label="connection-id",
+    )
     return Identity(
-        account=selected_local_account(),
+        account=account,
         company_id=resolve_host_identity_part(
             args.company_id,
             environment_name=HOST_COMPANY_ID_ENV,
@@ -503,11 +515,7 @@ def identity_from_args(args: argparse.Namespace) -> Identity:
             environment_name=HOST_MEMBER_ID_ENV,
             label="member-id",
         ),
-        connection_id=resolve_host_identity_part(
-            args.connection_id,
-            environment_name=HOST_CONNECTION_ID_ENV,
-            label="connection-id",
-        ),
+        connection_id=connection_id,
     )
 
 
@@ -519,6 +527,8 @@ def connection_root(identity: Identity) -> Path:
             return default_config_home() / "integrations" / SKILL_ID / "accounts" / identity.account["id"]
         owner = json.loads(identity.account["providerRef"])
         return default_config_home() / "integrations" / SKILL_ID / owner["company_id"] / owner["member_id"] / owner["connection_id"]
+    if identity.connection_id is None:
+        raise TelegramRuntimeError("Legacy account storage requires a connection-id.")
     return (
         default_config_home()
         / "integrations"
@@ -7750,9 +7760,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def import_existing_account() -> dict[str, Any]:
     # LEGACY: skill-personal-accounts-v1. Do not open SQLite or credentials.
-    identity = identity_from_args(argparse.Namespace(company_id=None, member_id=None, connection_id=None))
+    identity = identity_from_args(argparse.Namespace(company_id=None, member_id=None, connection_id=None), legacy_import=True)
     if identity.account:
         raise TelegramRuntimeError("Account import requires an unselected host context.")
+    # No old company connection means no exact legacy namespace to inspect.
+    # Return before filesystem access; never scan another company, fabricate a
+    # locator or require a new login to list/bind an existing personal account.
+    # Supplied invalid identity and real storage failures remain hard errors.
+    if identity.connection_id is None:
+        return {"schemaVersion": 1, "accounts": []}
     root = connection_root(identity)
     try:
         metadata = root.lstat()

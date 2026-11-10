@@ -123,6 +123,8 @@ ancestors, включая Windows junction/reparse points.
 Windows owner roots и atomic temp files проверяются native helpers также за MAX_PATH; exact SID/DACL и reparse guards сохраняются.
 
 Для нескольких личных аккаунтов читай [общий контракт](docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов): каталог и company bindings принадлежат host, protected storage и вход – provider-у.
+Telegram legacy import и выбранный личный account допускают отсутствие старого
+company connection по тому же контракту; проверяй настоящий isolated CLI до/после выбора.
 Для WhatsApp discovery, recency, date-only поиска, coverage и browser fallback
 читай [контракт WhatsApp](docs/whatsapp-web-agent-skill.md#поиск-последней-переписки).
 Диагностика WhatsApp сохраняет только numeric disconnect и закрытые network enums;

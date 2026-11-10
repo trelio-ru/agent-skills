@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.16.6",
-    "summary": "Общая очередь доступа к аккаунту для параллельных чатов через runtime 3.31.0",
+    "version": "2.16.7",
+    "summary": "Личные аккаунты Telegram доступны в новой компании без старого подключения",
     "routingSummary": "Read, search, send, and manage Telegram messages, files, and chats."
   },
   "connection": {
@@ -19,7 +19,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.17.1",
+    "version": "2.17.2",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

@@ -175,6 +175,19 @@ company profile сохраняет свою company binding; другие ста
 в следующих компаниях предлагается явное включение. Ошибки не ставят marker и
 не стирают файлы; unbind не отменяется повторным импортом.
 
+У Telegram MTProto отсутствующий host `connection-id` означает, что в текущей
+компании нет старого company-bound подключения. Importer возвращает пустой
+`accounts` до filesystem/SDK/network IO, сохраняя обязательную проверку live
+company/member и запрет selected-account import. Он не сканирует другие компании
+и не создаёт фиктивный connection. Явно переданный неверный ID, ошибка доступа
+или повреждённый существующий storage остаются отказом, а не пустым импортом.
+После host selection личный account работает и без старого connection текущей
+компании: imported `providerRef` сохраняет исходный storage, новый account – UUID.
+Live company/member и `companyBinding` не заменяются identity владельца storage;
+обычная команда без selected account по-прежнему требует прежний connection-id.
+Native regression запускает importer и post-selection `policy show` через
+настоящие isolated Python pipes на всех обязательных OS, без credentials/входа.
+
 После шести месяцев production доступности разработчик может удалить importer
 в следующем release; таймера и постоянного отдельного конвертера нет. Поздний
 пользователь настраивает аккаунт с нуля. Уже импортированные opaque storage
