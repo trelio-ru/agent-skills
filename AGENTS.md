@@ -582,6 +582,11 @@ artifact, digest, CAS и read-back. Сетевые ошибки: минимум 
 Commit на русском, только файлы задачи. Запусти `npm run git:integrate`: очередь
 публикует branch/PR и проверяет exact hosted CI перед main. Затем обнови чистый canonical main и удали только свой
 clean merged worktree и ветку. Новая лицензия без решения пользователя не вводится.
+Не удаляй `cwd` текущего хода или primary checkout чата: явный `workdir` команды
+cleanup и переключение папки для следующего хода не меняют cwd уже запущенных
+hooks. Сначала заверши ход и подтверди устойчивый cwd нового хода; для правки
+с cleanup в том же ходе используй дополнительный worktree без смены primary.
+Подробности – [жизненный цикл папки и hooks](docs/git-coordination.md#active-turn-cwd).
 
 `Public source boundary` и check-public-source.mjs проверяют tracked snapshot
 перед каждым push. Корпоративные исходники не копируются даже как fixtures.
