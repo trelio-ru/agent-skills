@@ -4,8 +4,8 @@
 Инструкции, runtime-код, тесты и инструменты сборки публикуются отдельно от
 корпоративных навыков, личных подключений и production signing.
 
-В `platform-skills/` находятся 25 общих навыков: 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
-DeepSeek Search, DodoStats / DrinkitStats, Google: поиск и ИИ, GigaChat, почта, ГАС «Правосудие», Госуслуги,
+В `platform-skills/` находятся 26 общих навыков: 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
+DeepSeek Search, DodoStats / DrinkitStats, Google: поиск и ИИ, Google Календарь, GigaChat, почта, ГАС «Правосудие», Госуслуги,
 iPhone Mirroring, Perplexity Search, Yandex Search, ИИ-Консьерж от Гига / Сбер,
 MAX, поиск Ozon, заказные письма Почты России, Т-Банк, Telegram MTProto,
 Telegram Web, WhatsApp, факсимиле для документов, ВК Реклама и локальная расшифровка аудио. Для конкретного provider
@@ -61,6 +61,18 @@ targets: macOS Apple Silicon, Windows x64, Linux x64 (glibc).
 ожидается только остаток. Это instruction-only навык без API/runtime; скрытая
 вкладка не обещает headless process. Source не означает публикацию или назначение
 в live каталоге Trelio. [Браузерная проверка](platform-skills/google-ai-search/development/browser-smoke.md).
+
+[Google Календарь](platform-skills/google-calendar-web/SKILL.md)
+(`google-calendar-web`) использует отдельный управляемый браузер Trelio без
+Google API. Обычная работа скрыта; вход выполняется человеком в видимом окне,
+авторизация сохраняется в защищённом локальном снимке. Доступны расписание,
+свободное время и управление событиями с проверкой календаря, timezone и результата.
+При изменении вёрстки агент использует текущие text/PNG controls в той же сессии.
+Типовые команды используют fresh semantic labels и приватную проверку полей,
+а не screenshots. Требуются presentation/semantic-controls/form-checks API host
+(планируемый минимум 3.32.0).
+Source и синтетические тесты не означают опубликованную готовность Google-входа;
+проверки и ограничения — в [browser smoke](platform-skills/google-calendar-web/development/browser-smoke.md).
 
 GigaChat (`gigachat`) работает через скрытую вкладку `giga.chat`: вопросы,
 уточнения в одной беседе, доступные режимы «Гига», «Исследование» и «Рассуждение»,

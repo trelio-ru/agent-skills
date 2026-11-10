@@ -353,6 +353,12 @@ instruction-only browser tool, обычная выдача и AI Mode в соб�
 явный сервис, закрытый recipient и mutation authority не расширяются.
 Неизвестная отправка блокирует оба режима. Live smoke проверяет выдачу, фильтр Web, уточнение, источники,
 два хода AI Mode и возврат к выдаче. Account/history/session-параметры непубличны.
+Google Календарь (`google-calendar-web`) использует [свой контракт](platform-skills/google-calendar-web/SKILL.md):
+signed visual runtime Trelio со скрытой работой и видимым human setup; Browser Codex
+и retired API skill не подставляются. Recipes используют semantic labels и
+private fieldCheckPolicy comparisons, не значения полей/DOM/saved coordinates.
+Shared host отключает browser-level sign-in. Общий browser recovery и unknown-write
+read-back сохраняются; live события проверяются только в разрешённом scope.
 GigaChat следует [контракту](platform-skills/gigachat/SKILL.md): instruction-only
 browser tool, скрытая вкладка и уточнения в одной беседе. Наличие «Войти» не
 означает обязательность входа для публичного вопроса; доступность режима,

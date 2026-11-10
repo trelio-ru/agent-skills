@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google Календарь"
+  short_description: "Расписание и события в отдельном браузере Trelio"
+  default_prompt: "Используй $google-calendar-web: работай с Google Календарём через управляемый скрытый браузер Trelio без API; проверь аккаунт, календарь, часовой пояс и результат действия."
