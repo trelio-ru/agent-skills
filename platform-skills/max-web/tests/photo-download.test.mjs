@@ -39,7 +39,8 @@ const fixture = (html, { wrongViewer=false, replaceOnTransfer=false, onScroll=()
     getAttribute:async name=>document.querySelector(selector)?.getAttribute(name),
     evaluate:async(fn,arg)=>evaluate(fn,arg,document.querySelector(selector)),
     scrollIntoViewIfNeeded:async()=>onScroll(document.querySelector(selector), document),
-    locator:xpath=>({count:async()=>document.querySelector(selector)?.querySelectorAll(xpath).length??0,waitFor:async()=>{assert.ok(document.querySelector(selector)?.querySelector(xpath));},click:async()=>{assert.match(xpath,/ancestor::button/);log.push('open-photo');
+    waitFor:async()=>{assert.ok(document.querySelector(selector));},
+    locator:xpath=>xpath==='img.image'?wrap(`${selector} img.image`):({click:async()=>{assert.match(xpath,/ancestor::button/);log.push('open-photo');
       const original=document.querySelector(selector).getAttribute('src');
       document.body.insertAdjacentHTML('beforeend',`<dialog open><img src="${wrongViewer?source('other'):original}"><button>Скачать</button></dialog>`);}}),
     getByRole:()=>({count:async()=>document.querySelectorAll(`${selector} button`).length,
@@ -157,6 +158,7 @@ test('MAX read hydrates exact lazy album tiles and retains the independently ver
     +'<button class="tile"><div class="image-placeholder"></div></button><span>Album</span></div>'
     +'<div class="messageWrapper">'+photo('neighbor')+'<span>Separate</span></div>';
   const {page}=fixture(html,{onScroll(tile,document){
+    if (tile.querySelector('img.image')) return;
     assert.ok(tile.matches('button.tile'));
     tile.querySelector('.image-placeholder').innerHTML='<img class="image" src="'+source('lazy')+'">';
     document.querySelectorAll('.messageWrapper')[1].querySelector('img').remove();
@@ -164,4 +166,21 @@ test('MAX read hydrates exact lazy album tiles and retains the independently ver
   const initial=await visibleMessages(page,20);
   const messages=await readPhotoReferences(page,{...options(),limit:20},initial);
   assert.deepEqual(messages.map(message=>message.attachments.filter(attachment=>attachment.downloadRef).length),[2,1]);
+});
+
+test('MAX rebinds a lazily remounted image inside the same verified tile before opening', async () => {
+  for (const replacement of [source('one').replace('expires=123', 'expires=456'), source('different')]) {
+    const { page } = fixture(bubble('one'), { onScroll(tile) {
+      const old = tile.querySelector('img.image');
+      old.outerHTML = '<img class="image" src="'+replacement+'">';
+    } });
+    const { messages } = await read(page);
+    const attachmentRef = messages[0].attachments[0].downloadRef;
+    const selected = () => findPhotoDownloadTarget(page, { ...options(), attachmentRef });
+    if (replacement === source('different')) {
+      await assert.rejects(selected, { code: 'MAX_PHOTO_REFERENCE_INVALID' });
+    } else {
+      assert.equal((await selected()).source, replacement);
+    }
+  }
 });

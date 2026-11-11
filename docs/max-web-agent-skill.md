@@ -184,8 +184,10 @@ browser context GET без redirect/retry: HTTP 200, JPEG/PNG/WebP, объявл
 распознанного вложения.
 Bytes, подписи и CDN URL не входят в handle/result/error или постоянный cache.
 
-Скачивание открывает только проверенную tile и требует единственный новый
-`dialog[open]` с exact текущим image source, затем единственную кнопку «Скачать».
+Скачивание заново проверяет миниатюру внутри той же плитки после прокрутки.
+Если MAX пересоздал изображение и сменил его URL, SHA-256 текущей миниатюры
+должен совпасть. Затем требуется единственный новый `dialog[open]` с текущим
+image source и единственная кнопка «Скачать».
 Перед кликом источник/чат сверяются повторно; Next/Previous не используются.
 Оригинал сохраняет прежний attachment transfer с size/SHA-256 и exclusive
 owner-only output. `MAX_PHOTO_REFERENCE_INVALID` требует свежего exact read;

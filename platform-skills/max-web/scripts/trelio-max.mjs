@@ -2767,12 +2767,21 @@ const photoSourceDigest = async (page, source, timeoutMs = 60_000) => {
 // The count is snapshot-only. The public attachment schema stays unchanged
 // and an unmounted photo tile still participates in ambiguity checks.
 const photoTileCount = Symbol('photoTileCount');
+const photoOriginalIndex = Symbol('photoOriginalIndex');
 
 const hydratePhotoTiles = async (page, options, messages, limit) => {
   const pending = await page.evaluate((indexes) => {
     document.querySelectorAll('[data-trelio-max-photo-pending]').forEach(node =>
       node.removeAttribute('data-trelio-max-photo-pending'));
     const allowed = new Set(indexes);
+    // Keep the exact DOM wrapper across the scroll. Equal visible metadata
+    // alone cannot identify two distinct messages sent in the same minute.
+    document.querySelectorAll('[data-trelio-max-photo-bubble]').forEach(node =>
+      node.removeAttribute('data-trelio-max-photo-bubble'));
+    for (const node of document.querySelectorAll('[data-trelio-max-message]')) {
+      const index = Number(node.getAttribute('data-trelio-max-message'));
+      if (allowed.has(index)) node.setAttribute('data-trelio-max-photo-bubble', String(index));
+    }
     const tiles = Array.from(document.querySelectorAll('[data-trelio-max-message] button.tile'))
       .filter(tile => allowed.has(Number(tile.closest('[data-trelio-max-message]')?.getAttribute('data-trelio-max-message')))
         && (tile.querySelector('.image-placeholder') || tile.querySelector('img.image')))
@@ -2782,15 +2791,24 @@ const hydratePhotoTiles = async (page, options, messages, limit) => {
     return tiles.flatMap((tile, index) => {
       if (tile.querySelector('img.image')) return [];
       tile.setAttribute('data-trelio-max-photo-pending', String(index));
-      return [index];
+      return [{ index, wrapper: tile.closest('[data-trelio-max-photo-bubble]')?.getAttribute('data-trelio-max-photo-bubble') }];
     });
   }, messages.map(message => message.index));
   if (pending.length === 0) return null;
   const deadline = Date.now() + Math.min(options.timeoutMs || 60_000, 8_000);
-  for (const index of pending) {
+  const centered = new Set();
+  for (const { index, wrapper } of pending) {
     const tile = page.locator(`[data-trelio-max-photo-pending="${index}"]`);
     if (Date.now() >= deadline) break;
     try {
+      if (wrapper !== undefined && !centered.has(wrapper)) {
+        centered.add(wrapper);
+        const bubble = page.locator(`[data-trelio-max-photo-bubble="${wrapper}"]`);
+        // Center the complete album first, so mounting one lazy tile need
+        // not move previously loaded siblings out of the chat viewport.
+        await bubble.evaluate(node => node.scrollIntoView?.({ block: 'center', inline: 'nearest' }),
+          null, { timeout: Math.min(1000, Math.max(1, deadline - Date.now())) });
+      }
       const image = tile.locator('img.image');
       if (await image.count() === 0) {
         await tile.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) });
@@ -2801,12 +2819,19 @@ const hydratePhotoTiles = async (page, options, messages, limit) => {
       // accounts for unresolved tiles before issuing any repeated-photo refs.
     }
   }
-  return visibleMessages(page, limit, { includeVoice: options.command === 'read' });
+  const hydrated = await visibleMessages(page, limit, { includeVoice: options.command === 'read' });
+  const original = await page.evaluate(() => Object.fromEntries(
+    Array.from(document.querySelectorAll('[data-trelio-max-message][data-trelio-max-photo-bubble]'), node =>
+      [node.getAttribute('data-trelio-max-message'), Number(node.getAttribute('data-trelio-max-photo-bubble'))]),
+  ));
+  for (const message of hydrated) message[photoOriginalIndex] = original[message.index];
+  return hydrated;
 };
 
 const addPhotoDownloadReferences = async (page, options, messages) => {
   const rows = await page.evaluate((includeVoice) => {
-    document.querySelectorAll("[data-trelio-max-photo]").forEach(n => n.removeAttribute("data-trelio-max-photo"));
+    document.querySelectorAll("[data-trelio-max-photo-tile]").forEach(node =>
+      node.removeAttribute("data-trelio-max-photo-tile"));
     const result = [];
     const tileCounts = {};
     for (const node of document.querySelectorAll("[data-trelio-max-message]")) {
@@ -2829,7 +2854,7 @@ const addPhotoDownloadReferences = async (page, options, messages) => {
             || source.port || source.username || source.password || source.hash) return;
         } catch { return; }
         const marker = `${index}:${offset + 1}`;
-        image.setAttribute("data-trelio-max-photo", marker);
+        image.closest('button.tile').setAttribute('data-trelio-max-photo-tile', marker);
         result.push({ index, attachmentIndex: offset + 1, source: source.href, marker });
       });
     }
@@ -2879,9 +2904,13 @@ const addPhotoDownloadReferences = async (page, options, messages) => {
   const incomplete = messages.filter(message => (albums.get(message)?.length ?? 0) !== message[photoTileCount]);
   const incompleteKeys = new Set(incomplete.map(message => message.messageKey));
   const incompleteAlbums = new Set(incomplete.map(albumKey));
+  const sameMinuteAlbums = Map.groupBy(messages.filter(message => message[photoTileCount] > 0), message => message.messageKey);
   for (const candidate of candidates) {
     candidate.eligible = groups.get(candidate.downloadRef).length === 1 && !incompleteKeys.has(candidate.message.messageKey);
-    if (candidate.eligible) continue;
+    // Prefer the album-bound ref when two photo messages share metadata.
+    // A subsequent viewport may mount only one, though their v1 IDs still
+    // resolve when a complete snapshot proves each digest unique.
+    if (candidate.eligible && sameMinuteAlbums.get(candidate.message.messageKey).length === 1) continue;
     delete candidate.attachment.downloadRef;
     candidate.attachment.downloadRefUnavailable = 'MAX_PHOTO_REFERENCE_UNAVAILABLE';
   }
@@ -2919,42 +2948,56 @@ const readPhotoReferences = async (page, options, messages) => {
   const hydrated = await hydratePhotoTiles(page, options, messages, options.limit);
   if (!hydrated) return messages;
   await addPhotoDownloadReferences(page, options, hydrated);
-  const mergeKey = message => JSON.stringify([message.messageKey, message[photoTileCount]]);
-  const before = Map.groupBy(messages, mergeKey);
-  const after = Map.groupBy(hydrated, mergeKey);
-  // Scrolling an album can unmount other, already verified messages. Keep
-  // those initial references. Only replace an unambiguous original message
-  // when its fresh snapshot has more verified photos.
+  const after = Map.groupBy(hydrated, message => message[photoOriginalIndex]);
+  // Scrolling can unmount other, already verified photos. Keep those refs
+  // and replace only the same still-present wrapper with stronger coverage.
   return messages.map(message => {
-    const key = mergeKey(message);
-    const fresh = after.get(key);
-    if (before.get(key).length !== 1 || fresh?.length !== 1) return message;
+    const fresh = after.get(message.index);
+    if (fresh?.length !== 1 || fresh[0].messageKey !== message.messageKey
+      || fresh[0][photoTileCount] !== message[photoTileCount]) return message;
     const references = entry => entry.attachments.filter(attachment => attachment.downloadRef).length;
     return references(fresh[0]) > references(message) ? fresh[0] : message;
   });
 };
 
+const bindPhotoTile = async (page, options, selected) => {
+  // MAX's lazy loader removes and re-creates the IMG while its tile survives.
+  // Keep the verified tile identity, then prove the freshly mounted image
+  // still has the same source or the same bounded bytes before opening it.
+  const tile = page.locator(`button[data-trelio-max-photo-tile="${selected.marker}"]`);
+  const timeout = Math.min(options.timeoutMs, 2500);
+  const image = tile.locator('img.image');
+  try {
+    if (await tile.count() !== 1) return null;
+    await tile.scrollIntoViewIfNeeded({ timeout });
+    await image.waitFor({ state: 'attached', timeout });
+    if (await image.count() !== 1) return null;
+    const source = await image.getAttribute('src', { timeout });
+    if (!source) return null;
+    if (source !== selected.source && await photoSourceDigest(page, source, timeout) !== selected.contentDigest) return null;
+    if (await image.getAttribute('src', { timeout }) !== source || normalizeChatUrl(page.url()) !== options.chat) return null;
+    return { ...selected, source, image };
+  } catch {
+    return null;
+  }
+};
+
 const findPhotoDownloadTarget = async (page, options) => {
-  const messages = await visibleMessages(page, 100);
+  let snapshot = await visibleMessages(page, 100);
   const matchesRef = row => row.downloadRef === options.attachmentRef && row.eligible;
-  let matches = (await addPhotoDownloadReferences(page, options, messages)).filter(matchesRef);
-  let snapshot = messages;
-  // Moving one lazy tile into view can temporarily unmount another tile.
-  // Re-evaluate the fresh DOM once before declaring a reference stale. This
-  // runs before opening the viewer or starting a transfer.
-  for (let pass = 0; matches.length === 0 && pass < 2; pass += 1) {
-    snapshot = await hydratePhotoTiles(page, options, snapshot, 100);
-    if (!snapshot) break;
-    matches = (await addPhotoDownloadReferences(page, options, snapshot)).filter(matchesRef);
+  // Retry selection only while no viewer or download has been started.
+  for (let pass = 0; snapshot && pass < 3; pass += 1) {
+    const matches = (await addPhotoDownloadReferences(page, options, snapshot)).filter(matchesRef);
+    if (matches.length === 1) {
+      const target = await bindPhotoTile(page, options, matches[0]);
+      if (target) return target;
+      snapshot = await visibleMessages(page, 100);
+    } else {
+      snapshot = await hydratePhotoTiles(page, options, snapshot, 100);
+    }
   }
-  if (matches.length !== 1) throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID",
+  throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID",
     "The MAX photo reference is stale, absent or ambiguous. Read the exact chat again; do not select by position.");
-  const selected = matches[0];
-  const image = page.locator(`[data-trelio-max-photo="${selected.marker}"]`);
-  if (await image.count() !== 1 || await image.getAttribute("src") !== selected.source) {
-    throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID", "The exact MAX photo changed before opening.");
-  }
-  return { ...selected, image };
 };
 
 const findMessageTarget = async (page, options, { outgoingOnly = false } = {}) => {
