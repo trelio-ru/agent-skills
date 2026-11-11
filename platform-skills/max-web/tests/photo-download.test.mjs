@@ -6,7 +6,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { parseHTML } from 'linkedom';
 import { addPhotoDownloadReferences, visibleMessages, findPhotoDownloadTarget,
-  downloadPhotoAttachment, photoSourceDigest, parseArguments, validateCommandOptions } from '../scripts/trelio-max.mjs';
+  downloadPhotoAttachment, photoSourceDigest, readPhotoReferences, parseArguments, validateCommandOptions } from '../scripts/trelio-max.mjs';
 
 const identity = { TRELIO_SKILL_ID:'max-web', TRELIO_SKILL_RUNTIME_VERSION:'2.13.1',
   TRELIO_SKILL_COMPANY_ID:'11111111-1111-4111-8111-111111111111',
@@ -22,7 +22,7 @@ const jpeg = Buffer.from([255,216,255,224,0,10,1,2,3,4,255,217]);
 // Execute the actual DOM callbacks in an isolated realm. Only browser transport
 // and clicks are simulated; lookup/ref hashing, viewer verification and the
 // production atomic save/transfer all run unchanged.
-const fixture = (html, { wrongViewer=false, replaceOnTransfer=false }={}) => {
+const fixture = (html, { wrongViewer=false, replaceOnTransfer=false, onScroll=()=>{} }={}) => {
   const {window,document}=parseHTML(`<html><body>${html}</body></html>`);
   window.HTMLElement.prototype.getBoundingClientRect=()=>({width:300,height:60,right:900});
   const realm=vm.createContext({document,window:{location:{href:'https://web.max.ru/123'},innerWidth:1280,
@@ -38,7 +38,8 @@ const fixture = (html, { wrongViewer=false, replaceOnTransfer=false }={}) => {
   const wrap=selector=>({count:async()=>document.querySelectorAll(selector).length,
     getAttribute:async name=>document.querySelector(selector)?.getAttribute(name),
     evaluate:async(fn,arg)=>evaluate(fn,arg,document.querySelector(selector)),
-    locator:xpath=>({click:async()=>{assert.match(xpath,/ancestor::button/);log.push('open-photo');
+    scrollIntoViewIfNeeded:async()=>onScroll(document.querySelector(selector), document),
+    locator:xpath=>({count:async()=>document.querySelector(selector)?.querySelectorAll(xpath).length??0,waitFor:async()=>{assert.ok(document.querySelector(selector)?.querySelector(xpath));},click:async()=>{assert.match(xpath,/ancestor::button/);log.push('open-photo');
       const original=document.querySelector(selector).getAttribute('src');
       document.body.insertAdjacentHTML('beforeend',`<dialog open><img src="${wrongViewer?source('other'):original}"><button>Скачать</button></dialog>`);}}),
     getByRole:()=>({count:async()=>document.querySelectorAll(`${selector} button`).length,
@@ -54,7 +55,8 @@ const read = async(page,opts=options())=>{const messages=await visibleMessages(p
 
 test('MAX photo refs distinguish same-minute bubbles and each album image without provider IDs',async()=>{
  const {page}=fixture(bubble('first')+bubble('second','third'));
- const {messages,candidates}=await read(page);
+ const {messages,candidates:all}=await read(page);
+ const candidates=all.filter(row=>row.attachment.downloadRef===row.downloadRef);
  assert.equal(messages[0].messageKey,messages[1].messageKey);
  assert.equal(candidates.length,3);assert.equal(new Set(candidates.map(x=>x.downloadRef)).size,3);
  assert.equal(messages.flatMap(x=>x.attachments).filter(x=>x.downloadRef).length,3);
@@ -73,7 +75,7 @@ test('MAX photo refs refuse repeated images, changed bytes, other accounts/chats
  const result=await read(duplicate.page);assert.equal(result.messages.some(m=>m.attachments.some(a=>a.downloadRef)),false);
  await assert.rejects(findPhotoDownloadTarget(duplicate.page,{...options(),attachmentRef:result.candidates[0].downloadRef}),{code:'MAX_PHOTO_REFERENCE_INVALID'});
  const {page}=fixture(bubble('original')+'<div class="messageWrapper"><img class="avatarImage" src="https://i.oneme.ru/i?r=avatar"></div>');
- const {candidates}=await read(page);assert.equal(candidates.length,1);
+ const {candidates}=await read(page);assert.equal(candidates.filter(row=>row.attachment.downloadRef===row.downloadRef).length,1);
  const ref=candidates[0].downloadRef;
  for(const changed of [{memberId:'44444444-4444-4444-8444-444444444444'},{chat:'https://web.max.ru/456'}])
   await assert.rejects(findPhotoDownloadTarget(page,{...options(),...changed,attachmentRef:ref}),{code:'MAX_PHOTO_REFERENCE_INVALID'});
@@ -126,4 +128,40 @@ test('MAX photo budget cannot turn an unexamined duplicate into a unique selecto
  const {page}=fixture(Array.from({length:21},(_,i)=>bubble(`photo-${i}`)).join(''));
  const {messages,candidates}=await read(page);
  assert.equal(candidates.length,0);assert.equal(messages.some(m=>m.attachments.some(a=>a.downloadRef)),false);
+});
+
+test('MAX repeats get distinct album refs only from the full ordered album with the same provider source', async () => {
+  const {page}=fixture(bubble('same','middle','same'));
+  const {messages}=await read(page);
+  const [first,middle,last]=messages[0].attachments.map(attachment=>attachment.downloadRef);
+  assert.match(first,/^max-photo\/v2\./);
+  assert.match(middle,/^max-photo\/v1\./);
+  assert.notEqual(first,last);
+  const selected=await findPhotoDownloadTarget(page,{...options(),attachmentRef:last});
+  assert.equal(selected.marker,'0:3');
+  page.document.querySelectorAll('button.tile img').forEach(img=>
+    img.setAttribute('src',img.getAttribute('src').replace('expires=123','expires=456')));
+  assert.equal((await findPhotoDownloadTarget(page,{...options(),attachmentRef:last})).marker,'0:3');
+
+  // Changing the ordered album or making identical previews point at separate
+  // provider resources must never cause a previously verified copy to match.
+  const wrapper=page.document.querySelector('.messageWrapper');
+  wrapper.insertBefore(wrapper.children[1],wrapper.children[0]);
+  await assert.rejects(findPhotoDownloadTarget(page,{...options(),attachmentRef:last}),{code:'MAX_PHOTO_REFERENCE_INVALID'});
+  wrapper.querySelectorAll('button.tile img')[2].setAttribute('src',source('same').replace('expires=123','expires=789'));
+  assert.equal((await read(page)).messages[0].attachments.filter(attachment=>attachment.downloadRef).length,1);
+});
+
+test('MAX read hydrates exact lazy album tiles and retains the independently verified neighboring photo', async () => {
+  const html='<div class="messageWrapper">'+photo('visible')
+    +'<button class="tile"><div class="image-placeholder"></div></button><span>Album</span></div>'
+    +'<div class="messageWrapper">'+photo('neighbor')+'<span>Separate</span></div>';
+  const {page}=fixture(html,{onScroll(tile,document){
+    assert.ok(tile.matches('button.tile'));
+    tile.querySelector('.image-placeholder').innerHTML='<img class="image" src="'+source('lazy')+'">';
+    document.querySelectorAll('.messageWrapper')[1].querySelector('img').remove();
+  }});
+  const initial=await visibleMessages(page,20);
+  const messages=await readPhotoReferences(page,{...options(),limit:20},initial);
+  assert.deepEqual(messages.map(message=>message.attachments.filter(attachment=>attachment.downloadRef).length),[2,1]);
 });

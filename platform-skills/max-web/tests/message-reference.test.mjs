@@ -1,3 +1,4 @@
+import './host-runtime-fixture.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -82,7 +83,7 @@ test('reference argument validation precedes browser, local file and mutation I/
 });
 
 test('real common DOM extraction returns the exact target without receipt or quote fetch', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'max-reference-dom-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'max-reference-dom-')));
   const previous = process.env.TRELIO_CONFIG_HOME;
   process.env.TRELIO_CONFIG_HOME = root;
   try {

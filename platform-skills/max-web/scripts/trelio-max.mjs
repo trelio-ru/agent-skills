@@ -54,7 +54,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "50";
+const ADAPTER_VERSION = "51";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 // A cold worker must launch Chrome, hydrate home and then resolve the exact
@@ -1415,7 +1415,7 @@ const validateCommandOptions = (options) => {
   // Photo references are read-only selectors, never provider IDs or mutation
   // authority. Do not silently ignore one on another command (including assist).
   if (options.attachmentRef && (options.command !== "download"
-    || !/^max-photo\/v1\.[a-f0-9]{64}$/u.test(options.attachmentRef)
+    || !/^max-photo\/v[12]\.[a-f0-9]{64}$/u.test(options.attachmentRef)
     || options.messageId || options.targetText || options.targetAuthor || options.attachmentIndex !== 1
     || !options.chat || normalizeChatUrl(options.chat) !== options.chat)) {
     throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID", "Use one fresh photo downloadRef with download, an exact chat and no other message selectors.");
@@ -2452,6 +2452,26 @@ const openFavoritesChat = async (page, options) => {
   };
 };
 
+const waitForMaxChatSurfaceOrHome = async (page, options, expectedUrl) => {
+  try {
+    await page.waitForFunction(({ expected, home }) => {
+      const href = window.location.href;
+      if (href === home) return true;
+      if (href.replace(/\/$/u, '') !== expected) return false;
+      const surface = document.querySelector('main') || document.body;
+      return Boolean(surface?.querySelector(
+        '[class~="messageWrapper"], [data-message-id], [contenteditable="true"], '
+        + '[contenteditable=""], [contenteditable="plaintext-only"], textarea',
+      ));
+    }, { expected: expectedUrl, home: MAX_WEB_URL }, { timeout: Math.min(options.timeoutMs, MAX_UI_READY_TIMEOUT_MS) });
+  } catch (error) {
+    if (error?.name !== 'TimeoutError') throw error;
+    throw new MaxRuntimeError('MAX_CHAT_IDENTITY_UNVERIFIED',
+      'MAX did not open a ready surface for the exact requested chat.',
+      { reason: 'chat-surface-unverified', finalMutationActionStarted: false });
+  }
+};
+
 const openChat = async (page, options) => {
   if (isFavoritesReference(options.chat)) {
     return openFavoritesChat(page, options);
@@ -2484,6 +2504,17 @@ const openChat = async (page, options) => {
     await assertLoggedIn(page);
     let observedUrl = null;
     try { observedUrl = normalizeChatUrl(page.url()); } catch { /* Home is not a chat URL. */ }
+    if (observedUrl === expectedUrl) {
+      // MAX can replace the exact deep link with home only after the shell
+      // becomes visible. Race the chat surface against that late redirect,
+      // then apply the same exact phone-lookup recovery as for an early one.
+      await waitForMaxChatSurfaceOrHome(page, options, expectedUrl);
+      try { observedUrl = normalizeChatUrl(page.url()); } catch { observedUrl = null; }
+      if (observedUrl !== expectedUrl && page.url() !== MAX_WEB_URL) {
+        throw new MaxRuntimeError('MAX_CHAT_IDENTITY_UNVERIFIED', 'MAX changed the requested chat while opening it.',
+          { reason: 'chat-surface-unverified', finalMutationActionStarted: false });
+      }
+    }
     let method = "url";
     if (observedUrl !== expectedUrl) {
       // MAX can discard a cold deep link for a new contact that has no saved
@@ -2504,9 +2535,8 @@ const openChat = async (page, options) => {
           { reason: "phone-lookup-target-changed", finalMutationActionStarted: false });
       }
       method = "url-with-phone-lookup";
+      await waitForMaxChatSurfaceOrHome(page, options, expectedUrl);
     }
-    await page.waitForFunction(() => document.querySelector('[class~="messageWrapper"], [data-message-id], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], textarea'),
-      null, { timeout: Math.min(options.timeoutMs, MAX_UI_READY_TIMEOUT_MS) });
     // Recheck after hydration: a matching route before the wait must not
     // authorize a message operation if the SPA changed chats in the meantime.
     const reference = await inspectOpenedChatReference(page);
@@ -2576,12 +2606,13 @@ const loadHistoryPages = async (page, pages, timeoutMs) => {
   return loadedPages;
 };
 
-const visibleMessages = async (page, limit, { strictReferences = false } = {}) => {
+const visibleMessages = async (page, limit, { strictReferences = false, includeVoice = false } = {}) => {
   const rawMessages = await page.evaluate((input) => {
   // Ordinary callers retain the numeric/optional limit ABI. Only the source
   // reader opts into strict identity; an old human caller is not migrated.
   const maxCount = input && typeof input === "object" ? input.maxCount : input;
   const strictReferences = Boolean(input && typeof input === "object" && input.strictReferences);
+  const includeVoice = Boolean(input && typeof input === "object" && input.includeVoice);
   document.querySelectorAll("[data-trelio-max-message]").forEach((node) => {
     node.removeAttribute("data-trelio-max-message");
   });
@@ -2629,7 +2660,8 @@ const visibleMessages = async (page, limit, { strictReferences = false } = {}) =
     // from ordinary text messages without an attachment control.
     const filenameInMessage = text.match(/(?:^|\s)([^\s<>/\\]+\.[A-Za-z][A-Za-z0-9]{1,7})(?=\s|$)/u)?.[1] || null;
     const attachmentNodes = Array.from(node.querySelectorAll(
-      'a[download], [aria-label*="скач" i], [aria-label*="download" i], [class*="attachment" i], [class*="file" i], img, video, audio',
+      'a[download], [aria-label*="скач" i], [aria-label*="download" i], [class*="attachment" i], [class*="file" i], img, video, audio'
+      + (includeVoice ? ', div.attachAudio' : ''),
     ));
     const attachments = attachmentNodes.slice(0, 20).map((attachment, index) => ({
       index: index + 1,
@@ -2642,7 +2674,7 @@ const visibleMessages = async (page, limit, { strictReferences = false } = {}) =
         || attachment.textContent?.replace(/\s+/gu, " ").trim()
         || null,
       href: attachment instanceof HTMLAnchorElement ? attachment.href : null,
-      kind: attachment.tagName.toLowerCase(),
+      kind: attachment.matches('div.attachAudio') ? 'audio' : attachment.tagName.toLowerCase(),
     }));
     const author = authorNode?.textContent?.replace(/\s+/gu, " ").trim() || null;
     const timestamp = timeNode?.getAttribute("datetime")
@@ -2692,7 +2724,7 @@ const visibleMessages = async (page, limit, { strictReferences = false } = {}) =
     });
   }
   return results.slice(-maxCount);
-  }, strictReferences ? { maxCount: limit, strictReferences: true } : limit);
+  }, strictReferences || includeVoice ? { maxCount: limit, strictReferences, includeVoice } : limit);
   return rawMessages.map((message) => ({
     ...message,
     messageKey: sha256(JSON.stringify({
@@ -2732,14 +2764,59 @@ const photoSourceDigest = async (page, source, timeoutMs = 60_000) => {
   }
 };
 
+// The count is snapshot-only. The public attachment schema stays unchanged
+// and an unmounted photo tile still participates in ambiguity checks.
+const photoTileCount = Symbol('photoTileCount');
+
+const hydratePhotoTiles = async (page, options, messages, limit) => {
+  const pending = await page.evaluate((indexes) => {
+    document.querySelectorAll('[data-trelio-max-photo-pending]').forEach(node =>
+      node.removeAttribute('data-trelio-max-photo-pending'));
+    const allowed = new Set(indexes);
+    const tiles = Array.from(document.querySelectorAll('[data-trelio-max-message] button.tile'))
+      .filter(tile => allowed.has(Number(tile.closest('[data-trelio-max-message]')?.getAttribute('data-trelio-max-message')))
+        && (tile.querySelector('.image-placeholder') || tile.querySelector('img.image')))
+      .slice(-20);
+    // MAX mounts some image elements only when their own tile enters the
+    // scroll viewport. Changing the loading attribute cannot mount an image.
+    return tiles.flatMap((tile, index) => {
+      if (tile.querySelector('img.image')) return [];
+      tile.setAttribute('data-trelio-max-photo-pending', String(index));
+      return [index];
+    });
+  }, messages.map(message => message.index));
+  if (pending.length === 0) return null;
+  const deadline = Date.now() + Math.min(options.timeoutMs || 60_000, 8_000);
+  for (const index of pending) {
+    const tile = page.locator(`[data-trelio-max-photo-pending="${index}"]`);
+    if (Date.now() >= deadline) break;
+    try {
+      const image = tile.locator('img.image');
+      if (await image.count() === 0) {
+        await tile.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) });
+        await image.waitFor({ state: 'attached', timeout: Math.max(1, deadline - Date.now()) });
+      }
+    } catch {
+      // A virtualized or failed tile provides no identity. The second snapshot
+      // accounts for unresolved tiles before issuing any repeated-photo refs.
+    }
+  }
+  return visibleMessages(page, limit, { includeVoice: options.command === 'read' });
+};
+
 const addPhotoDownloadReferences = async (page, options, messages) => {
-  const rows = await page.evaluate(() => {
+  const rows = await page.evaluate((includeVoice) => {
     document.querySelectorAll("[data-trelio-max-photo]").forEach(n => n.removeAttribute("data-trelio-max-photo"));
     const result = [];
+    const tileCounts = {};
     for (const node of document.querySelectorAll("[data-trelio-max-message]")) {
       const index = Number(node.getAttribute("data-trelio-max-message"));
+      tileCounts[index] = Array.from(node.querySelectorAll('button.tile'))
+        .filter(tile => tile.closest('.messageWrapper') === node
+          && (tile.querySelector('.image-placeholder') || tile.querySelector('img.image'))).length;
       const attachments = Array.from(node.querySelectorAll(
-        'a[download], [aria-label*="скач" i], [aria-label*="download" i], [class*="attachment" i], [class*="file" i], img, video, audio',
+        'a[download], [aria-label*="скач" i], [aria-label*="download" i], [class*="attachment" i], [class*="file" i], img, video, audio'
+        + (includeVoice ? ', div.attachAudio' : ''),
       )).slice(0, 20);
       attachments.forEach((image, offset) => {
         // The verified MAX photo tile excludes avatars, link previews and other
@@ -2756,8 +2833,9 @@ const addPhotoDownloadReferences = async (page, options, messages) => {
         result.push({ index, attachmentIndex: offset + 1, source: source.href, marker });
       });
     }
-    return { url: window.location.href, rows: result };
-  });
+    return { url: window.location.href, rows: result, tileCounts };
+  }, options.command === 'read');
+  for (const message of messages) message[photoTileCount] = rows.tileCounts[message.index] ?? 0;
   if (!rows.rows.length) return [];
   const chat = normalizeChatUrl(rows.url);
   if (normalizeChatUrl(options.chat) && normalizeChatUrl(options.chat) !== chat) {
@@ -2775,13 +2853,16 @@ const addPhotoDownloadReferences = async (page, options, messages) => {
   const unexaminedKeys = new Set(eligible.slice(0, eligible.length - bounded.length)
     .map(row => messages.find(m => m.index === row.index)?.messageKey));
   const identityDeadline = Date.now() + Math.min(options.timeoutMs || 60_000, 10_000);
+  const digestsBySource = new Map();
   for (const row of bounded) {
     const message = messages.find(m => m.index === row.index);
     const attachment = message?.attachments.find(a => a.index === row.attachmentIndex);
     if (!attachment || unexaminedKeys.has(message.messageKey)) continue;
     const remaining = identityDeadline - Date.now();
-    const contentDigest = remaining > 0
-      ? await photoSourceDigest(page, row.source, remaining).catch(() => null) : null;
+    if (!digestsBySource.has(row.source) && remaining > 0) {
+      digestsBySource.set(row.source, await photoSourceDigest(page, row.source, remaining).catch(() => null));
+    }
+    const contentDigest = digestsBySource.get(row.source);
     if (!contentDigest) {
       attachment.downloadRefUnavailable = 'MAX_PHOTO_REFERENCE_UNAVAILABLE';
       continue;
@@ -2790,22 +2871,82 @@ const addPhotoDownloadReferences = async (page, options, messages) => {
       message.providerMessageId, message.author, message.timestamp, message.text,
       contentDigest]))}`;
     attachment.downloadRef = downloadRef;
-    candidates.push({ downloadRef, message, marker: row.marker, source: row.source });
+    candidates.push({ downloadRef, message, attachment, contentDigest, marker: row.marker, source: row.source });
   }
-  // A repeated copy of the exact same image/body/time is still ambiguous.
-  // Do not advertise a handle that could later select either duplicate.
-  const counts = new Map();
-  candidates.forEach(row => counts.set(row.downloadRef, (counts.get(row.downloadRef) || 0) + 1));
-  for (const message of messages) for (const attachment of message.attachments) {
-    if (counts.get(attachment.downloadRef) > 1) delete attachment.downloadRef;
+  const groups = Map.groupBy(candidates, candidate => candidate.downloadRef);
+  const albums = Map.groupBy(candidates, candidate => candidate.message);
+  const albumKey = message => JSON.stringify([message.messageKey, message[photoTileCount]]);
+  const incomplete = messages.filter(message => (albums.get(message)?.length ?? 0) !== message[photoTileCount]);
+  const incompleteKeys = new Set(incomplete.map(message => message.messageKey));
+  const incompleteAlbums = new Set(incomplete.map(albumKey));
+  for (const candidate of candidates) {
+    candidate.eligible = groups.get(candidate.downloadRef).length === 1 && !incompleteKeys.has(candidate.message.messageKey);
+    if (candidate.eligible) continue;
+    delete candidate.attachment.downloadRef;
+    candidate.attachment.downloadRefUnavailable = 'MAX_PHOTO_REFERENCE_UNAVAILABLE';
   }
+
+  const albumCandidates = [];
+  for (const [message, album] of albums) {
+    if (incompleteAlbums.has(albumKey(message))) continue;
+    const contents = album.map(tile => tile.contentDigest);
+    const copies = Map.groupBy(album, candidate => candidate.contentDigest);
+    for (const [index, candidate] of album.entries()) {
+      // A repeated thumbnail may represent different originals. Only exact
+      // copies of one provider source can be distinguished by occurrence in
+      // an otherwise fully verified ordered album. The digest sequence and
+      // message identity invalidate the ref if the album changes.
+      if (!copies.get(candidate.contentDigest).every(copy => copy.source === candidate.source)) continue;
+      const ref = `max-photo/v2.${sha256(JSON.stringify(['max-photo/v2', candidate.downloadRef, contents, index]))}`;
+      albumCandidates.push({ ...candidate, downloadRef: ref, eligible: false });
+    }
+  }
+  for (const matches of Map.groupBy(albumCandidates, candidate => candidate.downloadRef).values()) {
+    if (matches.length !== 1) continue;
+    const [candidate] = matches;
+    candidate.eligible = true;
+    if (!candidate.attachment.downloadRef) {
+      candidate.attachment.downloadRef = candidate.downloadRef;
+      delete candidate.attachment.downloadRefUnavailable;
+    }
+  }
+  candidates.push(...albumCandidates);
   return candidates;
+};
+
+const readPhotoReferences = async (page, options, messages) => {
+  await addPhotoDownloadReferences(page, options, messages);
+  const hydrated = await hydratePhotoTiles(page, options, messages, options.limit);
+  if (!hydrated) return messages;
+  await addPhotoDownloadReferences(page, options, hydrated);
+  const mergeKey = message => JSON.stringify([message.messageKey, message[photoTileCount]]);
+  const before = Map.groupBy(messages, mergeKey);
+  const after = Map.groupBy(hydrated, mergeKey);
+  // Scrolling an album can unmount other, already verified messages. Keep
+  // those initial references. Only replace an unambiguous original message
+  // when its fresh snapshot has more verified photos.
+  return messages.map(message => {
+    const key = mergeKey(message);
+    const fresh = after.get(key);
+    if (before.get(key).length !== 1 || fresh?.length !== 1) return message;
+    const references = entry => entry.attachments.filter(attachment => attachment.downloadRef).length;
+    return references(fresh[0]) > references(message) ? fresh[0] : message;
+  });
 };
 
 const findPhotoDownloadTarget = async (page, options) => {
   const messages = await visibleMessages(page, 100);
-  const candidates = await addPhotoDownloadReferences(page, options, messages);
-  const matches = candidates.filter(row => row.downloadRef === options.attachmentRef);
+  const matchesRef = row => row.downloadRef === options.attachmentRef && row.eligible;
+  let matches = (await addPhotoDownloadReferences(page, options, messages)).filter(matchesRef);
+  let snapshot = messages;
+  // Moving one lazy tile into view can temporarily unmount another tile.
+  // Re-evaluate the fresh DOM once before declaring a reference stale. This
+  // runs before opening the viewer or starting a transfer.
+  for (let pass = 0; matches.length === 0 && pass < 2; pass += 1) {
+    snapshot = await hydratePhotoTiles(page, options, snapshot, 100);
+    if (!snapshot) break;
+    matches = (await addPhotoDownloadReferences(page, options, snapshot)).filter(matchesRef);
+  }
   if (matches.length !== 1) throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID",
     "The MAX photo reference is stale, absent or ambiguous. Read the exact chat again; do not select by position.");
   const selected = matches[0];
@@ -4933,7 +5074,8 @@ const markReadAfterVerifiedReply = async (page, options, readGuard) => {
 const readChatMessages = async (page, options) => {
   const opened = await openChat(page, options);
   const loadedPages = await loadHistoryPages(page, options.pages, options.timeoutMs);
-  const referenceOptions = { strictReferences: ["monitor", "read-reference", 'ack-reference'].includes(options.command) };
+  const referenceOptions = { strictReferences: ["monitor", "read-reference", 'ack-reference'].includes(options.command),
+    includeVoice: options.command === 'read' };
   let messages = await visibleMessages(page, options.limit, referenceOptions);
   let emptyState = opened.emptyState || null;
   if (!emptyState && messages.length === 0) {
@@ -4962,7 +5104,10 @@ const readChatMessages = async (page, options) => {
   const chatReference = await rememberOpenedChat(page, options, opened, true);
   // Source monitors retain their stricter native identity/ACK ABI. Ordinary
   // reads alone expose photo lookup handles, with no new processing authority.
-  if (options.command === "read") await addPhotoDownloadReferences(page, options, messages);
+  if (options.command === "read" && chatReference?.url) {
+    const photoOptions = { ...options, chat: chatReference.url };
+    return { opened, chatReference, loadedPages, messages: await readPhotoReferences(page, photoOptions, messages) };
+  }
   return { opened, chatReference, loadedPages, messages };
 };
 
@@ -5648,6 +5793,108 @@ const downloadPhotoAttachment = async (page, options) => {
   }
 };
 
+const MAX_VOICE_GATEWAY = /^https:\/\/a\.oneme\.ru\//u;
+const MAX_VOICE_BYTES = 32 * 1024 * 1024;
+
+const readCompleteVoice = async (response) => {
+  const headers = response.headers();
+  const length = Number(headers['content-length']);
+  const range = headers['content-range'];
+  // Chrome requests bytes=0-. A 206 is usable only when the response proves
+  // that the requested interval covers the entire original voice message.
+  const whole = response.status() === 200 && !range
+    || response.status() === 206 && range === `bytes 0-${length - 1}/${length}`;
+  if (!whole || !Number.isSafeInteger(length) || length < 4 || length > MAX_VOICE_BYTES
+    || !/^audio\/ogg(?:;|$)/iu.test(headers['content-type'] || '')) {
+    throw new MaxRuntimeError('MAX_VOICE_SOURCE_UNVERIFIED', 'MAX did not return one complete OGG voice recording.');
+  }
+  const bytes = await response.body();
+  if (bytes.length !== length || bytes.toString('ascii', 0, 4) !== 'OggS') {
+    throw new MaxRuntimeError('MAX_VOICE_SOURCE_UNVERIFIED', 'MAX voice recording size or format could not be verified.');
+  }
+  return bytes;
+};
+
+const downloadVoiceAttachment = async (page, options, target, voice) => {
+  const chat = normalizeChatUrl(page.url());
+  const button = voice.locator('.buttonWrapper > button');
+  if (await button.count() !== 1 || await voice.locator('.duration').count() !== 1
+    || await page.locator('audio[src]').count() !== 0) {
+    throw new MaxRuntimeError('MAX_VOICE_TARGET_UNVERIFIED', 'MAX did not expose one idle player for the exact voice message.');
+  }
+
+  let armed = false;
+  let pending;
+  let timer;
+  const deadline = Date.now() + options.timeoutMs;
+  const timedOut = () => new MaxRuntimeError('MAX_DOWNLOAD_TIMEOUT', 'MAX voice download did not finish in time.');
+  let finish;
+  let fail;
+  const completed = new Promise((resolve, reject) => { finish = resolve; fail = reject; });
+  void completed.catch(() => undefined);
+  const onMedia = async (route) => {
+    const request = route.request();
+    if (!armed || request.resourceType() !== 'media' || request.method() !== 'GET'
+      || request.isNavigationRequest() || request.redirectedFrom()) return route.fallback();
+    // Worker/preload requests can have no Playwright frame. They cannot prove
+    // the selected player initiated the transfer and must never be captured.
+    let frame;
+    try { frame = request.frame(); } catch { return route.fallback(); }
+    if (frame !== page.mainFrame()) return route.fallback();
+    if (pending) return route.abort();
+    // This request belongs to the only player created by the exact click.
+    // Retain its URL inside Playwright and stop the media before it can play.
+    pending = (async () => {
+      let response;
+      try {
+        const matches = await page.evaluate(source => {
+          const audio = Array.from(document.querySelectorAll('audio[src]'));
+          return audio.length === 1 && audio[0].src === source;
+        }, request.url());
+        if (!matches || normalizeChatUrl(page.url()) !== chat) {
+          throw new MaxRuntimeError('MAX_VOICE_TARGET_UNVERIFIED', 'The MAX voice player changed before transfer.');
+        }
+        const remaining = deadline - Date.now();
+        if (!armed || remaining <= 0) throw timedOut();
+        response = await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout: remaining });
+        const bytes = await readCompleteVoice(response);
+        if (!armed || Date.now() >= deadline) throw timedOut();
+        const saved = await saveAttachmentAtomically(options.output, 'voice.ogg',
+          temporary => fs.writeFileSync(temporary, bytes, { flag: 'wx', mode: 0o600 }));
+        finish({ downloaded: true, ...saved, mediaType: 'audio/ogg', transferMethod: 'browser-context-voice', sourceMessage: target.message });
+      } catch (error) {
+        fail(error instanceof MaxRuntimeError ? error
+          : new MaxRuntimeError('MAX_VOICE_SOURCE_UNVERIFIED', 'MAX voice recording could not be transferred safely.'));
+      } finally {
+        await route.abort().catch(() => undefined);
+        await response?.dispose().catch(() => undefined);
+      }
+    })();
+    return pending;
+  };
+  await page.route(MAX_VOICE_GATEWAY, onMedia);
+  try {
+    timer = setTimeout(() => {
+      armed = false;
+      fail(timedOut());
+    }, Math.max(1, deadline - Date.now()));
+    if (normalizeChatUrl(page.url()) !== chat) {
+      throw new MaxRuntimeError('MAX_VOICE_TARGET_UNVERIFIED', 'The exact MAX chat changed before opening the voice player.');
+    }
+    armed = true;
+    await button.click({ timeout: options.timeoutMs });
+    return await completed;
+  } catch (error) {
+    if (error instanceof MaxRuntimeError) throw error;
+    throw new MaxRuntimeError('MAX_VOICE_TARGET_UNVERIFIED', 'Could not open the exact MAX voice player.');
+  } finally {
+    armed = false;
+    clearTimeout(timer);
+    await pending;
+    await page.unroute(MAX_VOICE_GATEWAY, onMedia).catch(() => undefined);
+  }
+};
+
 const downloadSelectedAttachment = async (page, options) => {
   await openChat(page, options);
   await loadHistoryPages(page, options.pages, options.timeoutMs);
@@ -5662,6 +5909,14 @@ const downloadSelectedAttachment = async (page, options) => {
   const visibleDownloadButtons = target.locator.getByRole("button", { name: /^(?:скачать|download)$/iu });
   const candidates = await attachments.count() ? attachments : visibleDownloadButtons;
   const count = await candidates.count();
+  const voice = target.locator.locator('div.attachAudio');
+  const voiceCount = await voice.count();
+  if (voiceCount > 0) {
+    if (voiceCount !== 1 || count !== 0 || options.attachmentIndex !== 1) {
+      throw new MaxRuntimeError('MAX_VOICE_TARGET_UNVERIFIED', 'Choose one exact MAX message with a single voice recording.');
+    }
+    return downloadVoiceAttachment(page, options, target, voice);
+  }
   if (options.attachmentIndex > count) {
     throw new Error(
       `MAX message exposes ${count} downloadable attachment(s); requested index ${options.attachmentIndex}.`,
@@ -6923,10 +7178,13 @@ export {
   visibleMessages,
   findMessageTarget,
   addPhotoDownloadReferences,
+  readPhotoReferences,
   photoSourceDigest,
   findPhotoDownloadTarget,
   downloadPhotoAttachment,
   downloadSelectedAttachment,
+  downloadVoiceAttachment,
+  readCompleteVoice,
   validateCommandOptions,
   withBrowser,
   readUnreadDialogs,

@@ -90,6 +90,24 @@ test("MAX restores a cold contact URL through its verified private phone locator
   assert.deepEqual(searched, [phone, phone]);
 }));
 
+test("MAX recovers a verified phone contact when the SPA returns home after the initial deep-link URL", async () => withJournal(async () => {
+  const { page, searched } = phoneLookupPage();
+  const phone = "+12025550123";
+  await lookupContactByPhone(page, options, phone);
+  page.goto = async url => {
+    page.setUrl(url);
+    page.setHtml('<main><input placeholder="Поиск"></main>');
+  };
+  // The first wait is for the SPA shell; the second observes its late route
+  // replacement. Recovery must use the persisted lookup and verify the target.
+  let waits = 0;
+  page.waitForFunction = async () => { if (++waits === 2) page.setUrl("https://web.max.ru/"); };
+  const opened = await openChat(page, { ...options, chat: "123", timeoutMs: 50 });
+  assert.equal(opened.method, "url-with-phone-lookup");
+  assert.equal(opened.url, "https://web.max.ru/123");
+  assert.deepEqual(searched, [phone, phone]);
+}));
+
 test("MAX reads a new phone contact with no messages after restoring its cold URL", async () => withJournal(async () => {
   const html = '<main><button aria-label="Открыть профиль Test Contact"></button><div class="history">'
     + '<div class="emptyHistory"><span>Сообщений пока нет</span></div>'

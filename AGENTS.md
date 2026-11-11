@@ -580,7 +580,10 @@ Job Object; native parent-death/timeout regression проверяет освоб
 MAX фото/альбомы следуют [контракту](docs/max-web-agent-skill.md#история-и-состояние-чтения):
 read-only downloadRef связывает exact аккаунт/чат/сообщение с thumbnail bytes,
 не с позицией или меняющимся CDN URL. Viewer и оригинал проверяются отдельно;
-refs не открывают mutation/assist/ACK. Проверяй ротацию URL, дубли и album tiles.
+refs не открывают mutation/assist/ACK. V2 повторов связывает полную
+упорядоченную последовательность проверенных миниатюр и точное вхождение.
+Проверяй lazy tiles, ротацию URL, дубли и исходный OGG голосового по тому же
+контракту. Удерживай passive read guard и прежние source/ACK проекции.
 MAX read-only assist сохраняет штатный phone lookup для cold контакта;
 точная home-search кнопка проверяется и host gate, и browser event fence.
 Для каждой новой signed-runtime публикации нужна уникальная runtime version,

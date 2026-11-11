@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "max-web",
-    "version": "2.13.2",
-    "summary": "Отдельные сессии чатов и очередь общего native-подключения через runtime 3.31.0",
+    "version": "2.13.3",
+    "summary": "Исправлены скачивание фото из альбомов, получение голосовых для расшифровки и открытие нового контакта по ссылке",
     "routingSummary": "Read and manage MAX chats, messages, files and Goskey requests."
   },
   "connection": {
@@ -18,7 +18,7 @@
     ]
   },
   "runtime": {
-    "version": "2.13.2",
+    "version": "2.13.3",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "trelio-max.mjs",
