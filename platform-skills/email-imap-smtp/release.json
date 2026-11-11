@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.8.0",
-    "summary": "Безопасная одноразовая автоотписка от рекламной почты после модельного разбора без согласования каждой рассылки.",
-    "routingSummary": "Read and send email over IMAP/SMTP, with authenticated one-click unsubscribe for assistant-classified marketing."
+    "version": "2.9.0",
+    "summary": "Агент читает нужные вложения локально при разборе письма без ручного скачивания и выбора папки.",
+    "routingSummary": "Read and send email over IMAP/SMTP, inspect relevant attachments locally, and unsubscribe from marketing with authorized one-click requests."
   },
   "connection": null,
   "runtime": {
-    "version": "2.8.0",
+    "version": "2.9.0",
     "minimumHostVersion": "3.18.0",
     "entrypoint": {
       "path": "trelio-email.py",

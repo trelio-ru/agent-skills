@@ -29,6 +29,7 @@ import smtplib
 import socket
 import socketserver
 import ssl
+import stat
 import subprocess
 import sys
 import threading
@@ -56,10 +57,15 @@ POLICIES_DIR = CONFIG_DIR / "policies"
 KEYCHAIN_SERVICE_PREFIX = "trelio-email"
 POLICY_MODES = ("confirm", "read-only")
 CONNECTION_MODES = ("imap_smtp", "smtp_only")
-IMAP_COMMANDS = {"authentication-profile", "authentication-browser", "monitor", "read-reference", "ack-reference", "unsubscribe-reference", "folders", "search", "read", "save-message", "attachments", "save-attachment", "reply"}
+IMAP_COMMANDS = {"authentication-profile", "authentication-browser", "monitor", "read-reference", "ack-reference", "unsubscribe-reference", "folders", "search", "read", "save-message", "attachments", "save-attachment", "read-attachment", "reply"}
 MAX_ACCOUNT_DESCRIPTION_CHARS = 2_000
 MAX_SIGNATURE_BYTES = 16 * 1024
 MAX_MESSAGE_BYTES = 25 * 1024 * 1024
+# The existing Windows private writer accepts at most 16 MiB per invocation.
+MAX_TEMPORARY_ATTACHMENT_BYTES = 16 * 1024 * 1024
+TEMPORARY_ATTACHMENT_TTL_SECONDS = 60 * 60
+TEMPORARY_ATTACHMENT_ID = re.compile(r"[0-9a-f]{32}")
+TEMPORARY_ATTACHMENT_NAME = re.compile(r"attachment\.[a-zA-Z0-9]{1,12}")
 MAX_REFERENCE_METADATA_BYTES = 16 * 1024
 # Reply headers come from an untrusted mailbox. Bound the complete chain and
 # parse identifiers rather than copying arbitrary header text into SMTP DATA.
@@ -1660,22 +1666,30 @@ def message_text(message: Message) -> str:
     return "\n\n".join(plain_parts).strip() or "\n\n".join(html_parts).strip()
 
 
-def attachment_rows(message: Message) -> list[dict[str, Any]]:
-    result: list[dict[str, Any]] = []
+def attachment_parts(message: Message) -> Iterable[tuple[Message, str]]:
+    # The listing and both download modes must assign the same index, even
+    # when a sender omits the filename or names an inline part.
     for part in message.walk():
         filename = decode_header_value(part.get_filename())
-        if not filename and part.get_content_disposition() != "attachment":
-            continue
-        payload = part.get_payload(decode=True) or b""
-        result.append(
-            {
-                "index": len(result) + 1,
-                "filename": filename or f"attachment-{len(result) + 1}",
-                "contentType": part.get_content_type(),
-                "size": len(payload),
-            }
-        )
-    return result
+        if filename or part.get_content_disposition() == "attachment":
+            yield part, filename
+
+
+def attachment_rows(message: Message) -> list[dict[str, Any]]:
+    return [
+        {"index": index, "filename": filename or f"attachment-{index}",
+         "contentType": part.get_content_type(), "disposition": part.get_content_disposition(),
+         "size": len(part.get_payload(decode=True) or b"")}
+        for index, (part, filename) in enumerate(attachment_parts(message), start=1)
+    ]
+
+
+def select_attachment(message: Message, index: int) -> tuple[Message, str]:
+    parts = list(attachment_parts(message))
+    if not 1 <= index <= len(parts):
+        raise MailboxError(f"Attachment index must be between 1 and {len(parts)}.")
+    part, filename = parts[index - 1]
+    return part, filename or f"attachment-{index}"
 
 
 def imap_connection(account: Account) -> imaplib.IMAP4_SSL:
@@ -2569,8 +2583,10 @@ def command_read(args: argparse.Namespace) -> dict[str, Any]:
     account = load_account(args.account)
     with imap_connection(account) as client:
         folder = select_folder(client, args.folder, special_use=args.special_use)
-        message = fetch_message(client, args.uid)
-    return public_mail_message(message, args.uid, folder)
+        raw = fetch_raw_message(client, args.uid)
+    message = email.message_from_bytes(raw, policy=default)
+    return {**public_mail_message(message, args.uid, folder),
+            "originalSha256": hashlib.sha256(raw).hexdigest()}
 
 
 def email_reference_digest_argument(value: str) -> str:
@@ -2842,8 +2858,10 @@ def command_attachments(args: argparse.Namespace) -> dict[str, Any]:
     account = load_account(args.account)
     with imap_connection(account) as client:
         folder = select_folder(client, args.folder, special_use=args.special_use)
-        message = fetch_message(client, args.uid)
-    return {"uid": args.uid, "folder": folder, "attachments": attachment_rows(message)}
+        raw = fetch_raw_message(client, args.uid)
+    message = email.message_from_bytes(raw, policy=default)
+    return {"uid": args.uid, "folder": folder, "attachments": attachment_rows(message),
+            "originalSha256": hashlib.sha256(raw).hexdigest()}
 
 
 def safe_filename(value: str) -> str:
@@ -2912,20 +2930,137 @@ def command_save_attachment(args: argparse.Namespace) -> dict[str, Any]:
     with imap_connection(account) as client:
         folder = select_folder(client, args.folder, special_use=args.special_use)
         message = fetch_message(client, args.uid)
-    parts: list[tuple[Message, dict[str, Any]]] = []
-    for part in message.walk():
-        filename = decode_header_value(part.get_filename())
-        if filename or part.get_content_disposition() == "attachment":
-            parts.append((part, {"filename": filename or f"attachment-{len(parts) + 1}"}))
-    if args.index < 1 or args.index > len(parts):
-        raise MailboxError(f"Attachment index must be between 1 and {len(parts)}.")
-    part, metadata = parts[args.index - 1]
+    part, filename = select_attachment(message, args.index)
     output_directory = Path(args.output).expanduser().resolve()
     output_directory.mkdir(parents=True, exist_ok=True)
-    output_path = output_directory / safe_filename(metadata["filename"])
+    output_path = output_directory / safe_filename(filename)
     write_selected_bytes(output_path, part.get_payload(decode=True) or b"", args.overwrite)
     return {"saved": str(output_path), "size": output_path.stat().st_size,
             "account": account.name, "folder": folder, "uid": args.uid}
+
+
+def temporary_attachment_directory(path: Path, windows_helper: Path | None, *, create: bool) -> None:
+    native = native_runtime()
+    if windows_helper is not None:
+        native.run_private(windows_helper, ["private-directory" if create else "verify-directory", str(path)])
+    else:
+        if create:
+            native.verify_path(path.parent, directory=True)
+            path.mkdir(mode=0o700, exist_ok=True)
+        native.verify_path(path, directory=True)
+
+
+def temporary_attachment_scope(account_name: str, windows_helper: Path | None, *, create: bool) -> Path:
+    binding = selected_local_account()
+    # Cleanup can use only an opaque ID under the currently bound mailbox,
+    # company and member. It never accepts a caller- or sender-supplied path.
+    identity = [normalize_account_name(account_name), binding["id"] if binding else None,
+                binding["companyBinding"] if binding else None,
+                os.environ.get("TRELIO_SKILL_COMPANY_ID"), os.environ.get("TRELIO_SKILL_MEMBER_ID")]
+    scope = hashlib.sha256(json.dumps(identity, ensure_ascii=True).encode()).hexdigest()
+    root = CONFIG_DIR / "temporary-attachments"
+    directory = root / scope
+    if create or os.path.lexists(root):
+        temporary_attachment_directory(root, windows_helper, create=create)
+    if create or os.path.lexists(directory):
+        temporary_attachment_directory(directory, windows_helper, create=create)
+    return directory
+
+
+def remove_temporary_attachment(directory: Path, windows_helper: Path | None) -> bool:
+    # Never traverse an unexpected child, symlink or junction, even on expiry.
+    # The lease owns just one generated filename. Concurrent cleanup of the
+    # same lease is harmless and a missing lease is already clean.
+    try:
+        directory.lstat()
+        temporary_attachment_directory(directory, windows_helper, create=False)
+        children = list(directory.iterdir())
+        for path in children:
+            info = path.lstat()
+            if (not TEMPORARY_ATTACHMENT_NAME.fullmatch(path.name) or not stat.S_ISREG(info.st_mode)
+                    or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                raise MailboxError("EMAIL_ATTACHMENT_STORAGE_UNSAFE")
+        for path in children:
+            path.unlink(missing_ok=True)
+        directory.rmdir()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def command_read_attachment(args: argparse.Namespace) -> dict[str, Any]:
+    account = load_account(args.account)
+    try:
+        with imap_connection(account) as client:
+            folder = select_folder(client, args.folder, special_use=args.special_use)
+            raw = fetch_raw_message(client, args.uid, verify_reference=True)
+    except EmailReferenceError:
+        raise
+    except (MailboxError, OSError, imaplib.IMAP4.error):
+        raise MailboxError("EMAIL_ATTACHMENT_MESSAGE_UNAVAILABLE") from None
+    # A UID can be reused when UIDVALIDITY changes. An index from the previous
+    # listing is meaningful only for exactly the same RFC822 bytes.
+    if hashlib.sha256(raw).hexdigest() != args.expected_message_sha256:
+        raise MailboxError("EMAIL_ATTACHMENT_MESSAGE_CHANGED")
+    part, filename = select_attachment(email.message_from_bytes(raw, policy=default), args.index)
+    payload = part.get_payload(decode=True)
+    if not payload or part.defects:
+        raise MailboxError("EMAIL_ATTACHMENT_CONTENT_UNAVAILABLE")
+    if len(payload) > MAX_TEMPORARY_ATTACHMENT_BYTES:
+        raise MailboxError("EMAIL_ATTACHMENT_TOO_LARGE")
+    native = native_runtime()
+    try:
+        windows_helper = native.native_helper(CONFIG_DIR) if sys.platform == "win32" else None
+        root = temporary_attachment_scope(args.account, windows_helper, create=True)
+        cutoff = time.time() - TEMPORARY_ATTACHMENT_TTL_SECONDS
+        for lease in root.iterdir():
+            if TEMPORARY_ATTACHMENT_ID.fullmatch(lease.name):
+                try:
+                    if lease.lstat().st_mtime <= cutoff:
+                        remove_temporary_attachment(lease, windows_helper)
+                except (OSError, MailboxError, native.NativeError):
+                    # Stale cleanup is best effort. A locked or invalid old
+                    # lease must not block a fresh, independently private one.
+                    continue
+        attachment_id = secrets.token_hex(16)
+        directory = root / attachment_id
+        # Use a generated filename, retaining only a simple extension so
+        # local document readers can select their format without a mail path.
+        suffix = re.search(r"\.[a-zA-Z0-9]{1,12}$", filename)
+        path = directory / ("attachment" + (suffix[0] if suffix else ".bin"))
+        if os.path.lexists(directory):
+            raise MailboxError("EMAIL_ATTACHMENT_STORAGE_UNAVAILABLE")
+        temporary_attachment_directory(directory, windows_helper, create=True)
+        try:
+            if windows_helper is not None:
+                native.run_private(windows_helper, ["write-private", str(path)], value=payload)
+            else:
+                with os.fdopen(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "wb") as output:
+                    output.write(payload)
+        except BaseException:
+            try:
+                remove_temporary_attachment(directory, windows_helper)
+            except (OSError, MailboxError, native.NativeError):
+                pass  # The expiry sweep can recover a residual partial lease.
+            raise
+    except (OSError, native.NativeError):
+        raise MailboxError("EMAIL_ATTACHMENT_STORAGE_UNAVAILABLE") from None
+    return {"temporaryAttachmentId": attachment_id, "path": str(path), "filename": filename,
+            "contentType": part.get_content_type(), "size": len(payload), "index": args.index,
+            "folder": folder, "uid": args.uid, "staleAfterSeconds": TEMPORARY_ATTACHMENT_TTL_SECONDS}
+
+
+def command_release_attachment(args: argparse.Namespace) -> dict[str, Any]:
+    if not TEMPORARY_ATTACHMENT_ID.fullmatch(args.id):
+        raise MailboxError("EMAIL_ATTACHMENT_ID_INVALID")
+    native = native_runtime()
+    try:
+        windows_helper = native.native_helper(CONFIG_DIR) if sys.platform == "win32" else None
+        root = temporary_attachment_scope(args.account, windows_helper, create=False)
+        removed = remove_temporary_attachment(root / args.id, windows_helper)
+    except (OSError, native.NativeError):
+        raise MailboxError("EMAIL_ATTACHMENT_STORAGE_UNAVAILABLE") from None
+    return {"removed": removed, "temporaryAttachmentId": args.id}
 
 
 def split_addresses(values: Iterable[str]) -> list[str]:
@@ -3607,6 +3742,16 @@ def build_parser() -> argparse.ArgumentParser:
     save_parser.add_argument("--output", required=True, help="Destination directory")
     save_parser.add_argument("--overwrite", action="store_true")
     save_parser.set_defaults(handler=command_save_attachment)
+    attachment_read_parser = subparsers.add_parser("read-attachment", help="Prepare one exact attachment for private local analysis")
+    add_mailbox_arguments(attachment_read_parser)
+    attachment_read_parser.add_argument("--uid", required=True, type=parse_message_uid)
+    attachment_read_parser.add_argument("--index", required=True, type=int)
+    attachment_read_parser.add_argument("--expected-message-sha256", required=True, type=email_reference_digest_argument)
+    attachment_read_parser.set_defaults(handler=command_read_attachment)
+    attachment_release_parser = subparsers.add_parser("release-attachment", help="Remove one private temporary attachment")
+    attachment_release_parser.add_argument("--account", required=True)
+    attachment_release_parser.add_argument("--id", required=True)
+    attachment_release_parser.set_defaults(handler=command_release_attachment)
     send_parser = subparsers.add_parser("send", help="Send one explicitly confirmed message")
     send_parser.add_argument("--account", required=True)
     send_parser.add_argument("--conversation-reference", action="store_true", help="Return an incoming INBOX-scoped thread hint; no task/read authority")
@@ -3710,7 +3855,7 @@ def main(*, _owned: bool = False) -> int:
         # internal callers that do not enter through this CLI.
         if args.command in IMAP_COMMANDS:
             require_imap(load_account(args.account))
-        if not _owned and args.command not in {"accounts", "description", "signature", "policy"}:
+        if not _owned and args.command not in {"accounts", "description", "signature", "policy", "release-attachment"}:
             terminal = args.command == "configure" and (
                 args.terminal_prompts or args.password_input == "terminal")
             if terminal and (not sys.stdin.isatty() or not sys.stderr.isatty()):

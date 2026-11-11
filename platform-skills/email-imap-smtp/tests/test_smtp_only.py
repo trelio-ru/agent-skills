@@ -90,6 +90,7 @@ class SmtpOnlyTests(unittest.TestCase):
         tails = {"folders": [], "search": [], "read": ["--uid", "1"],
                  "save-message": ["--uid", "1", "--output", "unused"], "attachments": ["--uid", "1"],
                  "save-attachment": ["--uid", "1", "--index", "1", "--output", "unused"],
+                 "read-attachment": ["--uid", "1", "--index", "1", "--expected-message-sha256", "a" * 64],
                  "reply": ["--uid", "1", "--body", "synthetic"]}
         with mock.patch.object(MODULE, "native_runtime", side_effect=AssertionError("Unexpected vault access")):
             for command, tail in tails.items():

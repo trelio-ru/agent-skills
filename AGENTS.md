@@ -437,6 +437,10 @@ IMAP exact ACK uses the same native guardian/account engine: identity/full-byte 
 one additive Seen write, native FLAGS read-back and readonly reconciliation. Host
 committed processing/ACK lease remain separate authority; see email-monitoring.
 Generic browser OTP delivery follows [the protected mail contract](docs/email-browser-authentication.md).
+Чтение письма включает относящиеся к вопросу вложения. `read-attachment` сверяет
+хеш исходного письма и кладёт файл в приватный временный каталог. После разбора
+`release-attachment` удаляет копию по ID в том же контексте. Постоянное сохранение
+остаётся отдельным действием. См. [почтовый сценарий](platform-skills/email-imap-smtp/scripts/instruction-guides/part-03.md).
 No provider/site selectors belong in mail. Readonly UID baseline precedes any
 browser input; exact sender/recipient/UIDVALIDITY and one code stay in private
 pipes. Positive browser evidence and the SAME host ACK fence are required for
