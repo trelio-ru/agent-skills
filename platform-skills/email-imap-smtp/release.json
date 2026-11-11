@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.9.0",
+    "version": "2.8.1",
     "summary": "Агент читает нужные вложения локально при разборе письма без ручного скачивания и выбора папки.",
     "routingSummary": "Read and send email over IMAP/SMTP, inspect relevant attachments locally, and unsubscribe from marketing with authorized one-click requests."
   },
