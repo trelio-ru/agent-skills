@@ -1,5 +1,5 @@
-- `dialogs`, `contacts`, `profile`, `read`, `unread`, bounded `watch`, `download` и любые
-  действия до проверенного ответа сохраняют server-side unread-state. Runtime
+- `dialogs`, `contacts`, `profile`, `read`, `unread`, bounded `watch`, `download`,
+  `transcribe` и любые действия до проверенного ответа сохраняют server-side unread-state. Runtime
   блокирует `READ_MESSAGE` и `READ_REACTION`; не компенсируй чтение поздней
   пометкой «непрочитано».
 - Read receipt разрешается только после успешно проверенного `send` или

@@ -115,6 +115,9 @@ const ASSIST_COMMANDS = new Set([
 const ASSIST_MESSAGE_TARGET_COMMANDS = new Set([
   "delete", "download", "edit", "forward", "react", "reply",
 ]);
+const TRANSCRIPTION_FLAGS = new Set([
+  "--chat", "--message-id", "--target-text", "--target-author", "--pages", "--timeout-ms",
+]);
 const SUPPORTED_COMMANDS = new Set([
   "monitor",
   "read-reference",
@@ -154,6 +157,7 @@ const SUPPORTED_COMMANDS = new Set([
   "read",
   "reply",
   "send",
+  "transcribe",
   "unread",
   "watch",
 ]);
@@ -353,8 +357,10 @@ const parseArguments = (argv, environment = process.env) => {
     holdMsExplicit: false,
   };
 
+  const suppliedFlags = new Set();
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
+    if (argument.startsWith("--")) suppliedFlags.add(argument);
     const value = () => {
       const next = argv[index + 1];
       if (!next || next.startsWith("--")) throw new Error(`${argument} requires a value.`);
@@ -432,6 +438,9 @@ const parseArguments = (argv, environment = process.env) => {
 
   if (!SUPPORTED_COMMANDS.has(options.command)) {
     throw new Error(`Unsupported MAX browser command: ${options.command || "(missing)"}`);
+  }
+  if (options.command === "transcribe" && [...suppliedFlags].some(flag => !TRANSCRIPTION_FLAGS.has(flag))) {
+    throw new MaxRuntimeError("MAX_TRANSCRIPTION_INPUT_INVALID", "Use only exact chat and message selectors for MAX transcription.");
   }
   if (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 100) {
     throw new Error("--limit must be an integer from 1 to 100.");
@@ -536,6 +545,8 @@ Usage:
   trelio-max.mjs read-reference --chat "https://web.max.ru/123" --message-id ID --expected-revision SHA256 --expected-scope SHA256
   trelio-max.mjs unread --limit 10 --pages 1
   trelio-max.mjs watch --limit 10 --iterations 4 --interval-ms 15000
+  trelio-max.mjs transcribe --chat "https://web.max.ru/123" --message-id ID
+  trelio-max.mjs transcribe --chat "https://web.max.ru/123" --target-text "COMPLETE_MESSAGE_TEXT"
   trelio-max.mjs download --chat "Название" --message-id ID --attachment-index 1 --output PATH
   trelio-max.mjs download --chat "https://web.max.ru/123" --attachment-ref REF_FROM_READ --output PATH
   trelio-max.mjs send --chat "Название" --message "Текст" --file PATH --confirm
@@ -1329,6 +1340,14 @@ const normalizeUniqueMembers = (members) => {
 };
 
 const validateCommandOptions = (options) => {
+  if (options.command === "transcribe") {
+    let exactChat = false;
+    try { exactChat = normalizeChatUrl(options.chat) === options.chat; } catch { /* Invalid URL. */ }
+    if (!exactChat || Boolean(options.messageId) === Boolean(options.targetText?.trim())
+      || options.dryRun || options.confirm || options.attachmentIndex !== 1) {
+      throw new MaxRuntimeError("MAX_TRANSCRIPTION_INPUT_INVALID", "MAX transcription requires an exact chat URL and one exact message selector.");
+    }
+  }
   const coveredReferences = options.coveredReferences ?? [];
   if (options.command === 'ack-reference') {
     try {
@@ -5938,6 +5957,87 @@ const downloadVoiceAttachment = async (page, options, target, voice) => {
   }
 };
 
+// This is the provider's in-message control. It is separate from the play
+// button, the file transfer, and the background source/ACK protocol.
+const observeMaxVoiceTranscription = (card, { chat, start, target }) => {
+  if (!card.isConnected || window.location.href.replace(/\/$/u, "") !== chat) return { state: "changed" };
+  if (target) {
+    const wrapper = card.closest("[data-trelio-max-message]");
+    if (wrapper?.getAttribute("data-trelio-max-message") !== String(target.index)) return { state: "changed" };
+    // The click can add transcript text to the wrapper. Check the full
+    // snapshot before activation and retain the same card and wrapper after it.
+    if (start && (wrapper.innerText || wrapper.textContent || "").replace(/\s+/gu, " ").trim() !== target.text) {
+      return { state: "changed" };
+    }
+  }
+  const panels = card.querySelectorAll(":scope > .transcription");
+  if (panels.length > 1) return { state: "changed" };
+  if (panels.length === 1) {
+    if (panels[0].querySelector(".noTranscription")) return { state: "failed" };
+    const text = (panels[0].innerText ?? panels[0].textContent ?? "").trim();
+    if (text.length > 16 * 1024) return { state: "oversized" };
+    if (text) return { state: "complete", text };
+  }
+  const buttons = card.querySelectorAll(":scope > .content > span > button.button--inside");
+  if (buttons.length !== 1 || buttons[0].disabled) return { state: "unavailable" };
+  const [button] = buttons;
+  if (button.classList.contains("button--process") || button.classList.contains("button--done")) return { state: "waiting" };
+  if (!button.classList.contains("button--start")) return { state: "unavailable" };
+  if (!start) return { state: "ready" };
+  // Verify the connected card, route and control state in the same browser
+  // evaluation that activates the control. A recycled locator cannot select
+  // a different message between the last verification and the click.
+  button.click();
+  return { state: "started" };
+};
+
+const transcribeVoiceCard = async (page, card, { chat, timeoutMs }, target) => {
+  const deadline = Date.now() + Math.min(timeoutMs, 45_000);
+  let start = true;
+  for (;;) {
+    const result = await card.evaluate(observeMaxVoiceTranscription, { chat, start, target });
+    // Only the first observation may activate transcription. Waiting and
+    // provider errors never authorize another click or a different engine.
+    start = false;
+    if (result.state === "complete") {
+      if (Buffer.byteLength(result.text, "utf8") <= 16 * 1024) return result.text;
+      throw new MaxRuntimeError("MAX_TRANSCRIPTION_TOO_LARGE", "MAX returned a transcript above the result limit.");
+    }
+    if (result.state === "oversized") throw new MaxRuntimeError("MAX_TRANSCRIPTION_TOO_LARGE", "MAX returned a transcript above the result limit.");
+    if (result.state === "failed") throw new MaxRuntimeError("MAX_TRANSCRIPTION_FAILED", "MAX could not recognize this voice message.");
+    if (result.state === "changed") throw new MaxRuntimeError("MAX_TRANSCRIPTION_TARGET_CHANGED", "The exact MAX chat or voice card changed.");
+    if (result.state === "unavailable") throw new MaxRuntimeError("MAX_TRANSCRIPTION_UNAVAILABLE", "The selected voice message has no available MAX transcription control.");
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new MaxRuntimeError("MAX_TRANSCRIPTION_PENDING", "MAX has not returned a verified transcript yet. Do not retry automatically.");
+    await page.waitForTimeout(Math.min(250, remaining));
+  }
+};
+
+const transcribeSelectedVoice = async (page, options) => {
+  await openChat(page, options);
+  await loadHistoryPages(page, options.pages, options.timeoutMs);
+  const target = await findMessageTarget(page, options);
+  const voice = target.locator.locator("div.attachAudio");
+  if (await voice.count() !== 1) {
+    throw new MaxRuntimeError("MAX_TRANSCRIPTION_UNAVAILABLE", "Select a MAX message containing exactly one voice card.");
+  }
+  let card;
+  try {
+    card = await voice.elementHandle({ timeout: Math.min(options.timeoutMs, 2500) });
+    const text = await transcribeVoiceCard(page, card, options, {
+      index: target.message.index,
+      text: target.message.text,
+    });
+    return { transcribed: true, transcriptionProvider: "max", text,
+      chat: options.chat, messageId: target.message.providerMessageId };
+  } catch (error) {
+    if (error instanceof MaxRuntimeError) throw error;
+    throw new MaxRuntimeError("MAX_TRANSCRIPTION_TARGET_CHANGED", "Could not verify the selected MAX voice card or its transcript.");
+  } finally {
+    await card?.dispose().catch(() => undefined);
+  }
+};
+
 const downloadSelectedAttachment = async (page, options) => {
   await openChat(page, options);
   await loadHistoryPages(page, options.pages, options.timeoutMs);
@@ -7064,6 +7164,10 @@ const executeBrowserCommand = async (page, options, readGuard) => {
       securityBoundary: "chat-only",
     };
   }
+  if (options.command === "transcribe") {
+    return { ...(await transcribeSelectedVoice(page, options)),
+      passiveReadProtection: passiveReadSummary(readGuard), securityBoundary: "chat-only" };
+  }
   if (options.command === "download") {
     return {
       ...(await downloadSelectedAttachment(page, options)),
@@ -7228,6 +7332,8 @@ export {
   downloadSelectedAttachment,
   downloadVoiceAttachment,
   readCompleteVoice,
+  transcribeVoiceCard,
+  transcribeSelectedVoice,
   validateCommandOptions,
   withBrowser,
   readUnreadDialogs,

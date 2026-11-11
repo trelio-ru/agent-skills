@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "max-web",
-    "version": "2.13.3",
-    "summary": "Исправлены скачивание фото из альбомов, получение голосовых для расшифровки и открытие нового контакта по ссылке",
-    "routingSummary": "Read and manage MAX chats, messages, files and Goskey requests."
+    "version": "2.13.4",
+    "summary": "Добавлена встроенная расшифровка голосовых сообщений в MAX Web",
+    "routingSummary": "Read MAX chats, transcribe voice messages in MAX, and manage messages, files and Goskey requests."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     ]
   },
   "runtime": {
-    "version": "2.13.3",
+    "version": "2.13.4",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "trelio-max.mjs",

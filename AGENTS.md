@@ -584,6 +584,10 @@ refs не открывают mutation/assist/ACK. V2 повторов связы
 упорядоченную последовательность проверенных миниатюр и точное вхождение.
 Проверяй lazy tiles, ротацию URL, дубли и исходный OGG голосового по тому же
 контракту. Удерживай passive read guard и прежние source/ACK проекции.
+MAX голосовые сначала расшифровывает штатным контролом exact сообщения.
+`transcribe` сохраняет passive guard и допускает один click, без повторного
+запроса при ожидании. Скачивание и локальная ASR – отдельные операции.
+Source/ACK и signed assistant task prefixes не расширяются автоматически.
 MAX read-only assist сохраняет штатный phone lookup для cold контакта;
 точная home-search кнопка проверяется и host gate, и browser event fence.
 Для каждой новой signed-runtime публикации нужна уникальная runtime version,

@@ -12,6 +12,7 @@ import './assistant-command-policy.test.mjs';
 import './native-source-protocol.test.mjs';
 import './photo-download.test.mjs';
 import './voice-download.test.mjs';
+import './voice-transcription.test.mjs';
 import './message-reference.test.mjs';
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -197,8 +198,8 @@ test("MAX worker closure receipt is private, credential-free and cannot replace 
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.13.3");
-  assert.equal(release.runtime.version, "2.13.3");
+  assert.equal(release.release.version, "2.13.4");
+  assert.equal(release.runtime.version, "2.13.4");
   assert.equal(release.runtime.minimumHostVersion, "3.31.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
