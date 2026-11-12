@@ -2,58 +2,62 @@
 
 ## Архитектура
 
-Подписанный Node entrypoint работает на штатном Node Trelio и использует
-только literal argv с `shell=false`. Контрольный слой не требует Python.
-GigaAM inference source закреплён на commit
-`7447938d791c4f3e643386ee22c33777004293a5` официального
-`salute-developers/GigaAM`; оригинальные файлы и MIT notice входят в package.
-Свой `load_model` сначала проверяет SHA-256 checkpoint и только затем
-читает официальный PyTorch checkpoint. Пользовательские веса и remote code
-не принимаются. ONNX-конвертация/Type не используются.
+Подписанный Node entrypoint использует literal argv и `shell=false`. GigaAM
+закреплён на commit `7447938d791c4f3e643386ee22c33777004293a5` официального
+`salute-developers/GigaAM`; исходники и MIT notice в package. Перед `torch.load`
+проверяется SHA-256. Произвольные веса и remote code запрещены.
+
+Whisper Small использует hash-locked faster-whisper и CTranslate2 (CPU int8).
+Commit Systran, размеры и SHA-256 в `scripts/whisper-artifacts.json`. Inference
+получает PCM из общего FFmpeg и каталог проверенных весов с tokenizer.
 
 ## Работа цифрового ассистента в задаче
 
-Signed package включает `trelio-assistant-execution.json` v1 с точными prefix
-`guides`, `doctor`, `ensure`, `setup`, `start`, `status`, `resume`, `cancel`.
-Общий host проверяет этот opt-in до account/bootstrap и перед исполнением.
-`setup` здесь означает подготовку закреплённой локальной модели и среды,
-а не вход в аккаунт, получение credentials или согласие от имени владельца.
-Первое разрешённое использование автоматически готовит тот же download plan;
-повтор terminal failure допускается только после диагностики и устранения причины.
-`cancel` сохраняет отдельное прямое поручение остановить job; descriptor не
-расширяет основание действий и не разрешает повтор unknown start.
+`trelio-assistant-execution.json` v1 допускает exact prefixes `guides`, `doctor`,
+`ensure`, `setup`, `start`, `status`, `resume`, `cancel`. Host проверяет их до
+account/bootstrap и исполнения. Setup готовит закреплённую среду без входа,
+credentials или подтверждения от имени владельца. `cancel` требует прямой
+просьбы остановить job. Unknown start – только наблюдение.
 
-Обычный task path не получает `source-original`, внутренний `__setup` либо
-process-only source marker. Native read-confirm/owner/source admission и его
-one-start binding остаются отдельным host-only протоколом. Task использует
-только разрешённый локальный исходник и новую папку своего writable Run;
-не заимствует job/claim другого pass и не считает `guides`/`doctor` расшифровкой.
+Task использует разрешённый локальный файл и пустую папку writable Run.
+`source-original`, `__setup` и process-only source marker остаются вне task
+policy. Native read-confirm, owner/source admission и one-start независимы.
+
+## Модель и язык обычного файла
+
+`start --language <код|auto>` выбирает GigaAM при `ru` (или без аргументов),
+Whisper при другом коде или `auto`. `--model whisper-small` позволяет повторить
+русский. GigaAM принимает только `ru`. Whisper выполняет transcription без
+перевода и отклоняет неизвестный код (`AUDIO_LANGUAGE_UNSUPPORTED`).
+
+При `auto` язык определяется по фрагментам. Шум и короткие реплики ухудшают
+оценку. Повтор с другой моделью использует тот же файл и новую папку; условия
+перехода см. в SKILL.md.
+
+Whisper добавляет в JSON `modelRevision`, выбранный `language` и при `auto`
+`detectedLanguage`/`languageProbability` по фрагментам с текстом. Это оценка
+языка. Resume сохраняет модель, ревизию и язык.
 
 ## Автоматическая подготовка при использовании
 
-`doctor` и `setup` без `--approve` остаются offline preview. `ensure`, а также
-разрешённые `start`/`resume` и host-only `source-original` автоматически готовят
-отсутствующую среду: запрос навыка включает загрузку его закреплённых публичных
-bytes, без отдельного вопроса владельцу. Явный запрет загрузки пользователя
-сохраняется; его нельзя обойти другой моделью/облаком.
+`doctor` и `setup` без `--approve` работают без сети. Разрешённый вызов
+`ensure/start/resume/source-original` готовит закреплённые bytes без вопроса.
+Явный запрет загрузки действует и при смене модели.
 
-`downloadPlan.planHash` по-прежнему связывает точную платформу/каталог,
-model artifacts с размерами/хешами, uv/Python version и dependency lock. Installer
-не принимает произвольные URL/веса. Автоматическая подготовка пишет отдельный
-`setup-dispatch.json` с причиной `skill-use`, не фиктивное согласие человека.
-Legacy `download-consent.json` прежних установок только читается для совместимости;
-новые automatic/explicit запросы не записывают согласие от имени человека.
-Внутренний `__setup` проверяет exact request/plan до сети и не является
-альтернативным интерфейсом агента.
+`downloadPlan.planHash` связывает платформу, каталог, uv/Python, lock и
+size/SHA-256 модели. Новый автоматический dispatch отмечен `skill-use`;
+старый `download-consent.json` только читается. `__setup` сверяет plan и
+receipt до сети. URL и веса из окружения, argv и чата запрещены.
 
-Exclusive fsynced dispatch предшествует spawn; отдельный короткий claim
-сериализует concurrent родителей, прежний worker lock сохраняется. Повторное
-чтение наблюдает ту же попытку. Потерянный старт/claim остаётся `unknown`:
-отсутствующий PID не доказывает отсутствие эффекта и не разрешает новый worker.
-Автоматический polling не перезапускает failed setup. После диагностики и
-устранения причины explicit `setup --approve HASH` может повторить известный
-terminal failure того же актуального signed плана без нового вопроса владельцу.
-Это не расширяет source/ACK/account права; installer не получает аудио/credentials.
+Fsynced dispatch предшествует spawn; parent claim и worker lock разделены.
+Polling наблюдает прежнюю попытку. Потерянный старт остаётся `unknown` даже без
+живого PID. После диагностированного terminal failure и устранения причины
+допустим `setup --approve <актуальный planHash>` с той же моделью.
+
+Whisper готовится через `doctor/ensure/setup --model whisper-small`.
+В закрытой папке `whisper-small` свой кеш, receipts и lock. Используются
+только закреплённые wheels и примерно 486 МБ весов Hugging Face по exact revision.
+Разрешены лишь отдельные cache/Xet redirects, без зеркала.
 
 Официальный `v3_rnnt.ckpt` занимает 446 390 032 байта (около 426 МиБ).
 Отдельный файл токенизатора не требуется: алфавит хранится в конфигурации модели.
@@ -80,13 +84,9 @@ deadline охватывает все источники, redirects, ожидан
 загрузку без переключения. `.part` можно продолжить только для тех же size/SHA;
 исполнение разрешено лишь после проверки полного файла и исходного deadline.
 
-URL резервной модели содержит её полный SHA-256 и входит в подписанный
-`artifacts.json` и новый download plan. Нет URL override из модели/env/CLI,
-выбора других весов или установки произвольного runtime при source ASR. Завершённая
-установка прежнего точного плана с теми же моделью, dependencies, платформой и
-каталогом остаётся готовой: добавление зеркала не требует переустановки и не
-переписывает прежний receipt. Новый setup проверяет полный текущий план;
-receipt другой модели не принимается.
+Зеркало GigaAM входит в подписанный manifest по full SHA-256. Предыдущий
+точный receipt с теми же weights/deps/платформой/каталогом остаётся валиден;
+setup нового плана требует его собственный hash.
 
 Публичное зеркало: `https://trelio.ru/media/model-artifacts/gigaam/` + SHA-256 +
 `/v3_rnnt.ckpt`. Рядом доступны `LICENSE` и `provenance.json`. Это public static
@@ -128,6 +128,8 @@ Windows refusal содержит только fixed stage IDENTITY/OWNER/ACL/VER
 используется как разрешение убить произвольный процесс.
 
 Исходник читается FFmpeg по локальному пути, только первая звуковая дорожка.
+Поддерживаются WAV, MP3, M4A, AAC, FLAC, OGG, OPUS, AIFF, MP4, MOV, MKV и WebM
+при наличии декодируемой звуковой дорожки.
 Network protocols и playlist demuxers запрещены. PCM обрабатывается потоком:
 не более 23 секунд mono 16 kHz в памяти segmentation. Все исходные отсчёты
 сохраняются в сегментах без пропусков/перекрытий, границы выбираются по тишине
@@ -145,14 +147,9 @@ Network protocols и playlist demuxers запрещены. PCM обрабаты�
 успешным окончанием. После `failed`/`interrupted` сначала оцени errorCode:
 изменение исходника/целостности требует устранения причины, а не слепого retry.
 
-Обновление модели не меняет уже сохранённые фрагменты. Node launcher и Python
-worker отдельно отклоняют несовпадение `job.model` с моделью signed package
-до нового inference (`AUDIO_JOB_MODEL_MISMATCH`). Старые job и результаты
-сохраняются; `status` читает их с исходным именем модели. Для новой модели
-создаётся отдельная job и новая пустая папка, а не смешанный transcript.
-Изменившийся model artifact меняет download plan: старый receipt E2E не объявляет
-RNNT готовой. Для разрешённой работы нужен exact новый signed план; прежние
-файлы и результаты не удаляются.
+Node и Python отклоняют чужую модель/ревизию до inference (`AUDIO_JOB_MODEL_MISMATCH`).
+`status` читает старые job. Для другой модели нужна отдельная пустая папка;
+receipt установки привязан к точному плану.
 
 ## Защищённый оригинал входящего голосового
 
@@ -232,8 +229,9 @@ audio/transcript не печатаются в runtime stdout. `completed` озн
 Terminal state публикуется после готовых файлов; snapshot `completed` уже
 показывает JSON с `complete=true`.
 
-JSON содержит startSample/endSample и raw text официальной `v3_rnnt`.
-Слова выдаются без встроенной пунктуации; обязательной постобработки нет.
+JSON содержит startSample/endSample и raw text выбранной модели. GigaAM
+выдаёт слова без пунктуации, Whisper может выдавать пунктуацию в своём тексте.
+Обязательной постобработки нет.
 Только по отдельной просьбе агент создаёт оформленную копию, сохраняя исходные
 TXT/SRT/JSON. Последовательность слов и чисел должна совпасть с raw text без
 учёта только пунктуации и регистра; форматирование не исправляет ASR-ошибки.
@@ -243,7 +241,8 @@ SRT и TXT используют таймкоды
 моделей нужен независимый ручной эталон; межмодельное расхождение не является WER.
 
 Поддерживаемые targets: darwin-arm64 (macOS 11+), win32-x64
-(Windows 10+), linux-x64 (glibc 2.28+). Другие architectures возвращают
+(Windows 10+), linux-x64 (glibc 2.28+). Для Whisper на Apple Silicon нужен
+macOS 14+ из-за PyAV wheel. Другие architectures возвращают
 `AUDIO_PLATFORM_UNSUPPORTED` до сети.
 CPU gate исполняется нативно на GitHub-hosted macOS/Windows/Linux, включая
 first setup без ambient переменных архитектуры, реальный checkpoint и длинный
@@ -255,6 +254,9 @@ These development-only bytes are checked before each native test and excluded
 from the signed package. Provenance is in `development/fixture.json`; inference
 no longer depends on the upstream CDN's sample-audio TLS availability. Real
 model installation/inference, original durations and assertions remain mandatory.
+Whisper uses an additional public-domain English fixture pinned in
+`development/english-fixture.json` and the same Russian fixture. Native gates
+check explicit English, automatic language detection and Whisper on Russian speech.
 
 Локальная ASR не открывает право последующей публикации. Task/Workspace/meeting
 выбираются и сохраняются отдельными обычными инструментами, с сохранением

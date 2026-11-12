@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "audio-transcription",
-    "version": "1.1.6",
-    "summary": "Повторное разрешённое чтение того же голосового использует полностью проверенную готовую расшифровку без нового декодера. На компьютерах с малым числом ядер распознавание оставляет вычислительный ресурс для работы ассистента.",
-    "routingSummary": "Transcribe Russian audio and video locally into text and subtitles."
+    "version": "1.2.0",
+    "summary": "Для вероятного русского сохраняется GigaAM. Другие языки и повторная попытка распознаются локальным Whisper с выбором или определением языка.",
+    "routingSummary": "Transcribe audio and video locally using GigaAM for Russian and multilingual Whisper for other languages or poor Russian results."
   },
   "connection": null,
   "runtime": {
-    "version": "1.3.2",
+    "version": "1.4.0",
     "minimumHostVersion": "1.4.0",
     "entrypoint": {
       "path": "scripts/audio-transcription.mjs",
@@ -142,6 +142,21 @@
       {
         "source": "references/workflow.md",
         "path": "references/workflow.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/whisper-artifacts.json",
+        "path": "scripts/whisper-artifacts.json",
+        "mode": 420
+      },
+      {
+        "source": "engine/whisper/pyproject.toml",
+        "path": "engine/whisper/pyproject.toml",
+        "mode": 420
+      },
+      {
+        "source": "engine/whisper/uv.lock",
+        "path": "engine/whisper/uv.lock",
         "mode": 420
       }
     ]

@@ -7,7 +7,7 @@ import {EventEmitter} from 'node:events';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import {artifacts, childEnvironment, digest, downloadArtifact, ensureSetup, installationPlan, performSetup, providerRoot, pythonPath, ready, startSetup, unpackUv} from '../scripts/bootstrap.mjs';
+import {artifacts, childEnvironment, digest, downloadArtifact, ensureSetup, installationPlan, modelDirectory, performSetup, providerRoot, pythonPath, ready, startSetup, unpackUv, whisper} from '../scripts/bootstrap.mjs';
 import {argumentsObject, run, RUNTIME_VERSION} from '../scripts/audio-transcription.mjs';
 import {atomicJson, privateDirectory} from '../scripts/storage.mjs';
 import {buildRuntimePackage} from '../../tools/build-runtime-package.mjs';
@@ -553,6 +553,44 @@ test('a host-filtered provider reconstructs Windows architecture without inherit
   fs.rmSync(root, {recursive: true});
 });
 
+test('Whisper setup and model choice stay separate from the default GigaAM plan', async t => {
+  const root = temporary();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const defaultArgs = ['doctor'];
+  const original = await run(defaultArgs, {root});
+  const alternate = await run(['doctor', '--model', whisper.model], {root});
+  assert.equal(original.model, 'v3_rnnt');
+  assert.equal(alternate.model, whisper.model);
+  assert.equal(alternate.downloadPlan.directory, modelDirectory(root, whisper.model));
+  assert.notEqual(alternate.downloadPlan.planHash, original.downloadPlan.planHash);
+  assert.deepEqual(await run(defaultArgs, {root}), original);
+  await assert.rejects(run(['setup', '--model', whisper.model, '--approve', original.downloadPlan.planHash], {root}),
+    /AUDIO_DOWNLOAD_CONSENT_REQUIRED/u);
+  await assert.rejects(run(['start', '--model', 'v3_rnnt', '--language', 'en'], {root}), /AUDIO_LANGUAGE_MODEL_MISMATCH/u);
+  await assert.rejects(run(['start', '--language', 'en-US'], {root}), /AUDIO_LANGUAGE_INVALID/u);
+  const job = privateDirectory(path.join(root, 'job'));
+  atomicJson(path.join(job, 'job.json'), {schemaVersion: 1, model: whisper.model,
+    modelRevision: 'old-revision', language: 'auto', state: 'cancelled'});
+  await assert.rejects(run(['resume', '--job-dir', job], {root}), /AUDIO_JOB_MODEL_MISMATCH/u);
+  assert.equal(fs.existsSync(path.join(job, 'launch.json')), false);
+  assert.equal((await run(['status', '--job-dir', job], {root})).model, whisper.model);
+  assert.deepEqual(fs.readdirSync(root), ['job'], 'offline previews and invalid requests must not create setup state');
+});
+
+test('pinned Whisper fetch rejects redirects out of its distribution origins', async t => {
+  const root = temporary();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const model = whisper.models.find(item => item.name === 'model.bin');
+  const requested = [];
+  await assert.rejects(downloadArtifact(model, path.join(root, model.name), {
+    fetcher: async url => {
+      requested.push(url.href);
+      return new Response(null, {status: 302, headers: {location: 'https://github.com/unrelated/model.bin'}});
+    },
+  }), /AUDIO_DOWNLOAD_ORIGIN_DENIED/u);
+  assert.deepEqual(requested, [model.url]);
+});
+
 test('signed package binds upstream source, inference entrypoints and full guide, without model bytes', () => {
   const built = buildRuntimePackage(providerRoot);
   assert.equal(built.skillId, 'audio-transcription');
@@ -565,7 +603,7 @@ test('signed package binds upstream source, inference entrypoints and full guide
   assert.equal(major, 1);
   assert.ok(minor >= 2, 'the published executable must satisfy source-original admission');
   assert.equal(bytes.skill.runtimeVersion, RUNTIME_VERSION);
-  for (const name of ['scripts/audio-transcription.mjs', 'engine/worker.py', 'engine/uv.lock', 'references/workflow.md', 'engine/vendor/GigaAM-LICENSE']) assert.ok(bytes.files.some(file => file.path === name), name);
+  for (const name of ['scripts/audio-transcription.mjs', 'engine/worker.py', 'engine/uv.lock', 'engine/whisper/uv.lock', 'engine/whisper/pyproject.toml', 'scripts/whisper-artifacts.json', 'references/workflow.md', 'engine/vendor/GigaAM-LICENSE']) assert.ok(bytes.files.some(file => file.path === name), name);
   assert.ok(!bytes.files.some(file => /\.(?:ckpt|wav|m4a|exe|whl)$/u.test(file.path)));
   const upstream = JSON.parse(fs.readFileSync(path.join(providerRoot, 'engine/vendor/origin.json')));
   for (const [name, expected] of Object.entries(upstream.files)) assert.equal(digest(fs.readFileSync(path.join(providerRoot, 'engine/vendor/gigaam', name))), expected);
@@ -698,6 +736,62 @@ test('real official GigaAM processes >25 seconds through async production CLI an
   assert.match(fs.readFileSync(path.join(directory, 'transcript.txt'), 'utf8'), /[А-Яа-яЁё]{3}/u);
   assert.match(fs.readFileSync(path.join(directory, 'transcript.srt'), 'utf8'), / --> /u);
   fs.rmSync(root, {recursive: true});
+});
+
+test('native Whisper recognizes explicit English and auto-detects Russian and English without changing GigaAM', {
+  skip: !fixture && !process.env.CI, timeout: 240000,
+}, async t => {
+  assert.ok(fixture);
+  const root = temporary();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const original = path.join(root, 'example.wav');
+  prepareSpokenFixture(original);
+  const english = JSON.parse(fs.readFileSync(path.join(providerRoot, 'development/english-fixture.json'), 'utf8'));
+  const englishPath = path.join(providerRoot, 'development', english.localFile);
+  const bytes = fs.readFileSync(englishPath);
+  assert.equal(bytes.length, english.bytes);
+  assert.equal(digest(bytes), english.sha256);
+
+  async function transcribe(input, name, args) {
+    const job = path.join(root, name);
+    assert.equal((await run(['start', '--input', input, '--output-dir', job, ...args], {root: fixture.root})).state, 'queued');
+    let status;
+    const deadline = Date.now() + 100000;
+    do {
+      await sleep(250);
+      status = await run(['status', '--job-dir', job], {root: fixture.root});
+    } while (['queued', 'validating', 'loading', 'transcribing'].includes(status.state) && Date.now() < deadline);
+    assert.equal(status.state, 'completed', JSON.stringify(status));
+    assert.equal(status.model, whisper.model);
+    const output = JSON.parse(fs.readFileSync(path.join(job, 'transcript.json'), 'utf8'));
+    assert.equal(output.complete, true);
+    assert.equal(output.modelRevision, whisper.revision);
+    return output;
+  }
+
+  const explicit = await transcribe(englishPath, 'english', ['--language', 'en']);
+  assert.equal(explicit.language, 'en');
+  assert.match(explicit.segments.map(x => x.text).join(' '), /what your country can do for you/iu);
+  assert.ok(explicit.segments.every(x => !Object.hasOwn(x, 'detectedLanguage')));
+
+  // Place an actual speech pause between languages, so the streaming boundary
+  // can select a quiet cut and each spoken excerpt has its own evidence.
+  const mixed = path.join(root, 'mixed.wav');
+  const program = [
+    'import wave,sys',
+    'a=wave.open(sys.argv[1],"rb"); b=wave.open(sys.argv[2],"rb")',
+    'o=wave.open(sys.argv[3],"wb"); o.setparams(a.getparams())',
+    'o.writeframes(a.readframes(a.getnframes())+bytes(16000*2*12)+b.readframes(b.getnframes())); o.close()',
+  ].join('\n');
+  const built = spawnSync(pythonPath(fixture.root), ['-I', '-c', program, englishPath, original, mixed],
+    {encoding: 'utf8', shell: false, env: childEnvironment(fixture.root)});
+  assert.equal(built.status, 0, built.stderr);
+  const detected = await transcribe(mixed, 'mixed', ['--language', 'auto']);
+  assert.equal(detected.language, 'auto');
+  assert.ok(detected.segments.some(x => x.detectedLanguage === 'en' && /your country/iu.test(x.text)));
+  assert.ok(detected.segments.some(x => x.detectedLanguage === 'ru' && /[а-яё]{3}/iu.test(x.text)));
+  assert.ok(detected.durationSeconds > 30);
+  assert.equal((await run(['doctor'], {root: fixture.root})).model, 'v3_rnnt');
 });
 
 test('native source-original protocol decodes actual audio once with the prepared official model',

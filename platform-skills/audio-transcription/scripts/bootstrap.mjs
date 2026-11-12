@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import {createHash, randomUUID} from 'node:crypto';
 import {spawn, spawnSync} from 'node:child_process';
 import {Readable, Transform} from 'node:stream';
@@ -11,6 +12,7 @@ import {atomicJson, privateDirectory, readJson, stateDirectory} from './storage.
 
 export const providerRoot = fileURLToPath(new URL('../', import.meta.url));
 export const artifacts = JSON.parse(fs.readFileSync(new URL('artifacts.json', import.meta.url)));
+export const whisper = JSON.parse(fs.readFileSync(new URL('whisper-artifacts.json', import.meta.url)));
 export const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 export const platformKey = `${process.platform}-${process.arch}`;
 export const pythonPath = root => path.join(root, 'engine', '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
@@ -20,19 +22,37 @@ export async function fileDigest(file) {
   return hash.digest('hex');
 }
 
-export function installationPlan(root = stateDirectory()) {
+export function modelDirectory(root, model) {
+  if (model === artifacts.model) return root;
+  if (model === whisper.model) return path.join(root, whisper.model);
+  throw Error('AUDIO_MODEL_INVALID');
+}
+
+function engineSource(model) {
+  return model === whisper.model ? path.join(providerRoot, 'engine', 'whisper') : path.join(providerRoot, 'engine');
+}
+
+export function installationPlan(root = stateDirectory(), model = artifacts.model) {
+  modelDirectory(root, model); // Validate the identity before interpreting signed plan data.
+  const useWhisper = model === whisper.model;
   const uv = artifacts.uv[platformKey];
   // PyTorch discontinued current Intel macOS wheels. Do not silently substitute
   // an older model/runtime or claim untested binary compatibility on that CPU.
   if (!uv || platformKey === 'darwin-x64') throw Error('AUDIO_PLATFORM_UNSUPPORTED');
-  const lock = fs.readFileSync(path.join(providerRoot, 'engine', 'uv.lock'));
-  const project = fs.readFileSync(path.join(providerRoot, 'engine', 'pyproject.toml'));
+  // Whisper's hash-locked PyAV wheel for Apple Silicon requires macOS 14.
+  if (useWhisper && process.platform === 'darwin' && Number(os.release().split('.')[0]) < 23) {
+    throw Error('AUDIO_WHISPER_PLATFORM_UNSUPPORTED');
+  }
+  const lock = fs.readFileSync(path.join(engineSource(model), 'uv.lock'));
+  const project = fs.readFileSync(path.join(engineSource(model), 'pyproject.toml'));
   const material = {schemaVersion: 1, platform: platformKey, directory: path.resolve(root),
-    model: artifacts.model, pythonVersion: artifacts.pythonVersion, uvVersion: artifacts.uvVersion,
+    model, pythonVersion: artifacts.pythonVersion, uvVersion: artifacts.uvVersion,
     lockSha256: digest(lock), projectSha256: digest(project), uv,
-    models: artifacts.models, maximumDependencyDownloadBytes: 1536 * 1024 * 1024,
+    models: useWhisper ? whisper.models : artifacts.models, maximumDependencyDownloadBytes: 1536 * 1024 * 1024,
     requiredFreeBytes: 4 * 1024 ** 3,
-    sources: ['github.com/astral-sh/uv', 'github.com/astral-sh/python-build-standalone', 'pypi.org', 'files.pythonhosted.org', 'download.pytorch.org', 'cdn.chatwm.opensmodel.sberdevices.ru', 'trelio.ru'],
+    sources: ['github.com/astral-sh/uv', 'github.com/astral-sh/python-build-standalone', 'pypi.org', 'files.pythonhosted.org',
+      ...(useWhisper ? ['huggingface.co', 'us.aws.cdn.hf.co', 'cas-bridge.xethub.hf.co']
+        : ['download.pytorch.org', 'cdn.chatwm.opensmodel.sberdevices.ru', 'trelio.ru'])],
     localAudioOnly: true};
   return {...material, planHash: digest(JSON.stringify(material))};
 }
@@ -60,8 +80,8 @@ export function childEnvironment(root) {
   return clean;
 }
 
-export function ready(root) {
-  const plan = installationPlan(root);
+export function ready(root, model = artifacts.model) {
+  const plan = installationPlan(root, model);
   const receipt = readJson(path.join(root, 'installed.json'));
   // Adding a byte-identical transport must not invalidate an already completed
   // installation or force an assistant to reinstall a ready local decoder.
@@ -70,11 +90,11 @@ export function ready(root) {
   // bound. This accepts no prior-model/foreign installation and writes no
   // historical consent. A NEW setup still requires the complete current plan.
   const {planHash, ...material} = plan;
-  const previousHash = digest(JSON.stringify({...material,
+  const previousHash = model === artifacts.model ? digest(JSON.stringify({...material,
     models: material.models.map(({fallbackUrls, ...model}) => model),
-    sources: material.sources.filter(source => source !== 'trelio.ru')}));
-  return receipt?.model === plan.model && [planHash, previousHash].includes(receipt?.planHash)
-    && fs.existsSync(pythonPath(root)) && artifacts.models.every(model => {
+    sources: material.sources.filter(source => source !== 'trelio.ru')})) : null;
+  return receipt?.model === plan.model && (receipt?.planHash === planHash || previousHash !== null && receipt?.planHash === previousHash)
+    && fs.existsSync(pythonPath(root)) && plan.models.every(model => {
     const stat = fs.lstatSync(path.join(root, 'models', model.name), {throwIfNoEntry: false});
     return stat?.isFile() && !stat.isSymbolicLink() && stat.size === model.bytes;
   });
@@ -82,19 +102,21 @@ export function ready(root) {
 
 export async function downloadArtifact(artifact, target, {fetcher = fetch, retryDelays = [2000, 5000]} = {}) {
   const mirrors = artifact.fallbackUrls ?? [];
+  const pinnedWhisper = whisper.models.find(item => item.url === artifact.url
+    && item.bytes === artifact.bytes && item.sha256 === artifact.sha256);
   // This is a fixed public checkpoint mirror, never a model/env URL override
   // or general Trelio HTTP client. Validate the COMPLETE signed source list
   // before the first request; query strings/credentials/ports are not admitted.
   const mirrorUrl = `https://trelio.ru/media/model-artifacts/gigaam/${artifact.sha256}/v3_rnnt.ckpt`;
   if (!Array.isArray(mirrors) || mirrors.length > 1 || !/^[a-f0-9]{64}$/u.test(artifact.sha256)
-    || mirrors.some(url => url !== mirrorUrl)) throw Error('AUDIO_DOWNLOAD_ORIGIN_DENIED');
+    || pinnedWhisper && mirrors.length || mirrors.some(url => url !== mirrorUrl)) throw Error('AUDIO_DOWNLOAD_ORIGIN_DENIED');
   // Every origin, redirect, retry, backoff and body uses ONE original deadline.
   // Failover is a bounded read of the SAME size/hash, not another installation
   // attempt, a TLS bypass or permission to try different model bytes.
   const signal = AbortSignal.timeout(artifact.bytes > 50 * 1024 * 1024 ? 15 * 60 * 1000 : 120000);
   for (const url of [artifact.url, ...mirrors]) {
     for (let attempt = 0; ; attempt++) {
-      try { return await downloadOnce({...artifact, url}, target, fetcher, signal, mirrorUrl); }
+      try { return await downloadOnce({...artifact, url}, target, fetcher, signal, mirrorUrl, pinnedWhisper); }
       catch (error) {
         const transient = ['TypeError', 'TimeoutError', 'AbortError', 'AudioTransportError'].includes(error.name);
         if (signal.aborted || !transient && error.name !== 'AudioUnavailableError') throw error;
@@ -109,7 +131,21 @@ export async function downloadArtifact(artifact, target, {fetcher = fetch, retry
   }
 }
 
-async function downloadOnce(artifact, target, fetcher, signal, mirrorUrl) {
+function permittedArtifactOrigin(url, artifact, mirrorUrl, pinnedWhisper) {
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
+  if (pinnedWhisper) {
+    const cachePath = `/api/resolve-cache/models/Systran/faster-whisper-small/${whisper.revision}/${pinnedWhisper.name}`;
+    if (url.hostname === 'huggingface.co') return url.href === pinnedWhisper.url || url.pathname === cachePath;
+    // The large file is delivered by Hugging Face's signed Xet redirects.
+    // No redirect from the Whisper route can land on a GigaAM or uv origin.
+    return pinnedWhisper.name === 'model.bin'
+      && ['us.aws.cdn.hf.co', 'cas-bridge.xethub.hf.co'].includes(url.hostname);
+  }
+  return ['github.com', 'release-assets.githubusercontent.com', 'cdn.chatwm.opensmodel.sberdevices.ru'].includes(url.hostname)
+    || artifact.fallbackUrls?.includes(mirrorUrl) && url.href === mirrorUrl;
+}
+
+async function downloadOnce(artifact, target, fetcher, signal, mirrorUrl, pinnedWhisper) {
   const existing = fs.lstatSync(target, {throwIfNoEntry: false});
   if (existing?.isSymbolicLink()) throw Error('AUDIO_DOWNLOAD_PATH_INVALID');
   if (existing?.isFile() && existing.size === artifact.bytes && await fileDigest(target) === artifact.sha256) {
@@ -124,9 +160,7 @@ async function downloadOnce(artifact, target, fetcher, signal, mirrorUrl) {
   let response;
   for (let redirects = 0; redirects < 6; redirects++) {
     signal.throwIfAborted();
-    if (url.protocol !== 'https:' || url.username || url.password || url.port ||
-        (!['github.com', 'release-assets.githubusercontent.com', 'cdn.chatwm.opensmodel.sberdevices.ru'].includes(url.hostname)
-          && !(artifact.fallbackUrls?.includes(mirrorUrl) && url.href === mirrorUrl))) throw Error('AUDIO_DOWNLOAD_ORIGIN_DENIED');
+    if (!permittedArtifactOrigin(url, artifact, mirrorUrl, pinnedWhisper)) throw Error('AUDIO_DOWNLOAD_ORIGIN_DENIED');
     response = await fetcher(url, {redirect: 'manual', headers: offset ? {Range: `bytes=${offset}-`} : {},
       signal});
     if (![301, 302, 303, 307, 308].includes(response.status)) break;
@@ -210,14 +244,14 @@ export function unpackUv(bytes, format) {
  * exclusive dispatch precedes spawn, so simultaneous intake reads cannot
  * launch several installers and a lost start cannot silently be replayed. */
 export function ensureSetup(root = stateDirectory(), options = {}) {
-  return startSetup(installationPlan(root).planHash, root, {...options, automatic: true});
+  return startSetup(installationPlan(root, options.model).planHash, root, {...options, automatic: true});
 }
 
-export function startSetup(approvedHash, root = stateDirectory(), {automatic = false, launcher = spawn} = {}) {
-  const plan = installationPlan(root);
+export function startSetup(approvedHash, root = stateDirectory(), {automatic = false, launcher = spawn, model = artifacts.model} = {}) {
+  const plan = installationPlan(root, model);
   if (approvedHash !== plan.planHash) throw Error('AUDIO_DOWNLOAD_CONSENT_REQUIRED');
   privateDirectory(root);
-  if (ready(root)) return {ok: true, state: 'ready', model: artifacts.model};
+  if (ready(root, model)) return {ok: true, state: 'ready', model};
   // Serialize the parent-side claim/retry as well as the existing worker OS
   // lock. An orphan claim is unknown, never reclaimed merely by age/PID; this
   // prevents a second retry from renaming a newly created dispatch as stale.
@@ -279,7 +313,7 @@ function dispatchSetup(plan, root, {automatic, launcher}) {
   atomicJson(path.join(root, 'setup.json'), {state: 'installing', stage: 'starting', pid: null});
   let worker;
   try {
-    worker = launcher(process.execPath, [fileURLToPath(new URL('audio-transcription.mjs', import.meta.url)), '__setup', plan.planHash],
+    worker = launcher(process.execPath, [fileURLToPath(new URL('audio-transcription.mjs', import.meta.url)), '__setup', plan.planHash, ...(plan.model === whisper.model ? [plan.model] : [])],
       {detached: true, stdio: 'ignore', shell: false, windowsHide: true, env: {...childEnvironment(root), TRELIO_AUDIO_SETUP_ROOT: root}});
   } catch {
     atomicJson(path.join(root, 'setup.json'), {state: 'failed', stage: 'starting', errorCode: 'AUDIO_SETUP_START_FAILED'});
@@ -289,7 +323,7 @@ function dispatchSetup(plan, root, {automatic, launcher}) {
   worker.on('error', () => atomicJson(path.join(root, 'setup.json'),
     {state: 'failed', stage: 'starting', errorCode: 'AUDIO_SETUP_START_FAILED'}));
   worker.unref();
-  return {ok: true, state: 'installing', nextCommand: ['doctor']};
+  return {ok: true, state: 'installing', nextCommand: ['doctor', ...(plan.model === whisper.model ? ['--model', plan.model] : [])]};
 }
 
 function isProcessAlive(pid) {
@@ -297,8 +331,8 @@ function isProcessAlive(pid) {
   try {process.kill(pid, 0); return true;} catch {return false;}
 }
 
-export async function performSetup(approvedHash, root, {installerFailure = null} = {}) {
-  const plan = installationPlan(root);
+export async function performSetup(approvedHash, root, {installerFailure = null, model = artifacts.model} = {}) {
+  const plan = installationPlan(root, model);
   const consent = readJson(path.join(root, 'download-consent.json'));
   const request = readJson(path.join(root, 'setup-dispatch.json'));
   // Legacy explicit receipts remain valid. New automatic preparation instead
@@ -332,10 +366,10 @@ export async function performSetup(approvedHash, root, {installerFailure = null}
     const temporary = executable + '.tmp';
     fs.writeFileSync(temporary, unpackUv(fs.readFileSync(archive), plan.uv.format), {mode: 0o700});
     fs.renameSync(temporary, executable);
-    for (const name of ['pyproject.toml', 'uv.lock']) fs.copyFileSync(path.join(providerRoot, 'engine', name), path.join(root, 'engine', name));
+    for (const name of ['pyproject.toml', 'uv.lock']) fs.copyFileSync(path.join(engineSource(model), name), path.join(root, 'engine', name));
     state('runtime-install');
     const installed = spawnSync(executable, ['sync', '--frozen', '--no-dev', '--no-install-project', '--managed-python', '--python', artifacts.pythonVersion,
-      '--project', path.join(root, 'engine')],
+      ...(model === whisper.model ? ['--no-build'] : []), '--project', path.join(root, 'engine')],
       {shell: false, windowsHide: true, env: childEnvironment(root), stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 1024 * 1024, timeout: 15 * 60 * 1000});
     if (installed.error || installed.status !== 0 || !fs.existsSync(pythonPath(root))) {
       // Only a provider-owned synthetic CI harness can inject this callback.

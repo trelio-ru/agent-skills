@@ -4,7 +4,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import {setTimeout as delay} from 'node:timers/promises';
-import {installationPlan, ready} from '../scripts/bootstrap.mjs';
+import {installationPlan, ready, whisper} from '../scripts/bootstrap.mjs';
 import {run} from '../scripts/audio-transcription.mjs';
 import {processSourceOriginal, sourceFileFingerprint} from '../scripts/source-original.mjs';
 import {atomicJson, privateDirectory} from '../scripts/storage.mjs';
@@ -61,6 +61,27 @@ if (process.argv[2] === 'package') {
     process.stderr.write(JSON.stringify(JSON.parse(fs.readFileSync(path.join(root, 'setup.json')))) + '\n');
     throw Error('audio_ci_setup_failed');
   }
+  // Also exercise the ordinary Whisper start on a cold device. Its installer
+  // has a distinct claim and must leave the ready GigaAM receipt untouched.
+  const english = JSON.parse(fs.readFileSync(path.join(provider, 'development', 'english-fixture.json')));
+  const englishPath = path.join(provider, 'development', english.localFile);
+  const englishOutput = path.join(sourceRoot, 'whisper-setup');
+  const whisperDoctor = ['doctor', '--model', whisper.model];
+  assert.equal((await run(whisperDoctor, {root})).ready, false);
+  const initial = await run(['start', '--input', englishPath, '--output-dir', englishOutput, '--language', 'en'], {root});
+  assert.equal(initial.state, 'installing');
+  assert.deepEqual(fs.readdirSync(englishOutput), []);
+  const whisperDeadline = Date.now() + 31 * 60 * 1000;
+  for (;;) {
+    const status = await run(whisperDoctor, {root});
+    if (status.ready) break;
+    if (status.setup?.state === 'failed' || Date.now() >= whisperDeadline) {
+      throw Error('audio_ci_whisper_setup_failed: ' + JSON.stringify(status.setup));
+    }
+    await delay(1000);
+  }
+  assert.equal(ready(root), true);
+  assert.deepEqual(fs.readFileSync(path.join(root, 'setup-dispatch.json')), dispatch);
   atomicJson(path.join(provider, '.ci-state.json'), {root});
-  process.stdout.write('Audio transcription real CPU environment and official model ready.\n');
+  process.stdout.write('Audio transcription real CPU environments and both pinned models ready.\n');
 }

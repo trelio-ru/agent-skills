@@ -1,0 +1,17 @@
+[project]
+name = "trelio-audio-transcription-whisper"
+version = "1.0.0"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "faster-whisper==1.2.1", "ctranslate2==4.6.0",
+  "numpy==2.2.6", "imageio-ffmpeg==0.6.0",
+  # Preserve Linux glibc 2.28 wheel compatibility on Python 3.11.
+  "av==16.0.1", "onnxruntime==1.23.2",
+]
+
+[tool.uv]
+environments = [
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'win32' and (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]

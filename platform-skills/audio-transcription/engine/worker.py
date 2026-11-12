@@ -23,7 +23,9 @@ import uuid
 
 RATE = 16000
 ENGINE = Path(__file__).resolve().parent
-ARTIFACTS = json.loads((ENGINE.parent / "scripts" / "artifacts.json").read_text(encoding="utf-8"))
+MANIFESTS = ENGINE.parent / "scripts"
+ARTIFACTS = json.loads((MANIFESTS / "artifacts.json").read_text(encoding="utf-8"))
+WHISPER = json.loads((MANIFESTS / "whisper-artifacts.json").read_text(encoding="utf-8"))
 
 
 class Cancelled(Exception):
@@ -136,11 +138,9 @@ def inference_threads():
     return max(1, min(4, available - 1))
 
 
-def load_model(state_root, cancelled):
-    # A PyTorch checkpoint contains pickle. Check the exact published bytes
-    # before torch.load; never accept a user-selected checkpoint or remote code.
-    for item in ARTIFACTS["models"]:
-        file = state_root / "models" / item["name"]
+def verify_model_files(directory, artifacts, cancelled):
+    for item in artifacts["models"]:
+        file = directory / item["name"]
         if file.is_symlink() or not file.is_file() or file.stat().st_size != item["bytes"]:
             raise RuntimeError("AUDIO_MODEL_INTEGRITY_FAILED")
         digest = hashlib.sha256()
@@ -151,6 +151,12 @@ def load_model(state_root, cancelled):
                 digest.update(chunk)
         if digest.hexdigest() != item["sha256"]:
             raise RuntimeError("AUDIO_MODEL_INTEGRITY_FAILED")
+
+
+def load_model(state_root, cancelled):
+    # A PyTorch checkpoint contains pickle. Check the exact published bytes
+    # before torch.load; never accept a user-selected checkpoint or remote code.
+    verify_model_files(state_root / "models", ARTIFACTS, cancelled)
     sys.path.insert(0, str(ENGINE / "vendor"))
     import torch
     from gigaam.model import GigaAMASR
@@ -180,6 +186,45 @@ def transcribe_pcm(model, torch, pcm):
     return result[0][0]
 
 
+def whisper_decoder(state_root, cancelled, language):
+    from faster_whisper import WhisperModel
+    import numpy as np
+
+    directory = state_root / "models"
+    # Supplying the signed directory and its tokenizer prevents library
+    # downloads during inference. Only this model's own installer uses HTTPS.
+    # CTranslate2/faster-whisper can read optional config files when present.
+    # Refuse an unexpected file instead of letting it alter the signed decoder.
+    if directory.is_symlink() or {item.name for item in directory.iterdir()} != {
+        item["name"] for item in WHISPER["models"]
+    }:
+        raise RuntimeError("AUDIO_MODEL_INTEGRITY_FAILED")
+    verify_model_files(directory, WHISPER, cancelled)
+    model = WhisperModel(str(directory), device="cpu", compute_type="int8",
+                         cpu_threads=inference_threads(), local_files_only=True)
+    if language != "auto" and language not in model.supported_languages:
+        raise RuntimeError("AUDIO_LANGUAGE_UNSUPPORTED")
+
+    def decode(pcm):
+        if not any(pcm):
+            return {"text": ""}
+        audio = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
+        segments, info = model.transcribe(
+            audio, language=None if language == "auto" else language,
+            task="transcribe", multilingual=language == "auto",
+            vad_filter=True, condition_on_previous_text=False,
+        )
+        text = "".join(segment.text for segment in segments).strip()
+        result = {"text": text}
+        # Each durable PCM chunk has its own language estimate. Ignore VAD
+        # silence and forced-language probabilities when reporting evidence.
+        if text and language == "auto":
+            result.update(detectedLanguage=info.language, languageProbability=info.language_probability)
+        return result
+
+    return decode
+
+
 def write_outputs(directory, state):
     # These are raw ASR segments, not diarization or precise word alignment.
     # Empty results stay in JSON; omitting them from TXT/SRT changes no audio.
@@ -195,21 +240,29 @@ def write_outputs(directory, state):
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(body)
         os.replace(temporary, directory / name)
-    atomic_json(directory / "transcript.json", {"model": state["model"], "complete": state["state"] == "completed",
-                "sampleRate": RATE, "durationSeconds": state["processedSamples"] / RATE, "segments": segments})
+    output = {"model": state["model"], "complete": state["state"] == "completed",
+              "sampleRate": RATE, "durationSeconds": state["processedSamples"] / RATE, "segments": segments}
+    if state["model"] == WHISPER["model"]:
+        output.update(modelRevision=state["modelRevision"], language=state["language"])
+    atomic_json(directory / "transcript.json", output)
 
 
-def process_job(directory, state_root, run_id, resume=False, model_loader=load_model, infer=transcribe_pcm):
+def process_job(directory, state_root, run_id, resume=False, model_loader=load_model, infer=transcribe_pcm,
+                *, model_name=ARTIFACTS["model"]):
     with job_lock(directory):
         job_file = directory / "job.json"
         state = json.loads(job_file.read_text(encoding="utf-8"))
         if state["state"] == "completed":
             return
-        # A runtime upgrade must never append RNNT words to durable E2E
-        # segments. Check before changing job state, opening the source or
-        # loading weights, and preserve the old job for its original runtime.
-        if state.get("model") != ARTIFACTS["model"]:
+        # Resume is bound to the persisted model and, for Whisper, its exact
+        # weight revision and original language choice. Check before source I/O.
+        use_whisper = model_name == WHISPER["model"]
+        if state.get("model") != model_name or model_name not in (ARTIFACTS["model"], WHISPER["model"]):
             raise RuntimeError("AUDIO_JOB_MODEL_MISMATCH")
+        if use_whisper and state.get("modelRevision") != WHISPER["revision"]:
+            raise RuntimeError("AUDIO_JOB_MODEL_MISMATCH")
+        if use_whisper and not re.fullmatch(r"auto|[a-z]{2,3}", state.get("language") or ""):
+            raise RuntimeError("AUDIO_LANGUAGE_INVALID")
         if state["segments"] and not resume:
             return
         # Cancellation is fenced by run identity. Ignore an older request on
@@ -250,7 +303,14 @@ def process_job(directory, state_root, run_id, resume=False, model_loader=load_m
                 raise RuntimeError("AUDIO_SOURCE_CHANGED")
             state.update(sourceSha256=fingerprint, state="loading")
             save()
-            model, torch = model_loader(state_root, cancelled)
+            if use_whisper:
+                decode = whisper_decoder(state_root, cancelled, state["language"])
+            else:
+                model, torch = model_loader(state_root, cancelled)
+
+                def decode(pcm):
+                    return {"text": infer(model, torch, pcm)}
+
             state["state"] = "transcribing"
             save()
             decoder = subprocess.Popen(ffmpeg_arguments(ffmpeg_executable(), source), shell=False,
@@ -284,8 +344,9 @@ def process_job(directory, state_root, run_id, resume=False, model_loader=load_m
                     raise RuntimeError("AUDIO_SOURCE_CHANGED")
                 if cancelled():
                     raise Cancelled()
-                text = infer(model, torch, pcm)
-                state["segments"].append({"index": len(state["segments"]), "startSample": offset, "endSample": end, "text": text})
+                recognized = decode(pcm)
+                state["segments"].append({"index": len(state["segments"]), "startSample": offset,
+                                          "endSample": end, **recognized})
                 state["processedSamples"] = end
                 state["processingSeconds"] = state.get("processingSeconds", 0) + time.monotonic() - started
                 started = time.monotonic()
@@ -333,10 +394,11 @@ if __name__ == "__main__":
     parser.add_argument("--job-dir", type=Path, required=True)
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--model", choices=(ARTIFACTS["model"], WHISPER["model"]), default=ARTIFACTS["model"])
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     try:
-        process_job(args.job_dir, args.state_dir, args.run_id, args.resume)
+        process_job(args.job_dir, args.state_dir, args.run_id, args.resume, model_name=args.model)
     except Exception:
         # An occupied OS lock or invalid private job cannot overwrite another
         # worker's state. The caller observes the original durable status.
