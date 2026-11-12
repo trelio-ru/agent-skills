@@ -57,6 +57,7 @@ Polling наблюдает прежнюю попытку. Потерянный �
 Whisper готовится через `doctor/ensure/setup --model whisper-small`.
 В закрытой папке `whisper-small` свой кеш, receipts и lock. Используются
 только закреплённые wheels и примерно 486 МБ весов Hugging Face по exact revision.
+Setup проверяет импорт Whisper в том же закрытом окружении до статуса ready.
 Разрешены лишь отдельные cache/Xet redirects, без зеркала.
 
 Официальный `v3_rnnt.ckpt` занимает 446 390 032 байта (около 426 МиБ).

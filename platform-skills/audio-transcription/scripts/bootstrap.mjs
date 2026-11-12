@@ -377,6 +377,13 @@ export async function performSetup(approvedHash, root, {installerFailure = null,
       installerFailure?.(installed);
       throw Error('AUDIO_ENGINE_INSTALL_FAILED');
     }
+    if (model === whisper.model) {
+      // A wheel can install successfully while its native imports fail on the
+      // current OS. Check the real worker environment before promising ready.
+      const probe = spawnSync(pythonPath(root), ['-I', '-c', 'from faster_whisper import WhisperModel'],
+        {shell: false, windowsHide: true, env: childEnvironment(root), stdio: 'ignore', timeout: 60000});
+      if (probe.error || probe.status !== 0) throw Error('AUDIO_WHISPER_RUNTIME_IMPORT_FAILED');
+    }
     state('model-download');
     for (const model of plan.models) await downloadArtifact(model, path.join(root, 'models', model.name));
     atomicJson(path.join(root, 'installed.json'), {planHash: plan.planHash, model: plan.model, installedAt: new Date().toISOString()});
