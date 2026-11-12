@@ -153,6 +153,60 @@ test('MAX repeats get distinct album refs only from the full ordered album with 
   assert.equal((await read(page)).messages[0].attachments.filter(attachment=>attachment.downloadRef).length,1);
 });
 
+test('MAX recovers the same photo ref after a passive reopen replaces mixed CDN grants', async () => {
+  const { page, log } = fixture(bubble('same','middle','same'));
+  const { messages } = await read(page);
+  const attachmentRef = messages[0].attachments[2].downloadRef;
+  const photos = page.document.querySelectorAll('button.tile img');
+  // The provider can rotate the opaque resource parameter as well as its
+  // expiry. Model the two response URLs returning the same thumbnail bytes.
+  const get = page.context().request.get;
+  page.context().request.get = (url, config) => get(url.replace('synthetic-rotated','synthetic-same'), config);
+  photos[2].setAttribute('src', source('rotated').replace('expires=123','expires=789'));
+  let refreshes = 0;
+  const resolved = await findPhotoDownloadTarget(page, { ...options(), attachmentRef }, async () => {
+    refreshes++;
+    for (const index of [0,2]) photos[index].setAttribute('src',source('rotated').replace('expires=123','expires=789'));
+  });
+  assert.equal(refreshes,1);
+  assert.equal(resolved.marker,'0:3');
+  assert.equal(resolved.downloadRef,attachmentRef);
+  assert.deepEqual(log,[]);
+});
+
+test('MAX keeps different originals with identical thumbnails ambiguous after one exact reopen', async () => {
+  const { page, log } = fixture(bubble('same','middle','same'));
+  const { messages } = await read(page);
+  const attachmentRef = messages[0].attachments[2].downloadRef;
+  page.document.querySelectorAll('button.tile img')[2].setAttribute('src',
+    source('same').replace('expires=123','expires=789'));
+  let refreshes = 0;
+  await assert.rejects(findPhotoDownloadTarget(page,{...options(),attachmentRef},async()=>{refreshes++;}),
+    {code:'MAX_PHOTO_REFERENCE_INVALID'});
+  assert.equal(refreshes,1);
+  await assert.rejects(findPhotoDownloadTarget(page,{...options(),memberId:'44444444-4444-4444-8444-444444444444',attachmentRef},
+    async()=>{assert.fail('A different account must not cause a reopen');}),{code:'MAX_PHOTO_REFERENCE_INVALID'});
+  assert.deepEqual(log,[]);
+});
+
+test('MAX read restores duplicate photo refs from a complete fresh view and retains the neighbor', async () => {
+  const { page } = fixture(bubble('same','same')+bubble('other'));
+  const images = page.document.querySelectorAll('button.tile img');
+  images[1].setAttribute('src', source('same').replace('expires=123','expires=789'));
+  const opts = {...options(),limit:10};
+  const initial = await visibleMessages(page,10);
+  let refreshes = 0;
+  const messages = await readPhotoReferences(page,opts,initial,async()=>{
+    refreshes++;
+    images[1].setAttribute('src',source('same'));
+    return visibleMessages(page,10);
+  });
+  const refs = messages.flatMap(message=>message.attachments.map(attachment=>attachment.downloadRef));
+  assert.equal(refreshes,1);
+  assert.equal(refs.filter(Boolean).length,3);
+  assert.equal(new Set(refs).size,3);
+});
+
 test('MAX read hydrates exact lazy album tiles and retains the independently verified neighboring photo', async () => {
   const html='<div class="messageWrapper">'+photo('visible')
     +'<button class="tile"><div class="image-placeholder"></div></button><span>Album</span></div>'

@@ -3,7 +3,7 @@
   "release": {
     "skillId": "max-web",
     "version": "2.13.4",
-    "summary": "Добавлена встроенная расшифровка голосовых сообщений в MAX Web",
+    "summary": "Встроенная расшифровка голосовых и восстановление ссылок альбома при ротации CDN в MAX Web",
     "routingSummary": "Read MAX chats, transcribe voice messages in MAX, and manage messages, files and Goskey requests."
   },
   "connection": {

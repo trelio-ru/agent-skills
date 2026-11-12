@@ -2787,6 +2787,7 @@ const photoSourceDigest = async (page, source, timeoutMs = 60_000) => {
 // and an unmounted photo tile still participates in ambiguity checks.
 const photoTileCount = Symbol('photoTileCount');
 const photoOriginalIndex = Symbol('photoOriginalIndex');
+const photoSourceSplit = Symbol('photoSourceSplit');
 
 const hydratePhotoTiles = async (page, options, messages, limit) => {
   const pending = await page.evaluate((indexes) => {
@@ -2944,13 +2945,17 @@ const addPhotoDownloadReferences = async (page, options, messages) => {
       // copies of one provider source can be distinguished by occurrence in
       // an otherwise fully verified ordered album. The digest sequence and
       // message identity invalidate the ref if the album changes.
-      if (!copies.get(candidate.contentDigest).every(copy => copy.source === candidate.source)) continue;
+      const conflictingSources = !copies.get(candidate.contentDigest).every(copy => copy.source === candidate.source);
+      if (conflictingSources) message[photoSourceSplit] = true;
       const ref = `max-photo/v2.${sha256(JSON.stringify(['max-photo/v2', candidate.downloadRef, contents, index]))}`;
-      albumCandidates.push({ ...candidate, downloadRef: ref, eligible: false });
+      // Keep the rejected hash in memory so download can distinguish this
+      // exact recovery case from a genuinely missing or edited attachment.
+      // Neither this hash nor the signed sources are projected as a ref.
+      albumCandidates.push({ ...candidate, downloadRef: ref, eligible: false, conflictingSources });
     }
   }
   for (const matches of Map.groupBy(albumCandidates, candidate => candidate.downloadRef).values()) {
-    if (matches.length !== 1) continue;
+    if (matches.length !== 1 || matches[0].conflictingSources) continue;
     const [candidate] = matches;
     candidate.eligible = true;
     if (!candidate.attachment.downloadRef) {
@@ -2962,7 +2967,7 @@ const addPhotoDownloadReferences = async (page, options, messages) => {
   return candidates;
 };
 
-const readPhotoReferences = async (page, options, messages) => {
+const collectPhotoReferences = async (page, options, messages) => {
   await addPhotoDownloadReferences(page, options, messages);
   const hydrated = await hydratePhotoTiles(page, options, messages, options.limit);
   if (!hydrated) return messages;
@@ -2974,9 +2979,30 @@ const readPhotoReferences = async (page, options, messages) => {
     const fresh = after.get(message.index);
     if (fresh?.length !== 1 || fresh[0].messageKey !== message.messageKey
       || fresh[0][photoTileCount] !== message[photoTileCount]) return message;
+    message[photoSourceSplit] ||= fresh[0][photoSourceSplit];
     const references = entry => entry.attachments.filter(attachment => attachment.downloadRef).length;
     return references(fresh[0]) > references(message) ? fresh[0] : message;
   });
+};
+
+const readPhotoReferences = async (page, options, messages, refresh) => {
+  const initial = await collectPhotoReferences(page, options, messages);
+  if (!refresh || !initial.some(message => message[photoSourceSplit])) return initial;
+  try {
+    const refreshed = await collectPhotoReferences(page, options, await refresh());
+    const refs = snapshot => new Set(snapshot.flatMap(message =>
+      message.attachments.flatMap(attachment => attachment.downloadRef ? [attachment.downloadRef] : [])));
+    const before = refs(initial);
+    const after = refs(refreshed);
+    // Use a whole fresh snapshot only if it restores missing refs and retains
+    // every earlier verified ref. Mixing slots across page loads could attach
+    // a ref to a different same-minute bubble or erase a verified neighbor.
+    if (after.size > before.size && [...before].every(ref => after.has(ref))) return refreshed;
+  } catch {
+    // The first passive read is still valid. Keep its partial result and
+    // structured unavailable flags when a fresh observation cannot finish.
+  }
+  return initial;
 };
 
 const bindPhotoTile = async (page, options, selected) => {
@@ -3001,12 +3027,15 @@ const bindPhotoTile = async (page, options, selected) => {
   }
 };
 
-const findPhotoDownloadTarget = async (page, options) => {
+const findPhotoDownloadTarget = async (page, options, refresh) => {
   let snapshot = await visibleMessages(page, 100);
   const matchesRef = row => row.downloadRef === options.attachmentRef && row.eligible;
+  let sawConflictingSources = false;
   // Retry selection only while no viewer or download has been started.
   for (let pass = 0; snapshot && pass < 3; pass += 1) {
-    const matches = (await addPhotoDownloadReferences(page, options, snapshot)).filter(matchesRef);
+    const candidates = await addPhotoDownloadReferences(page, options, snapshot);
+    const matches = candidates.filter(matchesRef);
+    sawConflictingSources ||= candidates.some(row => row.downloadRef === options.attachmentRef && row.conflictingSources);
     if (matches.length === 1) {
       const target = await bindPhotoTile(page, options, matches[0]);
       if (target) return target;
@@ -3014,6 +3043,13 @@ const findPhotoDownloadTarget = async (page, options) => {
     } else {
       snapshot = await hydratePhotoTiles(page, options, snapshot, 100);
     }
+  }
+  if (refresh && sawConflictingSources) {
+    // MAX can load duplicate tiles under different CDN grants in one page.
+    // An exact reopen gives the provider a fresh view. Re-run the full proof
+    // with the original ref and leave the viewer and download untouched.
+    await refresh();
+    return findPhotoDownloadTarget(page, options);
   }
   throw new MaxRuntimeError("MAX_PHOTO_REFERENCE_INVALID",
     "The MAX photo reference is stale, absent or ambiguous. Read the exact chat again; do not select by position.");
@@ -5168,7 +5204,12 @@ const readChatMessages = async (page, options) => {
   // reads alone expose photo lookup handles, with no new processing authority.
   if (options.command === "read" && chatReference?.url) {
     const photoOptions = { ...options, chat: chatReference.url };
-    return { opened, chatReference, loadedPages, messages: await readPhotoReferences(page, photoOptions, messages) };
+    const refresh = async () => {
+      await openChat(page, photoOptions);
+      await loadHistoryPages(page, photoOptions.pages, photoOptions.timeoutMs);
+      return visibleMessages(page, photoOptions.limit, referenceOptions);
+    };
+    return { opened, chatReference, loadedPages, messages: await readPhotoReferences(page, photoOptions, messages, refresh) };
   }
   return { opened, chatReference, loadedPages, messages };
 };
@@ -5802,8 +5843,8 @@ const installAttachmentTransfer = async (page, { output, timeoutMs, onPending = 
   };
 };
 
-const downloadPhotoAttachment = async (page, options) => {
-  const target = await findPhotoDownloadTarget(page, options);
+const downloadPhotoAttachment = async (page, options, refresh) => {
+  const target = await findPhotoDownloadTarget(page, options, refresh);
   let transfer;
   let timer;
   try {
@@ -6041,7 +6082,12 @@ const transcribeSelectedVoice = async (page, options) => {
 const downloadSelectedAttachment = async (page, options) => {
   await openChat(page, options);
   await loadHistoryPages(page, options.pages, options.timeoutMs);
-  if (options.attachmentRef) return downloadPhotoAttachment(page, options);
+  if (options.attachmentRef) {
+    return downloadPhotoAttachment(page, options, async () => {
+      await openChat(page, options);
+      await loadHistoryPages(page, options.pages, options.timeoutMs);
+    });
+  }
   const target = await findMessageTarget(page, options);
   const attachments = target.locator.locator(
     'a[download], button[aria-label*="скач" i], button[aria-label*="download" i], [role="button"][aria-label*="скач" i], [role="button"][aria-label*="download" i], button[title*="скач" i], button[title*="download" i]',
