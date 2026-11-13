@@ -82,13 +82,14 @@ test('semantic action resolution uses new geometry and refuses duplicate labels 
  * protocol. Commits really alter the fake schedule before a reply can be lost;
  * this exercises recovery decisions rather than matching implementation text.
  */
-function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = false, fieldMismatch = false, existing = false, hidePersisted = false } = {}) {
+function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = false, fieldMismatch = false,
+  existing = false, hidePersisted = false, visibleAccount = 'Synthetic account' } = {}) {
   let page = 'day', focus, saved = existing, deleted = false, selected;
   let saveCalls = 0, deleteCalls = 0, lastControls = [];
   const values = { 'Основной часовой пояс': 'Europe/Moscow', 'Начало мероприятия': 'Europe/Moscow',
     'Периодичность': recurring ? 'Каждый день' : 'Не повторяется', 'Календарь': target.calendar, 'Статус': 'Занят/занята', 'Гости': '' };
   const c = (role, label, extras = {}) => ({ role, label, ...extras });
-  const account = c('link', 'Аккаунт Google: Synthetic account');
+  const account = c('link', 'Аккаунт Google: '+visibleAccount);
   const controls = () => [account, c('checkbox', target.calendar, { checked: true }), ...({
     day: [c('button', 'Настройки'), c('button', 'Создать'), ...(saved ? [c('button', target.title)] : [])],
     settingsMenu: [c('menuitem', 'Настройки'), c('menuitem', 'Корзина')],
@@ -156,6 +157,22 @@ test('real recipe commits once and reloads the exact event; a lost Save reply st
   await assert.rejects(executeWorkflow('create-event', spec, lost.call.bind(lost)), error =>
     error.code === 'CALENDAR_ACTION_UNKNOWN' && error.outcome === 'unknown');
   assert.equal(lost.saves, 1); assert.equal(lost.saved, true, 'the mutation happened even though the reply was lost');
+});
+test('an unattended recipe requires one exact visible address before even opening the editor', async () => {
+  for(const visibleAccount of ['Synthetic account','(other@example.test)','(notowner@example.test)',
+    'Display name owner@example.test', '(owner@example.test) no final address',
+    '(owner@example.test) (other@example.test)', '(other@example.test) (owner@example.test)']){
+    const ui=syntheticCalendar({visibleAccount});
+    await assert.rejects(executeWorkflow('create-event',target,async(operation,args)=>{
+      assert.ok(['status','read-text','navigate'].includes(operation),'mismatched account must remain read-only');
+      return ui.call(operation,args);
+    },{expectedAccount:'owner@example.test',sleep:async()=>{}}),{code:'CALENDAR_ACCOUNT_MISMATCH'});
+    assert.equal(ui.saves,0);
+  }
+  const ui=syntheticCalendar({visibleAccount:'Synthetic account (OWNER@example.test)'});
+  const result=await executeWorkflow('create-event',target,ui.call.bind(ui),{expectedAccount:'owner@example.test'});
+  assert.equal(result.action,'created');
+  assert.equal(ui.saves,1);
 });
 test('a changed accepted form value and recurring scope stop before Save', async () => {
   for (const options of [{ fieldMismatch: true }, { recurring: true }]) {

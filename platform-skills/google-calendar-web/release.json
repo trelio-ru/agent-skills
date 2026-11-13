@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "google-calendar-web",
-    "version": "0.1.1",
-    "summary": "Автозакрытие окна после подтверждённого входа в Google Календарь с защищённым сохранением сессии",
+    "version": "0.1.2",
+    "summary": "Цифровые ассистенты могут работать с Google Календарём через отдельную защищённую сессию и проверяемые сценарии",
     "routingSummary": "Read Google Calendar schedules and manage events through the managed browser without the Google Calendar API."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.1.1",
+    "version": "0.1.2",
     "minimumHostVersion": "3.32.0",
     "entrypoint": {
       "path": "trelio-google-calendar.mjs",
@@ -42,6 +42,16 @@
       {
         "source": "scripts/calendar-workflows.mjs",
         "path": "calendar-workflows.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/trelio-assistant-execution.json",
+        "path": "trelio-assistant-execution.json",
+        "mode": 420
+      },
+      {
+        "source": "scripts/trelio-secret-setup.json",
+        "path": "trelio-secret-setup.json",
         "mode": 420
       },
       {

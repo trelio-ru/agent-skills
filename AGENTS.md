@@ -368,6 +368,10 @@ private fieldCheckPolicy comparisons, не значения полей/DOM/saved
 не читает поля входа и не снимает gate при неизвестной странице или challenge.
 Shared host отключает browser-level sign-in. Общий browser recovery и unknown-write
 read-back сохраняются; live события проверяются только в разрешённом scope.
+Task-политика Google Календаря допускает чтение и проверяемые create/move
+recipes. Delete, координатный ввод, disconnect и обычный setup закрыты.
+Human login открывается только из signed accountSetup для точного уже
+созданного managed аккаунта; штатный UI read-back отдельно подтверждает вход.
 GigaChat следует [контракту](platform-skills/gigachat/SKILL.md): instruction-only
 browser tool, скрытая вкладка и уточнения в одной беседе. Наличие «Войти» не
 означает обязательность входа для публичного вопроса; доступность режима,

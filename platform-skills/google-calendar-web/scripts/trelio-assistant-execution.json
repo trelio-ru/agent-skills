@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "taskCommands": [
+    ["commands"], ["guides"], ["doctor"], ["status"], ["close"],
+    ["navigate"], ["read-text"], ["screenshot"],
+    ["list-calendars"], ["read-day"], ["find-events"], ["free-slots"],
+    ["create-verified-event"], ["move-verified-event"]
+  ]
+}

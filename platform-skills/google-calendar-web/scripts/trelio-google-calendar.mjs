@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { executeWorkflow, parseWorkflowSpec, workflowCommands, workflowWrites, WorkflowError, fieldCheckPolicy } from './calendar-workflows.mjs';
 
-export const SKILL_VERSION = '0.1.1';
+export const SKILL_VERSION = '0.1.2';
 export const MINIMUM_HOST_VERSION = '3.32.0';
 // Use Google's Calendar sign-in entry directly in the already guarded tab.
 // The public landing page's Sign in opens a new, initially unguarded tab; its
@@ -36,12 +36,18 @@ export const manualCompletion = { success: [{ origin: 'https://calendar.google.c
 const commands = Object.freeze({
   commands: {}, guides: {}, doctor: {}, setup: {}, 'show-login': {}, ready: {}, status: {}, wait: {}, close: {}, disconnect: {},
   ...workflowCommands,
+  // The signed assistant allowlist admits only these write variants. A
+  // human recipe remains backwards-compatible; the unattended recipe must
+  // carry and positively verify the intended account before any UI input.
+  'create-verified-event': { spec: 'string', account: 'string' },
+  'move-verified-event': { spec: 'string', account: 'string' },
   navigate: { url: 'string' }, screenshot: {},
   'read-text': { query: 'string?', offset: 'number?', includeControls: 'boolean?', controlQuery: 'string?', controlOffset: 'number?' },
   click: { frameId: 'string', x: 'number', y: 'number' },
   'type-text': { frameId: 'string', text: 'string' }, key: { frameId: 'string', key: 'string' },
   scroll: { frameId: 'string', x: 'number', y: 'number', deltaY: 'number', deltaX: 'number?' },
 });
+const verifiedWrites = Object.freeze({ 'create-verified-event': 'create-event', 'move-verified-event': 'move-event' });
 const inputs = new Set(['click', 'type-text', 'key', 'scroll']);
 const cleanup = new Set(['close', 'status', 'wait', 'ready', 'disconnect']);
 const states = new Set(['not_configured', 'preparing', 'manual_input_required', 'saved_unverified', 'ready', 'closed', 'error']);
@@ -81,7 +87,12 @@ export function parseCalendarCommand(argv) {
   }
   if (operation === 'read-text' && (['query', 'controlQuery'].some(key => args[key]?.length > 120)
     || args.controlOffset !== undefined && (args.controlOffset < 0 || args.controlOffset > 1200))) invalid();
-  return { operation, args, ...(Object.hasOwn(workflowCommands, operation) ? { workflowSpec: parseWorkflowSpec(operation, args.spec) } : {}) };
+  const verified = Object.hasOwn(verifiedWrites, operation);
+  const recipe = verified ? verifiedWrites[operation] : operation;
+  if (verified && !(/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[a-z0-9-]+(?:\.[a-z0-9-]+)+$/iu.test(args.account)
+    && args.account.length <= 254)) invalid();
+  return { operation, args, ...(Object.hasOwn(workflowCommands, recipe)
+    ? { recipe, workflowSpec: parseWorkflowSpec(recipe, args.spec) } : {}) };
 }
 
 /** Build only the public, value-free diagnostic vocabulary. The actual
@@ -124,7 +135,7 @@ export async function runCalendar(argv, env = process.env) {
     if (operation === 'doctor') return { schemaVersion: 1, skillVersion: SKILL_VERSION,
       minimumHostVersion: MINIMUM_HOST_VERSION, hostModuleAvailable: Boolean(env.TRELIO_VISUAL_SESSION_MODULE_URL),
       browser: 'not_checked', connection: 'not_checked', network: 'not_checked' };
-    write = inputs.has(operation) || workflowWrites.has(operation);
+    write = inputs.has(operation) || workflowWrites.has(parsed.recipe);
     checks.push({ check: 'COMMAND_VALIDATION', result: 'passed' });
     host = env.TRELIO_HOST_RUNTIME_VERSION;
     let url;
@@ -142,9 +153,9 @@ export async function runCalendar(argv, env = process.env) {
     if (!supported && !cleanup.has(operation)) throw new CalendarError('CALENDAR_HOST_UPGRADE_REQUIRED');
     if (typeof runtime.runVisualSession !== 'function') throw new CalendarError('CALENDAR_HOST_REQUIRED');
     dispatched = true;
-    if (Object.hasOwn(workflowCommands, operation)) return await executeWorkflow(operation, parsed.workflowSpec,
+    if (parsed.recipe) return await executeWorkflow(parsed.recipe, parsed.workflowSpec,
       (operation, args) => runtime.runVisualSession({ origins, presentation: 'hidden', semanticControls: true, fieldCheckPolicy, manualCompletion,
-        observationMode: 'text', operation, args, env }));
+        observationMode: 'text', operation, args, env }), { expectedAccount: parsed.args.account });
     const value = await runtime.runVisualSession({ origins, presentation: 'hidden', semanticControls: true, fieldCheckPolicy, manualCompletion, observationMode: 'text',
       operation, args: operation === 'setup' ? { url: setupUrl } : parsed.args, env });
     if (!value || !states.has(value.state) || !['trelio.visual-browser/v1', 'trelio.browser-text/v1'].includes(value.kind)) {

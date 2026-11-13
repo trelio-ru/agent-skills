@@ -34,6 +34,26 @@ test('command validation and empty account discovery perform no identity/browser
     { operation: 'scroll', args: { frameId: 'fresh', x: 10, y: 20, deltaY: -500 } });
 });
 
+test('assistant writes require both a valid account and a valid exact event spec before browser I/O', async () => {
+  const target = { calendar: 'Synthetic', date: '2030-05-12', timeZone: 'Europe/Moscow',
+    title: 'Test', startTime: '12:00', endTime: '12:05' };
+  const inaccessible = new Proxy({}, { get() { throw Error('unexpected environment access'); } });
+  for (const [operation, recipe, spec] of [
+    ['create-verified-event', 'create-event', target],
+    ['move-verified-event', 'move-event', { target, date: target.date, startTime: '12:10' }],
+  ]) {
+    const json = JSON.stringify(spec);
+    const account = 'owner@example.test';
+    assert.equal(parseCalendarCommand([operation, '--account', account, '--spec', json]).recipe, recipe);
+    for (const args of [['--spec', json], ['--account', 'display name', '--spec', json],
+      ['--account', account], ['--account', account, '--spec', '{}']]) {
+      const result = await runCalendar([operation, ...args], inaccessible);
+      assert.equal(result.diagnostic.outcome, 'not_dispatched');
+      assert.notEqual(result.code, 'CALENDAR_RUNTIME_FAILED');
+    }
+  }
+});
+
 async function hostFixture(t, marker = 'trelio.visual-presentation/v1') {
   const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'calendar-host-')));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
@@ -134,11 +154,23 @@ test('the deterministic materialized package starts without browser access and k
   const release = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
   const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'calendar-package-')));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
-  for (const file of JSON.parse(built.packageBytes).files) {
+  const files=JSON.parse(built.packageBytes).files;
+  for (const file of files) {
     const target = path.join(directory, file.path);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, Buffer.from(file.contentBase64, 'base64'));
   }
+  const loadPolicy=async name=>JSON.parse(await fs.readFile(path.join(directory,name),'utf8'));
+  const task=await loadPolicy('trelio-assistant-execution.json'),setup=await loadPolicy('trelio-secret-setup.json');
+  const {commands}=await runCalendar(['commands']);
+  assert.equal(task.schemaVersion,1);
+  for(const prefix of task.taskCommands)assert.ok(prefix.length===1&&Object.hasOwn(commands,prefix[0]));
+  for(const command of ['list-calendars','read-day','find-events','create-verified-event','move-verified-event'])assert.ok(task.taskCommands.some(([name])=>name===command));
+  for(const command of ['click','type-text','key','setup','show-login','ready','wait','create-event','move-event','delete-event','disconnect'])
+    assert.ok(!task.taskCommands.some(([name])=>name===command),command);
+  assert.deepEqual(setup,{schemaVersion:2,commands:[],humanInputCommands:[{
+    id:'login',purpose:'authenticate_existing',arguments:['setup'],maximumDurationMs:600000,
+  }]});
   const entry = path.join(directory, release.runtime.entrypoint.path);
   const env = { HOME: directory, USERPROFILE: directory, SystemRoot: process.env.SystemRoot,
     TRELIO_VISUAL_SESSION_MODULE_URL: 'file:///must-not-load.mjs' };
@@ -158,5 +190,6 @@ test('the deterministic materialized package starts without browser access and k
   assert.equal(JSON.parse(failed.stdout).code, 'CALENDAR_COMMAND_INVALID');
   assert.equal(failed.stderr, '');
   assert.ok(!failed.stdout.includes('PRIVATE_CANARY'));
-  assert.deepEqual((await fs.readdir(directory)).sort(), ['calendar-workflows.mjs', 'instruction-guides', 'trelio-google-calendar.mjs']);
+  assert.deepEqual((await fs.readdir(directory)).sort(), ['calendar-workflows.mjs', 'instruction-guides',
+    'trelio-assistant-execution.json','trelio-google-calendar.mjs','trelio-secret-setup.json']);
 });

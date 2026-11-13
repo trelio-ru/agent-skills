@@ -511,6 +511,15 @@ export async function executeWorkflow(operation, spec, call, options) {
   const ui = new CalendarUI(call, options);
   try {
     const start = await ui.start(); ui.account = accountLabel(start);
+    if (options?.expectedAccount !== undefined) {
+      // Google displays the active email at the end of its account label, in
+      // parentheses. A matching substring in the editable display name is not
+      // proof of identity. Reject ambiguous labels before opening the editor.
+      const email = /\(([a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+)\)\s*$/iu.exec(ui.account);
+      if (!email || ui.account.slice(0, email.index).includes('@')
+        || email[1].toLowerCase() !== options.expectedAccount.toLowerCase())
+        refuse('CALENDAR_ACCOUNT_MISMATCH');
+    }
     const inventory = await calendarInventory(ui);
     let result;
     if (operation === 'list-calendars') result = { calendars: inventory, coverage: { complete: false, scope: 'visible_viewport' } };

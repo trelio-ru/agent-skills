@@ -62,6 +62,16 @@ password/OTP, dialog или незавершённая загрузка оста
 `trelio.visual-form-checks/v1`, `trelio.visual-manual-completion/v1` обязательны.
 Не продлевай lease и не импортируй аккаунт из IAB/Chrome/другого навыка.
 
+У цифрового ассистента отдельный managed аккаунт. Если входа нет, используй
+только объявленный `accountSetup` с командой `login` по штатному согласованию
+подключения; обычный проход не запускает `setup`. После входа отдельным
+чтением проверь Google-адрес и нужный календарь. Ассистент может читать,
+создавать и переносить через `create-verified-event` / `move-verified-event`
+с `--account` (точный Google email) и тем же `--spec`, что у обычных сценариев.
+`delete-event`, произвольный
+ввод и `disconnect` не входят в его task-команды. При неподдерживаемой
+форме оставь точный пробел, не обходи ограничение общим браузером.
+
 Низкоуровневые команды: `navigate`, `read-text`, `screenshot`, `click`,
 `type-text`, `key`, `scroll`, `status`, `wait`, `close`. Exact flags — `commands`.
 `read-text --controlQuery TEXT --controlOffset N` ищет controls по literal label;
