@@ -7,6 +7,8 @@ assert observable scope and side effects rather than instruction wording.
 
 import asyncio
 import importlib.util
+import io
+import json
 import pathlib
 import sys
 import tempfile
@@ -193,6 +195,41 @@ class MessageWorkflowsTests(unittest.TestCase):
         self.client.messages[(-1000000000077, 42)].peer_id = PeerChannel(channel_id=99)
         with self.assertRaisesRegex(M.TelegramRuntimeError, "another chat"):
             self.call(M.command_read_async, "read", "--chat", "old_group", "--message-id", "42")
+
+    def test_exact_read_cli_preserves_only_the_observed_failure(self):
+        target = (-1000000000077, 42)
+        cases = (
+            (None, "unknown", "message_lookup"),
+            (tl_type("MessageEmpty")(id=42), "unknown", "message_lookup"),
+            (Message(id=42), "unknown", "reference_validation"),
+            (Message(id=43, peer_id=PeerChannel(channel_id=77)), "reference_mismatch", "reference_validation"),
+            (Message(id=42, peer_id=PeerChannel(channel_id=99)), "reference_mismatch", "reference_validation"),
+        )
+        for candidate, category, stage in cases:
+            with (
+                self.subTest(candidate=candidate),
+                mock.patch.object(sys, "argv", [str(SCRIPT), "read", "--chat", "old_group",
+                                                "--message-id", "42", "--context", "0"]),
+                mock.patch.object(M, "reexec_in_runtime_if_needed"),
+                mock.patch.object(M, "run_async_command", side_effect=lambda args:
+                                  asyncio.run(M.command_read_async(args, self.identity))),
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout,
+                mock.patch.object(sys, "stderr", new_callable=io.StringIO) as stderr,
+            ):
+                self.client.reads.clear()
+                self.client.messages[target] = candidate
+                self.assertEqual(M.main(), 2)
+                self.assertEqual(stdout.getvalue(), "")
+                failure = json.loads(stderr.getvalue())
+                self.assertEqual(failure["code"], "TELEGRAM_EXACT_READ_UNAVAILABLE")
+                self.assertEqual(failure["details"], {"diagnostic": {
+                    "category": category, "stage": stage, "automaticRetry": False,
+                    "nextStep": ("verify_native_message_mapping" if category == "reference_mismatch"
+                                 else "verify_original_link_and_chat_access"),
+                }})
+                self.assertEqual(self.client.reads, [target])
+                self.assertEqual(self.client.calls, [])
+                self.client.send_message.assert_not_awaited()
 
     def test_comment_link_resolves_the_group_using_channel_provenance_not_id_order(self):
         channel = Channel(id=66, title="Канал", username="news_channel", broadcast=True)

@@ -360,6 +360,25 @@ Media возвращается как metadata. `attachments.returnedMetadata`, 
 с явным per-side coverage. `read --chat EXACT --limit N` сохраняет прежний
 контракт последних сообщений.
 
+Если exact lookup вернул `None` или `MessageEmpty`, ошибка
+`TELEGRAM_EXACT_READ_UNAVAILABLE` содержит `details.diagnostic` с
+`category=unknown`, `stage=message_lookup` и
+`nextStep=verify_original_link_and_chat_access`. Такой ответ подтверждает
+только отсутствие оригинала в результате этого lookup. Причина, включая
+удаление, недоступность чата или неверный внешний ID, остаётся неизвестной.
+Если у возвращённой строки другой native peer или ID,
+`category=reference_mismatch`, `stage=reference_validation`,
+`nextStep=verify_native_message_mapping`. При отсутствии полей для сверки
+на этом этапе категория остаётся `unknown`.
+
+Оба варианта сохраняют `automaticRetry=false`. Сверь исходную ссылку и
+доступ к указанному чату через тот же аккаунт либо проверь соответствие внешнего
+ID нативному ID в источнике. Диагностика не содержит ID, ссылок или текста
+сообщения. Она не разрешает вход заново, смену транспорта или отправку похожего
+сообщения. В локальном MCP хост с поддержкой этой ошибки возвращает её в
+`details.process.providerCode`, а закрытые поля — в
+`details.process.diagnostic`. Прежние host/CLI wrapper и numeric exit сохраняются.
+
 Парсер принимает public/private t.me/telegram.me message links, форму с topic
 ID в path либо thread в query, comment ID и соответствующие tg://resolve /
 tg://privatepost. Он не выполняет HTTP navigation, не открывает invite или

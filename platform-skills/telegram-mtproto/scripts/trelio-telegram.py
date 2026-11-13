@@ -4563,11 +4563,38 @@ def message_link(entity: Any, message_id: int) -> str | None:
     return f"https://t.me/c/{entity.id}/{message_id}"
 
 
-def exact_provider_message(message: Any, entity: Any, message_id: int, utils: Any) -> Any:
-    if (not message or type(message).__name__ == "MessageEmpty"
-            or getattr(message, "id", None) != message_id
-            or utils.get_peer_id(message.peer_id) != utils.get_peer_id(entity)):
-        raise TelegramRuntimeError("The exact Telegram message is unavailable or belongs to another chat.")
+EXACT_MESSAGE_UNAVAILABLE = "The exact Telegram message is unavailable or belongs to another chat."
+
+
+def exact_read_failure(*, category: str, stage: str) -> TelegramRuntimeError:
+    # Empty native responses establish that this lookup produced no original,
+    # but carry no evidence of deletion, access loss or external ID provenance.
+    # A concrete mismatch only describes the returned candidate.
+    return TelegramRuntimeError(
+        EXACT_MESSAGE_UNAVAILABLE,
+        code="TELEGRAM_EXACT_READ_UNAVAILABLE",
+        details={"diagnostic": {
+            "category": category,
+            "stage": stage,
+            "nextStep": ("verify_native_message_mapping" if category == "reference_mismatch"
+                         else "verify_original_link_and_chat_access"),
+            "automaticRetry": False,
+        }},
+    )
+
+
+def exact_provider_message(message: Any, entity: Any, message_id: int, utils: Any, *, diagnose_read: bool = False) -> Any:
+    empty = not message or type(message).__name__ == "MessageEmpty"
+    peer = None if empty else getattr(message, "peer_id", None)
+    returned_id = getattr(message, "id", None)
+    if (empty or peer is None or type(returned_id) is not int or returned_id != message_id
+            or utils.get_peer_id(peer) != utils.get_peer_id(entity)):
+        if diagnose_read:
+            if empty:
+                raise exact_read_failure(category="unknown", stage="message_lookup")
+            category = "unknown" if peer is None or type(returned_id) is not int else "reference_mismatch"
+            raise exact_read_failure(category=category, stage="reference_validation")
+        raise TelegramRuntimeError(EXACT_MESSAGE_UNAVAILABLE)
     return message
 
 
@@ -4607,16 +4634,18 @@ async def discussion_root(client: Any, entity: Any, post_id: int) -> tuple[Any, 
     return group, root
 
 
-async def resolve_message_target(client: Any, reference: MessageReference) -> tuple[Any, Any]:
+async def resolve_message_target(client: Any, reference: MessageReference, *, diagnose_read: bool = False) -> tuple[Any, Any]:
     _functions, _types, utils, _events, _markdown = import_telethon_workflows()
     entity = await resolve_entity(client, reference.chat)
     message = exact_provider_message(
         await client.get_messages(entity, ids=reference.message_id), entity, reference.message_id, utils,
+        diagnose_read=diagnose_read,
     )
     if reference.comment_id is not None:
         entity, root = await discussion_root(client, entity, reference.message_id)
         message = exact_provider_message(
             await client.get_messages(entity, ids=reference.comment_id), entity, reference.comment_id, utils,
+            diagnose_read=diagnose_read,
         )
         header = getattr(message, "reply_to", None)
         if (message.id != root.id and getattr(header, "reply_to_top_id", None) != root.id
@@ -4767,7 +4796,9 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
             # private body. Native IDs can coincide in two different accounts;
             # an old task mapping must not silently read the replacement one.
             conversation_key = await reference_conversation_key(client, identity, args)
-        entity, message = await resolve_message_target(client, reference)
+        # Keep owner/assistant revision reads and all mutation callers on
+        # their existing error contracts.
+        entity, message = await resolve_message_target(client, reference, diagnose_read=not exact_reference)
         if exact_reference:
             _functions, _types, utils, _events, _markdown = import_telethon_workflows()
             observed = monitor_message(message, utils, kind="new", channel_peer=int(args.chat))

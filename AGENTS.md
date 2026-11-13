@@ -31,6 +31,9 @@ gate обходит все provider-ы; native gate выполняется на 
 [контракт сообщений](docs/telegram-mtproto-message-workflows.md). Обзор всех чатов
 использует отдельные проходы закреплённых/обычных диалогов и проверку
 метаданных; export cursor продвигается только после возвращённого сообщения.
+Обычный exact `read` сохраняет отдельный код для пустого lookup и проверку
+identity возвращённой строки по тому же контракту. Причина пустого ответа
+остаётся `unknown`; диагностика не открывает автоматический повтор.
 Archive scope повторно проверяется до history, включая exact сохранённый ID.
 Пассивный `monitor` хранит durable checkpoint отдельно от unread/session TTL;
 initial channel `--unread-backfill` freezes the native unread interval, pages
