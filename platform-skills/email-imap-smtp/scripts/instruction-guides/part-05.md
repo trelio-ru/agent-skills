@@ -4,6 +4,11 @@
 - `folders --local-account UUID` возвращает имена Unicode, `flags`, `specialUse`,
   `delimiter` и `selectable`, не читая письма. Другие роли:
   `drafts`, `trash`, `junk`, `archive`, `all`, `flagged`.
+- Gmail показывает ярлыки как папки IMAP. Для поиска и чтения передавай в
+  `--folder` точное имя ярлыка из `folders`. Если ярлыка нет в списке,
+  в веб-версии Gmail открой «Настройки» (шестерёнка) → «Все настройки» →
+  «Ярлыки» и проверь флажок «Показывать в IMAP» рядом с нужным ярлыком.
+  [Справка Google](https://support.google.com/a/users/answer/11339703?hl=ru)
 - Если сервер не сообщил нужную роль либо сообщил несколько папок, runtime
   останавливается. Прочитай `folders` и выбери точное имя через `--folder`.
   Папка с `selectable=false` не подходит для чтения.
