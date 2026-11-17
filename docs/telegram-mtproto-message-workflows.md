@@ -1009,8 +1009,16 @@ exact reference и closed read-state facts; `snapshotAtomic=false` сохран�
 события, старый processed digest ими не заменяется.
 
 При неизвестном результате host сохраняет write fence и вызывает тот же exact
-reference с `--verify-only` **вместо** `--confirm`. Это только resolver/read-boundary,
-без history mutation; `acknowledged=false` не разрешает автоматическую отправку.
+reference с `--verify-only` **вместо** `--confirm`. Проверка заново подтверждает
+actual account/conversation HMAC, exact native peer/InputPeer и dialog read boundary,
+без чтения body/history и без записи. Она сверяет историческую границу попытки:
+редактирование, удаление или недоступность исходного body не отменяют native
+`read_inbox_max_id`. Возвращаются только пять полей исходной reference
+(`id`, `revision`, `chatId`, `messageId`, `conversationKey`), без утверждения о
+текущем содержании, sender или новом прочтении. Чужой/неподдержанный peer, forum,
+неполный ответ либо некорректный native counter остаются отказом.
+`acknowledged=false` не разрешает автоматическую отправку; confirm по-прежнему
+требует текущую revision и полное покрытие unread range.
 Ошибка после начала записи, включая cleanup/read-back, сохраняет
 `writeAttempted=true,writeOutcome=unknown,automaticRetryAllowed=false` без raw SDK
 diagnostics. Никакого второго progress journal/session store/executor не создаётся.

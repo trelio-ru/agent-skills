@@ -50,7 +50,11 @@ automatic transcription/quota or ACK. See the exact-read media contract.
 `ack-reference` uses native range coverage, one non-retried write and read-back;
 only native host-attested exact incoming refs may cover unread history; own
 outgoing rows retain peer/order/end checks but need no incoming coverage. Verify-only reconciles an
-unknown result without writing; generic task/source read admission never grants ACK.
+unknown result without writing: revalidate account/HMAC and exact native
+peer/InputPeer/dialog counter without fetching the historical message body.
+Echo its original reference only; edits/deletions never become fresh body-read
+proof. Confirm retains current revision/full unread coverage. Generic task/source
+read admission never grants ACK.
 Host-only owner `reply-reference` reuses SAME send/read-back with native private
 peer/owner/revision proof and stdin-only text; never add it to taskCommands.
 Its additive v2 private payload uses the SAME actual Telethon Markdown parser

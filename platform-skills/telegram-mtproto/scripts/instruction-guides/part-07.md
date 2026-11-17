@@ -114,7 +114,13 @@ view increment или send. `snapshotAtomic=false`: поздние edits ост�
 
 Неизвестный write/cleanup/read-back сохраняет
 `writeAttempted=true,writeOutcome=unknown,automaticRetryAllowed=false`. Только
-`--verify-only` вместо `--confirm` проверяет native read state без записи;
+`--verify-only` вместо `--confirm` проверяет native read state без записи.
+Actual account/HMAC, exact native peer/InputPeer и counter проверяются заново;
+body/history не читаются. Позднее изменение или исчезновение body не отменяет
+историческую границу ACK. Reference содержит только прежние id/revision/chatId/
+messageId/conversationKey и не подтверждает текущее содержимое или sender.
+Чужой/неподдержанный peer, forum и некорректный counter остаются отказом;
+confirm сохраняет текущую revision и полное покрытие unread range.
 `acknowledged=false` не разрешает автоматический повтор. Уже read target также
 не вызывает повторный write. Это не новый vault/progress journal или разрешение
 считать всю задачу завершённой.

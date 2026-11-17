@@ -852,7 +852,8 @@ class ReferenceAck(unittest.TestCase):
         self.enterContext(mock.patch.object(M, 'connection_root', return_value=pathlib.Path(private)))
         self.provider = Provider()
         self.entity = tl('User', id=77)
-        self.utils = NS(get_peer_id=lambda value: value.id if type(value).__name__ in {'User', 'Chat'} else peer_id(value))
+        self.utils = NS(get_peer_id=lambda value: (value.id if type(value).__name__ == 'User'
+            else -value.id if type(value).__name__ == 'Chat' else peer_id(value)))
         self.rows = [message(9), message(8)]
         self.boundary = 7
         self.history = [tl('MessagesSlice', messages=self.rows), tl('Messages', messages=[])]
@@ -992,6 +993,147 @@ class ReferenceAck(unittest.TestCase):
             self.assertFalse(value['readState']['writeAttempted'])
             self.assertEqual([type(c).__name__ for c in self.provider.calls], ['Dialogs'])
         self.assertEqual(self.writes(), [])
+
+    def test_verify_only_reconciles_the_original_boundary_without_message_content(self):
+        # A retained ACK attempt identifies a historical boundary. A later edit,
+        # deletion or failed body lookup must not prevent observing that boundary,
+        # and must never authorize another range write or claim a fresh body read.
+        original = self.args(confirm=False, verify_only=True, covered_reference=[])
+        for unavailable in (None, message(9, text='LATER PRIVATE EDIT'), RuntimeError('PRIVATE LOOKUP')):
+            for boundary in (7, 9, 12):
+                with self.subTest(boundary=boundary, lookup=type(unavailable).__name__):
+                    self.provider.calls.clear()
+                    self.provider.get_messages.reset_mock()
+                    self.provider.get_messages.side_effect = (unavailable if isinstance(unavailable, Exception)
+                        else lambda *_a, **_kw: unavailable)
+                    self.boundary = boundary
+                    result = self.ack(original)
+                    self.assertEqual(result['reference'], {
+                        'id': 'message:77:9', 'revision': original.expected_revision,
+                        'chatId': '77', 'messageId': '9',
+                        'conversationKey': result['reference']['conversationKey']})
+                    self.assertEqual(result['readState']['acknowledged'], boundary >= 9)
+                    self.assertFalse(result['readState']['writeAttempted'])
+                    self.assertEqual(result['readState']['writeOutcome'], 'not_attempted')
+                    self.assertFalse(result['readState']['automaticRetryAllowed'])
+                    self.provider.get_messages.assert_not_awaited()
+                    self.assertEqual([type(c).__name__ for c in self.provider.calls], ['Dialogs'])
+                    self.assertNotIn('PRIVATE', json.dumps(result))
+        self.policy.assert_not_called()
+
+    def test_verify_only_rejects_foreign_or_unsupported_resolved_peer_before_boundary(self):
+        original = self.args(confirm=False, verify_only=True, covered_reference=[])
+        for entity in (tl('User', id=88), tl('UserEmpty', id=77), tl('User', id=True),
+                       tl('Channel', id=55, forum=True)):
+            with self.subTest(entity=type(entity).__name__):
+                self.entity = entity
+                with self.assertRaises(M.TelegramRuntimeError) as caught:
+                    self.ack(original)
+                self.assertFalse(caught.exception.details['writeAttempted'])
+                self.assertFalse(caught.exception.details['automaticRetryAllowed'])
+                self.assertEqual(self.provider.calls, [])
+                self.provider.get_messages.assert_not_awaited()
+
+    def test_confirm_still_refuses_changed_or_missing_original_even_when_boundary_is_read(self):
+        original = self.args()
+        self.boundary = 12
+        for unavailable in (None, message(9, text='LATER PRIVATE EDIT')):
+            self.provider.get_messages.side_effect = lambda *_a, **_kw: unavailable
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.ack(original)
+            self.assertFalse(caught.exception.details['writeAttempted'])
+            self.assertEqual(self.provider.calls, [])
+
+    def test_verify_only_supports_native_user_group_and_channel_boundaries(self):
+        for entity, peer, native in (
+            (tl('User', id=77), tl('InputPeerUser', user_id=77), tl('PeerUser', user_id=77)),
+            (tl('Chat', id=55), tl('InputPeerChat', chat_id=55), tl('PeerChat', chat_id=55)),
+            (tl('Channel', id=55), tl('InputPeerChannel', channel_id=55), tl('PeerChannel', channel_id=55)),
+        ):
+            self.entity = entity
+            self.provider.get_input_entity.return_value = peer
+            self.rows[0].peer_id = native
+            self.boundary = 9
+            self.provider.calls.clear()
+            value = self.ack(self.args(confirm=False, verify_only=True, covered_reference=[]))
+            self.assertTrue(value['readState']['acknowledged'])
+            self.assertEqual([type(c).__name__ for c in self.provider.calls], ['Dialogs'])
+            self.provider.get_messages.assert_not_awaited()
+            # The same correctly bound channel must still refuse forum ranges.
+            if type(entity).__name__ == 'Channel':
+                entity.forum = True
+                self.provider.calls.clear()
+                with self.assertRaises(M.TelegramRuntimeError) as caught:
+                    self.ack(self.args(confirm=False, verify_only=True, covered_reference=[]))
+                self.assertEqual(caught.exception.code, 'TELEGRAM_ACK_RANGE_UNSUPPORTED')
+                self.assertEqual(self.provider.calls, [])
+        self.policy.assert_not_called()
+
+    def test_verify_only_refuses_invalid_input_peers_and_native_counters(self):
+        original = self.args(confirm=False, verify_only=True, covered_reference=[])
+        for peer in (tl('InputPeerUser', user_id=88), tl('InputPeerSelf'),
+                     tl('InputPeerUser', user_id=True), tl('InputPeerUser', user_id='77')):
+            self.provider.get_input_entity.return_value = peer
+            with self.assertRaises(M.TelegramRuntimeError):
+                self.ack(original)
+            self.assertEqual(self.provider.calls, [])
+        self.provider.get_input_entity.return_value = tl('InputPeerUser', user_id=77)
+        for boundary in (None, True, '9', -1, 2**31):
+            self.boundary = boundary
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.ack(original)
+            self.assertFalse(caught.exception.details['writeAttempted'])
+        self.provider.get_messages.assert_not_awaited()
+        self.assertEqual(self.writes(), [])
+
+    def test_verify_only_refuses_foreign_or_untyped_dialog_boundary(self):
+        original = self.args(confirm=False, verify_only=True, covered_reference=[])
+        for peer in (tl('PeerUser', user_id=88), tl('PeerUser', user_id=True),
+                     tl('UnknownPeer', user_id=77), tl('PeerChat', chat_id=77)):
+            self.rows[0].peer_id = peer
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.ack(original)
+            self.assertFalse(caught.exception.details['writeAttempted'])
+        self.provider.get_messages.assert_not_awaited()
+        self.assertEqual(self.writes(), [])
+
+    def test_verify_only_uses_actual_sdk_peer_and_dialog_wire_types(self):
+        # Run on every provider OS with its actual required SDK. Synthetic
+        # user/group/channel constructors above cannot prove marked-ID or TL
+        # request compatibility; no real account/session/network is involved.
+        from telethon import functions, types, utils
+        sdk = (functions.messages.GetPeerDialogsRequest, functions.messages.GetHistoryRequest,
+            functions.messages.ReadHistoryRequest, functions.channels.ReadHistoryRequest,
+            types.InputDialogPeer, utils)
+        entities = (types.User(77, access_hash=123),
+            types.Chat(55, 'SYNTHETIC', types.ChatPhotoEmpty(), 1, NOW, 1),
+            types.Channel(55, 'SYNTHETIC', types.ChatPhotoEmpty(), NOW, access_hash=123))
+        for entity in entities:
+            with self.subTest(entity=type(entity).__name__):
+                original = self.args(confirm=False, verify_only=True, covered_reference=[],
+                    chat=str(utils.get_peer_id(entity)))
+                self.entity = entity
+                self.provider.calls.clear()
+                self.provider.get_input_entity.return_value = utils.get_input_peer(entity)
+                async def dispatch(_provider, call):
+                    self.provider.calls.append(call)
+                    self.assertIsInstance(call, functions.messages.GetPeerDialogsRequest)
+                    self.assertEqual(len(call.peers), 1)
+                    self.assertEqual(utils.get_peer_id(call.peers[0].peer), int(original.chat))
+                    self.assertTrue(bytes(call))
+                    row = types.Dialog(utils.get_peer(entity), 12, 9, 0, 3, 0, 0, 0,
+                        types.PeerNotifySettings())
+                    self.assertTrue(bytes(row))
+                    return NS(dialogs=[row])
+                with mock.patch.object(M, 'import_telethon_reference_ack', return_value=sdk), \
+                     mock.patch.object(Provider, '__call__', dispatch):
+                    value = self.ack(original)
+                self.assertTrue(value['readState']['acknowledged'])
+                self.assertFalse(value['readState']['writeAttempted'])
+                self.assertEqual(value['reference']['chatId'], original.chat)
+                self.assertEqual(len(self.provider.calls), 1)
+                self.provider.get_messages.assert_not_awaited()
+        self.policy.assert_not_called()
 
     def test_missing_processed_row_changed_revision_or_nonempty_probe_prevents_range_write(self):
         cases = [([tl('Messages', messages=self.rows), tl('Messages', messages=[])], [self.args().covered_reference[0]]),

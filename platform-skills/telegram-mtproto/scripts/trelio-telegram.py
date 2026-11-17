@@ -4973,21 +4973,53 @@ async def command_reference_ack_async(args: argparse.Namespace, identity: Identi
         await ensure_authorized(client)
         conversation_key = await reference_conversation_key(client, identity, args)
         Dialogs, History, Read, ReadChannel, InputDialog, utils = import_telethon_reference_ack()
-        entity, native = await resolve_message_target(client, message_reference(args))
+        def exact_peer(value, constructors):
+            # Verify native constructor AND integer identity before accepting a
+            # counter. An alias, empty peer or Python bool is not proof of the
+            # account-bound conversation retained by the original ACK attempt.
+            field = constructors.get(type(value).__name__)
+            identifier = getattr(value, field, None) if field else None
+            if type(identifier) is not int or not 0 < identifier < 2**63:
+                return False
+            marked = utils.get_peer_id(value)
+            return type(marked) is int and marked == int(args.chat)
+
+        if args.verify_only:
+            # Reconcile the historical range, not the current message body.
+            # Edits/deletions do not rewind Telegram's native inbox counter.
+            # The account/HMAC check above still precedes every peer/counter
+            # read; this branch cannot fetch history or dispatch readHistory.
+            entity = await resolve_entity(client, args.chat)
+            if not exact_peer(entity, {"User": "id", "Chat": "id", "Channel": "id"}):
+                raise ack_error("TELEGRAM_ACK_UNAVAILABLE", "The exact read boundary peer is unavailable.")
+            # Echo only the original attempt's identity. In particular, do not
+            # invent a current content revision, sender or successful body read.
+            observed = {"id": f"message:{args.chat}:{args.message_id}",
+                "revision": args.expected_revision, "chatId": args.chat,
+                "messageId": str(args.message_id), "conversationKey": conversation_key}
+        else:
+            # A NEW write retains exact current-body revision and full unread
+            # coverage checks. Verify-only recovery never weakens this admission.
+            entity, native = await resolve_message_target(client, message_reference(args))
         # Forum topics have independent read counters; a dialog-wide range is
         # not a substitute. Keep them closed until their own native contract.
         if getattr(entity, "forum", False):
             raise ack_error("TELEGRAM_ACK_RANGE_UNSUPPORTED", "Topic read ranges require a separate native contract.")
-        observed = monitor_message(native, utils, kind="new", channel_peer=int(args.chat))
-        observed["conversationKey"] = conversation_key
-        if observed["revision"] != args.expected_revision:
-            raise ack_error("TELEGRAM_REFERENCE_CHANGED", "The processed Telegram message changed.")
+        if not args.verify_only:
+            observed = monitor_message(native, utils, kind="new", channel_peer=int(args.chat))
+            observed["conversationKey"] = conversation_key
+            if observed["revision"] != args.expected_revision:
+                raise ack_error("TELEGRAM_REFERENCE_CHANGED", "The processed Telegram message changed.")
         peer = await client.get_input_entity(entity)
+        if args.verify_only and not exact_peer(peer, {"InputPeerUser": "user_id",
+                "InputPeerChat": "chat_id", "InputPeerChannel": "channel_id"}):
+            raise ack_error("TELEGRAM_ACK_UNAVAILABLE", "The exact read boundary input peer is unavailable.")
         async def read_boundary():
             response = await client(Dialogs(peers=[InputDialog(peer=peer)]))
             rows = getattr(response, "dialogs", None)
             if (not isinstance(rows, list) or len(rows) != 1 or type(rows[0]).__name__ != "Dialog"
-                    or utils.get_peer_id(getattr(rows[0], "peer", None)) != int(args.chat)):
+                    or not exact_peer(getattr(rows[0], "peer", None),
+                        {"PeerUser": "user_id", "PeerChat": "chat_id", "PeerChannel": "channel_id"})):
                 raise ack_error("TELEGRAM_ACK_UNAVAILABLE", "The exact read boundary is unavailable.")
             return monitor_int(getattr(rows[0], "read_inbox_max_id", None))
         before = await read_boundary()
