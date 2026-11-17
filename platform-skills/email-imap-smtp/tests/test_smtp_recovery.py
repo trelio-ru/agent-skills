@@ -1,4 +1,4 @@
-"""Exercise Gmail recovery through the real parser and SMTP connection code."""
+"""Exercise provider-independent SMTP recovery through the real CLI and SMTP connection code."""
 
 import errno
 import smtplib
@@ -15,7 +15,7 @@ REAL_SMTP_CONNECTION = MODULE.smtp_connection
 
 
 class SmtpRecoveryTests(unittest.TestCase):
-    def configure_pair(self, port=465, security="ssl", host="smtp.gmail.com", mode="imap_smtp"):
+    def configure_pair(self, port=465, security="ssl", host="smtp.company.example", mode="imap_smtp"):
         fields = {**browser.VALUES, "smtp_host": host, "smtp_port": port,
                   "smtp_security": security, "connection_mode": mode}
         fields.pop("password")
@@ -49,8 +49,8 @@ class SmtpRecoveryTests(unittest.TestCase):
 
         self.assertEqual(result["smtpRepaired"], {"port": 587, "security": "starttls"})
         self.assertEqual((result["imap"], result["smtp"], result["messageAcceptanceChecked"]), (True, True, False))
-        self.assertEqual(self.ssl_smtp.call_args.args, ("smtp.gmail.com", 465))
-        self.assertEqual(self.starttls_smtp.call_args.args, ("smtp.gmail.com", 587))
+        self.assertEqual(self.ssl_smtp.call_args.args, ("smtp.company.example", 465))
+        self.assertEqual(self.starttls_smtp.call_args.args, ("smtp.company.example", 587))
         self.imap_connection.assert_called_once()
         self.smtp.starttls.assert_called_once()
         self.smtp.login.assert_called_once()
@@ -67,19 +67,20 @@ class SmtpRecoveryTests(unittest.TestCase):
         self.assertEqual(self.starttls_smtp.call_count, 2)
 
     def test_unsupported_starttls_repairs_smtp_only_without_imap(self):
-        self.configure_pair(587, "starttls", mode="smtp_only")
+        self.configure_pair(587, "starttls", host="smtp.yandex.ru", mode="smtp_only")
         failed_tls = mock.Mock()
         failed_tls.starttls.side_effect = smtplib.SMTPNotSupportedError("synthetic")
         self.starttls_smtp.return_value = failed_tls
         result = self.check_mailbox("configure", "--repair-smtp")
         self.assertEqual(result["smtpRepaired"], {"port": 465, "security": "ssl"})
+        self.assertEqual(self.ssl_smtp.call_args.args, ("smtp.yandex.ru", 465))
         self.assertEqual(result["imapStatus"], "disabled")
         self.imap_connection.assert_not_called()
         failed_tls.close.assert_called_once()
         failed_tls.login.assert_not_called()
 
     def test_mismatched_standard_pair_repairs_mode_on_same_port(self):
-        self.configure_pair(465, "starttls")
+        self.configure_pair(465, "starttls", host="smtp.gmail.com")
         self.starttls_smtp.side_effect = TimeoutError()
         result = self.check_mailbox("configure", "--repair-smtp")
         self.assertEqual(result["smtpRepaired"], {"port": 465, "security": "ssl"})
@@ -88,8 +89,7 @@ class SmtpRecoveryTests(unittest.TestCase):
     def test_regular_diagnostics_and_nonstandard_endpoint_never_try_alternative(self):
         self.ssl_smtp.side_effect = TimeoutError()
         for host, port, arguments in [("smtp.gmail.com", 465, ("doctor",)),
-                                      ("smtp.example.test", 465, ("configure", "--repair-smtp")),
-                                      ("smtp.gmail.com", 2525, ("configure", "--repair-smtp"))]:
+                                      ("smtp.company.example", 2525, ("configure", "--repair-smtp"))]:
             with self.subTest(host=host, port=port, arguments=arguments):
                 self.configure_pair(port=port, host=host)
                 with self.assertRaises(MODULE.SmtpFailure):
