@@ -11,6 +11,10 @@ Node suites с native watchdog/headed browser исполняются после�
 должны искажать deadline proof. Набор assertions, тайм-ауты и native limits
 при этом не ослабляются.
 
+Почтовый native gate использует hosted `macos-15-intel` и `windows-latest`.
+Exact verifier требует соответствующие имена jobs. Native OS/architecture,
+Keychain/DPAPI, ACL и lifecycle assertions выполняются полностью на этих OS.
+
 Tagged workflow собирает один artifact на `ubuntu-latest`; production signing
 не выполняется в GitHub. Telegram MTProto имеет отдельную приватную сборочную
 границу по [release-process.md](release-process.md).

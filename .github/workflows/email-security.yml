@@ -27,7 +27,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          # Keep the native macOS suite on GitHub's available Intel pool;
+          # arm64 hosted admission has repeatedly expired before running tests.
+          - os: macos-15-intel
             nativePlatform: darwin
             selfHostedLabels: '["self-hosted","macOS","trelio-agent-skills-release"]'
           - os: windows-latest

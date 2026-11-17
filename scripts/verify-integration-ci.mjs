@@ -21,7 +21,9 @@ const dedicated = {
 for (const [provider, [file, name]] of Object.entries(dedicated)) {
   if (files.some(value => value.startsWith(`platform-skills/${provider}/`) || value === '.github/workflows/' + file)
     || provider === 't-bank' && files.some(value => /^platform-skills\/gosuslugi\/scripts\/(?:native|private-directory\.ps1)/u.test(value))) {
-    requirements.push({file, jobs: ['macos-latest', 'windows-latest'].map(os => `${name} (${os})`)});
+    const nativePlatforms = provider === 'email-imap-smtp'
+      ? ['macos-15-intel', 'windows-latest'] : ['macos-latest', 'windows-latest'];
+    requirements.push({file, jobs: nativePlatforms.map(os => `${name} (${os})`)});
   }
 }
 const general = files.some(value => value === '.github/workflows/platform-skill-runtimes.yml'
