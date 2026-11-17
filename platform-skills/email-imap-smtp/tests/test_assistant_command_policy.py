@@ -33,7 +33,7 @@ class AssistantCommandPolicy(unittest.TestCase):
             # declared prefix must reach a leaf, never e.g. bare `policy`.
             self.assertFalse(any(isinstance(action, argparse._SubParsersAction)
                                  for action in parser._actions), prefix)
-        for denied in (["configure"], ["webmail", "setup"], ["webmail", "view"], ["policy", "set"], ["signature", "set"],
+        for denied in (["configure"], ["configure", "--repair-smtp"], ["webmail", "setup"], ["webmail", "view"], ["policy", "set"], ["signature", "set"],
                        ["signature", "clear"], ["description", "set"],
                        ["monitor"], ["ack-reference"], ["__trelio_accounts_import"]):
             self.assertFalse(any(denied[:len(p)] == p for p in prefixes), denied)
