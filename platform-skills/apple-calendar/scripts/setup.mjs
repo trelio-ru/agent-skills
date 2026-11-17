@@ -57,14 +57,20 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
       check(!finished && request.socket.remoteAddress === '127.0.0.1' && request.headers.host === new URL(origin).host &&
         request.url === route && !request.headers['x-forwarded-host'], 'setup_request_denied');
       if (request.method === 'GET') {
-        check(!loaded && request.headers['sec-fetch-mode'] === 'navigate' &&
+        check(!loaded && request.headers['sec-fetch-mode'] === 'navigate' && request.headers['sec-fetch-dest'] === 'document' &&
           ['none','same-origin'].includes(request.headers['sec-fetch-site']), 'setup_request_denied');
         loaded = true;
         html(200, page());
         return;
       }
-      check(loaded && !posting && request.method === 'POST' && request.headers.origin === origin &&
-        request.headers['sec-fetch-site'] === 'same-origin' &&
+      // Chromium's native form may send Origin:null under no-referrer. Accept
+      // that ONLY with its exact same-origin document-navigation tuple, the
+      // unguessable route, exact Host/socket and the one-use nonce below. An
+      // opaque cross-site/sandbox origin must never acquire this exception.
+      const nativeForm = request.headers['sec-fetch-site'] === 'same-origin' &&
+        request.headers['sec-fetch-mode'] === 'navigate' && request.headers['sec-fetch-dest'] === 'document';
+      check(loaded && !posting && request.method === 'POST' && nativeForm &&
+        (request.headers.origin === origin || request.headers.origin === 'null') &&
         request.headers['content-type']?.split(';')[0] === 'application/x-www-form-urlencoded' &&
         !request.headers['content-encoding'], 'setup_request_denied');
       posting = true;

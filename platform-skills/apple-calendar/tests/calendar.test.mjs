@@ -178,7 +178,7 @@ const contractModule = process.env.TRELIO_TEST_FORM_MODULE_URL || new URL('../..
 function visit(url, method='GET', body='', supplied={}) {
   return new Promise((resolve,reject)=> {
     const target=new URL(url),headers=method==='GET'?{'sec-fetch-mode':'navigate','sec-fetch-dest':'document','sec-fetch-site':'none'}:
-      {origin:target.origin,'sec-fetch-site':'same-origin','content-type':'application/x-www-form-urlencoded'};
+      {origin:target.origin,'sec-fetch-site':'same-origin','sec-fetch-mode':'navigate','sec-fetch-dest':'document','content-type':'application/x-www-form-urlencoded'};
     const request=http.request(url,{method,headers:{...headers,...supplied}},response=> { const chunks=[];response.on('data',value=>chunks.push(value));response.on('end',()=>resolve({status:response.statusCode,body:Buffer.concat(chunks).toString()})); });
     request.on('error',reject);request.end(body);
   });
@@ -189,7 +189,7 @@ test('protected shared form: failed input can be corrected, scope is explicit, s
   const result=await configure(store,{formModule:contractModule,makeClient:()=>({calendars:async()=>{if(++attempts===1)throw new Fault('needs_reconnect');return[calendar];}}),open:async url=>{
     const first=await visit(url);assert.equal(first.status,200);assert.match(first.body,/data-trelio-local-form/);
     const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
-    const post=values=>visit(url,'POST',new URLSearchParams({nonce,decision:'save',...values}).toString());
+    const post=values=>visit(url,'POST',new URLSearchParams({nonce,decision:'save',...values}).toString(),{origin:'null'});
     const failure=await post(auth);assert.equal(failure.status,422);assert.ok(!failure.body.includes(auth.password));assert.equal(writes,0);
     const selection=await post(auth);assert.equal(selection.status,200);assert.equal(writes,0);assert.ok(!selection.body.includes(auth.username));
     assert.equal((await post({timezone:'Europe/Moscow'})).status,422);
@@ -198,14 +198,14 @@ test('protected shared form: failed input can be corrected, scope is explicit, s
   assert.equal(result.configured,true);assert.equal((await store.read()).credentials.username,auth.username);
 });
 test('cancel and forged Origin never save; timeout does not commit a late authentication response', async()=> {
-  for(const scenario of ['cancel','origin','late']) {
+  for(const scenario of ['cancel','origin','cross-site-null','late']) {
     const store=memory();let writes=0;store.write=async()=>{writes++;};
     const task=configure(store,{formModule:contractModule,timeout:scenario==='late'?30:1000,
       makeClient:()=>({calendars:async()=>{await new Promise(resolve=>setTimeout(resolve,80));return[calendar];}}),open:async url=>{
         const first=await visit(url);const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
-        try { await visit(url,'POST',new URLSearchParams({nonce,decision:scenario==='cancel'?'cancel':'save',...auth}).toString(),scenario==='origin'?{origin:'https://evil.example.test'}:{}); } catch { /* expiry closes its own loopback socket */ }
+        try { await visit(url,'POST',new URLSearchParams({nonce,decision:scenario==='cancel'?'cancel':'save',...auth}).toString(),scenario==='origin'?{origin:'https://evil.example.test'}:scenario==='cross-site-null'?{origin:'null','sec-fetch-site':'cross-site'}:{}); } catch { /* expiry closes its own loopback socket */ }
       }});
-    await assert.rejects(task,{code:scenario==='cancel'?'user_cancelled':scenario==='origin'?'setup_request_denied':'setup_expired'});
+    await assert.rejects(task,{code:scenario==='cancel'?'user_cancelled':scenario==='late'?'setup_expired':'setup_request_denied'});
     await new Promise(resolve=>setTimeout(resolve,90));assert.equal(writes,0);
   }
 });
