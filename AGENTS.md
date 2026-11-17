@@ -697,6 +697,10 @@ offline envelope fixture не заменяет live проверку personal la
 `npm run git:integrate -- --tag <tag>`. Старые wrappers/boolean не дают admission.
 После checkout установить pinned maintainer dependency через `npm ci --ignore-scripts`.
 Контракт, recovery и границы общего кода – [git-coordination](docs/git-coordination.md).
-Долгое ожидание очереди/CI – `git:integrate -- --background` и один 15-минутный
-heartbeat этого же чата по этому контракту. Без подтверждённого admission и
-сохранённой автоматизации нельзя обещать автоматическое продолжение.
+В macOS Codex обычная задача использует `git:integrate -- --finish-worktree`.
+До worker общий maintainer service сохраняет chatFollowUp исходного чата. После
+подтверждённого admission и сопровождения заверши ход; terminal result придёт
+в native-очередь. Exact status/remote read-back и --ack получения обязательны,
+callback не даёт нового push/release authority. Один чат может сопровождать
+несколько clone/ticket независимо. Model heartbeat не создаётся. Без native
+context автоматического возврата нет; release/explicit --wait синхронны.
