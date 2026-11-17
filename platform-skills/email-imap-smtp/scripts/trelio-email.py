@@ -85,7 +85,9 @@ GOOGLE_APP_PASSWORDS_URL = "https://myaccount.google.com/apppasswords"
 GMAIL_DOMAINS = {"gmail.com", "googlemail.com"}
 GMAIL_IMAP_HOST = "imap.gmail.com"
 GMAIL_SMTP_HOST = "smtp.gmail.com"
-GMAIL_SMTP_SECURITY_BY_PORT = {465: "ssl", 587: "starttls"}
+# RFC 8314 secure submission pairs. They apply to the selected SMTP host
+# regardless of the domain in the mailbox address.
+SMTP_SUBMISSION_SECURITY_BY_PORT = {465: "ssl", 587: "starttls"}
 # This is a local setup hint table, not MX discovery or credential routing.
 # Exact domains/hosts avoid treating lookalike domains as a supported provider.
 # Official prerequisite/source links are documented in agent-skill-connections.
@@ -2188,12 +2190,11 @@ def probe_smtp(account: Account) -> bool:
         raise smtp_failure(error, stage="preflight") from None
 
 
-def repair_gmail_smtp(account: Account, failure: SmtpFailure) -> dict[str, Any]:
-    # A Gmail address alone does not authorize credentials on another host.
-    # A nonstandard port is an explicit setting and has no supported fallback.
-    ports = GMAIL_SMTP_SECURITY_BY_PORT
-    if (account.smtp_host.lower() != GMAIL_SMTP_HOST or account.smtp_port not in ports
-            or not failure.can_try_alternate_endpoint):
+def repair_smtp_endpoint(account: Account, failure: SmtpFailure) -> dict[str, Any]:
+    # Never derive a new host from the email address or switch servers. An
+    # explicitly configured custom port has no implied alternate endpoint.
+    ports = SMTP_SUBMISSION_SECURITY_BY_PORT
+    if account.smtp_port not in ports or not failure.can_try_alternate_endpoint:
         raise failure
     port = account.smtp_port
     if ports[port] == account.smtp_security:
@@ -2227,7 +2228,7 @@ def check_mailbox_connection(account_name: str, *, repair_smtp: bool = False) ->
     except SmtpFailure as failure:
         if not repair_smtp or (account.connection_mode == "imap_smtp" and not imap_ok):
             raise
-        repair = {"smtpRepaired": repair_gmail_smtp(account, failure)}
+        repair = {"smtpRepaired": repair_smtp_endpoint(account, failure)}
         smtp_ok = True
     return {"account": account.name, "imap": imap_ok, "smtp": smtp_ok,
             "connectionMode": account.connection_mode,
@@ -3714,7 +3715,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Doctor is admitted to assistant tasks by its signed positional prefix.
     # Keep the local settings write in the existing human setup command.
     configure_parser.add_argument("--repair-smtp", action="store_true",
-                                  help="Verify and save one alternate Gmail SMTP endpoint without prompting")
+                                  help="Verify and save one alternate secure port on the configured SMTP server without prompting")
     configure_parser.add_argument("--smtp-only", action="store_true",
                                   help="Configure outgoing SMTP without IMAP or saved Sent copies")
     configure_parser.add_argument("--from-agent-secret", action="store_true",
