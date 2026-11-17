@@ -738,6 +738,52 @@ test('real official GigaAM processes >25 seconds through async production CLI an
   fs.rmSync(root, {recursive: true});
 });
 
+test('native ordinary ASR decodes the same CAF audio with .caf and .m4a suffixes', {
+  skip: !fixture && !process.env.CI, timeout: 120000,
+}, async t => {
+  assert.ok(fixture);
+  const root = temporary();
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const speech = path.join(root, 'speech.wav');
+  prepareSpokenFixture(speech);
+  const caf = path.join(root, 'Запись.caf');
+  const m4a = path.join(root, 'Запись.m4a');
+  // Generate CAF from the existing public speech using the shipped FFmpeg.
+  // Force the output container, then give identical bytes both suffixes.
+  const program = [
+    'import runpy, subprocess, sys',
+    'ffmpeg = runpy.run_path(sys.argv[1])["ffmpeg_executable"]()',
+    'subprocess.run([ffmpeg, "-nostdin", "-loglevel", "error", "-i", sys.argv[2],',
+    '                "-c:a", "pcm_s16le", "-f", "caf", sys.argv[3]], check=True)',
+  ].join('\n');
+  const converted = spawnSync(pythonPath(fixture.root),
+    ['-I', '-c', program, path.join(providerRoot, 'engine', 'worker.py'), speech, caf],
+    {shell: false, env: childEnvironment(fixture.root), encoding: 'utf8', timeout: 15000});
+  assert.equal(converted.status, 0, converted.stderr);
+  assert.equal(fs.readFileSync(caf).subarray(0, 4).toString('ascii'), 'caff');
+  fs.copyFileSync(caf, m4a);
+
+  const durations = [];
+  for (const [index, source] of [caf, m4a].entries()) {
+    const job = path.join(root, `job-${index}`);
+    const started = await run(['start', '--input', source, '--output-dir', job], {root: fixture.root});
+    assert.equal(started.state, 'queued');
+    let status;
+    const deadline = Date.now() + 45000;
+    do {
+      await sleep(200);
+      status = await run(['status', '--job-dir', job], {root: fixture.root});
+    } while (['queued', 'validating', 'loading', 'transcribing'].includes(status.state) && Date.now() < deadline);
+    assert.equal(status.state, 'completed', JSON.stringify(status));
+    const transcript = JSON.parse(fs.readFileSync(path.join(job, 'transcript.json'), 'utf8'));
+    assert.equal(transcript.complete, true);
+    assert.ok(transcript.durationSeconds > 10);
+    assert.match(transcript.segments.map(segment => segment.text).join(' '), /[А-Яа-яЁё]{3}/u);
+    durations.push(transcript.durationSeconds);
+  }
+  assert.equal(durations[0], durations[1]);
+});
+
 test('native Whisper recognizes explicit English and auto-detects Russian and English without changing GigaAM', {
   skip: !fixture && !process.env.CI, timeout: 240000,
 }, async t => {

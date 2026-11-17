@@ -270,6 +270,7 @@ fallback создаёт отдельную job. Host-only source-original сох
 Node launcher и Python worker до inference, без изменения сохранённых результатов.
 Потоковый decoder сохраняет все samples; cursor продвигается после durable
 segment. Resume не теряет cancellation нового run и не меняет исходник.
+CAF проверяется через обычный CLI с расширениями `.caf` и `.m4a`.
 Обязательны нативные first-install/inference gates на всех заявленных OS;
 синтетический decoder не заменяет проверку настоящей официальной модели.
 Task execution explicitly signs its bounded ordinary ASR command prefixes,

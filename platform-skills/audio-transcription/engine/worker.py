@@ -119,8 +119,10 @@ def ffmpeg_executable():
 
 
 def ffmpeg_arguments(executable, input_path):
+    # Detect the container from the file bytes, including CAF exported as .m4a.
+    # Keep the demuxer list explicit so playlist formats cannot open other files.
     return [executable, "-nostdin", "-hide_banner", "-loglevel", "error",
-            "-protocol_whitelist", "file,pipe", "-format_whitelist", "wav,mp3,mov,matroska,webm,ogg,flac,aac,aiff",
+            "-protocol_whitelist", "file,pipe", "-format_whitelist", "wav,mp3,mov,matroska,webm,ogg,flac,aac,aiff,caf",
             "-i", str(input_path), "-map", "0:a:0", "-vn", "-ac", "1", "-ar", str(RATE),
             "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1"]
 
