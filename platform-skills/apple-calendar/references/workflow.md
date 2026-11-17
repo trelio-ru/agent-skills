@@ -127,7 +127,8 @@ If-Match при update; DELETE If-Match. Schedule-Tag сохраняется, е
 его выдал. Нет сетевого write retry. Journal=unknown сохраняется зашифрованно
 до dispatch: crash/lost response/5xx/redirect не разрешают ещё один write.
 После positive response выполняется exact GET read-back; календарь с иными
-семантическими данными остаётся unknown. Только timestamps/PRODID игнорируются.
+семантическими данными остаётся unknown. Игнорируются timestamps/PRODID и только
+серверный delivery-параметр SCHEDULE-STATUS; PARTSTAT и участники сравниваются.
 Apple может добавлять свойства: mismatch требует разбирательства, не replay.
 
 401/403/412 – определённый rejected receipt; старый operationId погашен,

@@ -260,3 +260,11 @@ test('Windows helper starts under Restricted parent process policy without chang
   }),120000);
   assert.ok(result.length>0);
 });
+
+test('server scheduling diagnostics are nonsemantic but attendee response and unknown Apple properties remain exact',()=> {
+  const data=createEvent(changes({attendees:[{email:'other@example.test'}]}),'UTC','mailto:synthetic@example.test');
+  const status=data.replace('ATTENDEE;', 'ATTENDEE;SCHEDULE-STATUS=1.2;');
+  assert.equal(fingerprint(data),fingerprint(status));
+  assert.notEqual(fingerprint(data),fingerprint(data.replace('PARTSTAT=NEEDS-ACTION','PARTSTAT=ACCEPTED')));
+  assert.notEqual(fingerprint(data),fingerprint(data.replace('END:VEVENT','X-APPLE-SYNTHETIC:changed\r\nEND:VEVENT')));
+});

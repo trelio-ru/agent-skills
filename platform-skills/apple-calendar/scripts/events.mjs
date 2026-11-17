@@ -322,12 +322,17 @@ export function mutateEvent(data, spec, defaultZone, addresses) {
 
 export function fingerprint(data) {
   // Server-added timestamps and product metadata do not invalidate a read-back.
-  // All event values, unknown Apple properties and exceptions remain compared.
+  // RFC6638 SCHEDULE-STATUS is the server's transport/delivery annotation, not
+  // an attendee's PARTSTAT or the requested event. Ignore only that exact
+  // parameter; unknown Apple properties and all semantic values stay compared.
   const normalize = component => {
     const [name, properties, components] = component;
     const ignored = new Set(['dtstamp', 'last-modified', 'created', 'prodid']);
-    return [name, properties.filter(property => !ignored.has(property[0])).map(property =>
-      [property[0], property[1], property[2], ...property.slice(3)]).sort((a,b) => stable(a).localeCompare(stable(b))),
+    return [name, properties.filter(property => !ignored.has(property[0])).map(property => {
+      const parameters = { ...property[1] };
+      delete parameters['schedule-status'];
+      return [property[0], parameters, property[2], ...property.slice(3)];
+    }).sort((a,b) => stable(a).localeCompare(stable(b))),
       components.map(normalize).sort((a,b) => stable(a).localeCompare(stable(b)))];
   };
   return stable(normalize(parse(data).toJSON()));
