@@ -3953,10 +3953,8 @@ def command_webmail(args: argparse.Namespace) -> dict[str, Any]:
     if not binding or binding["mailbox_name"] != args.account:
         raise MailboxError("EMAIL_WEBMAIL_SELECTED_ACCOUNT_REQUIRED")
     account = load_account(args.account)
-    # Forward-only SMTP relays have no inbox or corresponding personal
-    # mailbox. Browser setup must not silently change that account's mode.
-    if account.connection_mode == "smtp_only":
-        raise MailboxError("EMAIL_WEBMAIL_REQUIRES_MAILBOX")
+    # IMAP being disabled says nothing about a web interface. Keep the same
+    # selected address/profile without requiring a working protocol mailbox.
     node = Path(os.environ.get("TRELIO_LOCAL_FORM_NODE_EXECUTABLE", ""))
     if not node.is_absolute() or not os.environ.get("TRELIO_VISUAL_SESSION_MODULE_URL"):
         raise MailboxError("EMAIL_WEBMAIL_HOST_UNAVAILABLE")

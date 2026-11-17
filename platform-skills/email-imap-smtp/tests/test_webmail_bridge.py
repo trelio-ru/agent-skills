@@ -51,16 +51,21 @@ class WebmailBridgeTests(unittest.TestCase):
             self.assertNotIn(secret, call.kwargs["env"])
         MODULE.load_password.assert_not_called()
 
-    def test_forward_only_sender_never_starts_browser(self):
+    def test_smtp_only_account_can_use_its_own_webmail_without_imap_or_password(self):
         route = {**browser.VALUES, "connection_mode": "smtp_only", "credential_store": "file"}
         route.pop("password")
         MODULE.write_raw_config({"accounts": {"work": route}})
         with (
             mock.patch.object(MODULE, "selected_local_account", return_value=BOUND),
-            mock.patch.object(subprocess, "run", side_effect=AssertionError("unexpected browser helper")),
-            self.assertRaisesRegex(MODULE.MailboxError, "EMAIL_WEBMAIL_REQUIRES_MAILBOX"),
+            mock.patch.dict(MODULE.os.environ, {"TRELIO_LOCAL_FORM_NODE_EXECUTABLE": str(Path(MODULE.CONFIG_DIR) / "node"),
+                "TRELIO_VISUAL_SESSION_MODULE_URL": "file:///host/trelio-visual-session.mjs"}),
+            mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, b'{"state":"not_configured"}', b"")) as child,
         ):
-            MODULE.command_webmail(self.args())
+            self.assertEqual(MODULE.command_webmail(self.args())["state"], "not_configured")
+        self.assertEqual(json.loads(child.call_args.kwargs["input"])["mailbox"], route["email"])
+        MODULE.imap_connection.assert_not_called()
+        MODULE.load_password.assert_not_called()
 
     def test_setup_forwards_saved_server_hints_and_public_discovery_arguments(self):
         account = {**browser.VALUES, "credential_store": "file"}

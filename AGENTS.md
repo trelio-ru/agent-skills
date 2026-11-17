@@ -492,7 +492,8 @@ does not inherit this sampling or its relaxed evidence completeness.
 Явный SMTP-only режим почты задаётся в защищённой форме и сохраняется per-account:
 читай [контракт подключения](docs/agent-skill-connections.md#режим-почты-только-для-отправки).
 Не выводи его из ошибки IMAP; отключённые копии не являются сбоем или поводом
-повторять SMTP. Чтение/reply блокируются до native unlock.
+повторять SMTP. Протокольное чтение/reply блокируются до native unlock. Браузерный резерв
+того же адреса доступен и без IMAP.
 Из existing Agent Secret настройка идёт только через one-use Run-bound
 secret-exec → exact signed skill-run и native-owned file reference. Значение
 не добавляется в argv, ambient env, private protocol или Workspace; browser
