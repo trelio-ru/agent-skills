@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { readFile, mkdir, copyFile, realpath } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -13,7 +13,7 @@ const npmCli = process.platform === 'win32'
 const install = spawnSync(process.execPath, [npmCli, 'ci', '--ignore-scripts', '--no-audit', '--no-fund'],
   { cwd: root, stdio: 'inherit', shell: false });
 if (install.status !== 0) throw new Error('apple_calendar_dependencies_failed');
-const { build } = await import(path.join(root, 'node_modules/esbuild/lib/main.js'));
+const { build } = await import(pathToFileURL(path.join(root, 'node_modules/esbuild/lib/main.js')).href);
 await mkdir(path.join(root, '.build'), { recursive: true });
 for (const [name, entry] of [['ical', 'ical.js'], ['temporal', '@js-temporal/polyfill'], ['xml', 'xml-js']]) {
   const contents = name === 'xml' ? `import xml from '${entry}';export const xml2js=xml.xml2js;`
