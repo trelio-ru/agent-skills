@@ -2,23 +2,29 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.8.2",
-    "summary": "В инструкции по выбору папки пояснили, как Gmail показывает ярлыки по IMAP и где проверить видимость нужного ярлыка.",
-    "routingSummary": "Read and send email over IMAP/SMTP, inspect relevant attachments locally, and unsubscribe from marketing with authorized one-click requests."
+    "version": "2.9.0",
+    "summary": "Почтовый ящик можно дополнить браузерным резервом со своим HTTPS-адресом и сохранить вход через веб-почту или отдельный SSO.",
+    "routingSummary": "Read and send email over IMAP/SMTP, inspect attachments locally, and use an optional protected webmail session when the protocol connection is unavailable."
   },
   "connection": null,
   "runtime": {
-    "version": "2.9.1",
-    "minimumHostVersion": "3.18.0",
+    "version": "2.10.0",
+    "minimumHostVersion": "3.32.0",
     "entrypoint": {
       "path": "trelio-email.py",
       "interpreter": "python"
     },
     "capabilities": [
+      "browser",
       "local-session",
       "network",
       "local-accounts-v1"
     ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "protected-snapshot",
+      "manualAssist": true
+    },
     "files": [
       {
         "source": "scripts/trelio-secret-setup.json",
@@ -108,6 +114,16 @@
       {
         "source": "scripts/email_unsubscribe.py",
         "path": "email_unsubscribe.py",
+        "mode": 420
+      },
+      {
+        "source": "scripts/webmail.mjs",
+        "path": "webmail.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/instruction-guides/part-08.md",
+        "path": "instruction-guides/part-08.md",
         "mode": 420
       }
     ]

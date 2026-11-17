@@ -3633,6 +3633,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the current visible terminal instead of the protected local browser page.",
     )
     configure_parser.set_defaults(handler=command_configure)
+    webmail_parser = subparsers.add_parser("webmail", help="Use the selected mailbox's protected browser fallback")
+    webmail_subparsers = webmail_parser.add_subparsers(dest="webmail_operation", required=True)
+    for operation in ("status", "setup", "open", "ready", "view", "read", "follow", "close"):
+        operation_parser = webmail_subparsers.add_parser(operation)
+        operation_parser.add_argument("--account", required=True)
+        if operation == "read":
+            operation_parser.add_argument("--offset", type=int, default=0)
+        if operation == "follow":
+            operation_parser.add_argument("--label", required=True)
+        operation_parser.set_defaults(handler=command_webmail)
     accounts_parser = subparsers.add_parser("accounts", help="List configured accounts without secrets")
     accounts_parser.set_defaults(handler=command_accounts)
     signature_parser = subparsers.add_parser("signature", help="Read, set or clear the mailbox's plain-text closing")
@@ -3806,6 +3816,54 @@ def command_authentication_browser(args: argparse.Namespace) -> dict[str, Any]:
     return handler(args, sys.modules[__name__])
 
 
+def command_webmail(args: argparse.Namespace) -> dict[str, Any]:
+    """Route the selected mailbox to the signed browser helper without opening its vault."""
+    binding = selected_local_account()
+    if not binding or binding["mailbox_name"] != args.account:
+        raise MailboxError("EMAIL_WEBMAIL_SELECTED_ACCOUNT_REQUIRED")
+    account = load_account(args.account)
+    # Forward-only SMTP relays have no inbox or corresponding personal
+    # mailbox. Browser setup must not silently change that account's mode.
+    if account.connection_mode == "smtp_only":
+        raise MailboxError("EMAIL_WEBMAIL_REQUIRES_MAILBOX")
+    node = Path(os.environ.get("TRELIO_LOCAL_FORM_NODE_EXECUTABLE", ""))
+    if not node.is_absolute() or not os.environ.get("TRELIO_VISUAL_SESSION_MODULE_URL"):
+        raise MailboxError("EMAIL_WEBMAIL_HOST_UNAVAILABLE")
+    values = {"operation": args.webmail_operation, "mailbox": account.email_address}
+    if args.webmail_operation == "read":
+        values["offset"] = args.offset
+    if args.webmail_operation == "follow":
+        values["label"] = args.label
+    # Only host-created account/lease/adapter metadata crosses this boundary.
+    # Do not forward a Secret checkout or inherit Node loader switches.
+    environment = native_runtime().child_environment()
+    for name in ("TRELIO_VISUAL_SESSION_MODULE_URL", "TRELIO_LOCAL_FORM_MODULE_URL",
+                 "TRELIO_BROWSER_SESSION_POLICY_JSON", "TRELIO_BROWSER_SESSION_STARTED_AT",
+                 "TRELIO_BROWSER_SESSION_DEADLINE_AT", "TRELIO_SKILL_RUNTIME_SESSION_ID",
+                 "TRELIO_WORKSPACE_CLIENT_PROFILE"):
+        if name in os.environ:
+            environment[name] = os.environ[name]
+    if node.name.lower() not in {"node", "node.exe"}:
+        # The host may be Node embedded in the desktop app. This is a fixed
+        # launch mode for that host-selected executable, not a caller flag.
+        environment["ELECTRON_RUN_AS_NODE"] = "1"
+    try:
+        result = subprocess.run(
+            [str(node), str(Path(__file__).resolve().with_name("webmail.mjs"))],
+            input=json.dumps(values, ensure_ascii=True).encode("utf-8"),
+            env=environment, capture_output=True, timeout=180, check=False, shell=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        if result.returncode or result.stderr or len(result.stdout) > 40_000:
+            raise ValueError
+        value = json.loads(result.stdout.decode("utf-8", errors="strict"))
+        if not isinstance(value, dict):
+            raise ValueError
+        return value
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        raise MailboxError("EMAIL_WEBMAIL_HOST_UNAVAILABLE") from None
+
+
 def import_existing_accounts() -> dict[str, Any]:
     # LEGACY: skill-personal-accounts-v1. Read bounded public mailbox metadata,
     # never load a password or probe IMAP/SMTP merely to migrate the catalogue.
@@ -3855,7 +3913,7 @@ def main(*, _owned: bool = False) -> int:
         # internal callers that do not enter through this CLI.
         if args.command in IMAP_COMMANDS:
             require_imap(load_account(args.account))
-        if not _owned and args.command not in {"accounts", "description", "signature", "policy", "release-attachment"}:
+        if not _owned and args.command not in {"accounts", "description", "signature", "policy", "release-attachment", "webmail"}:
             terminal = args.command == "configure" and (
                 args.terminal_prompts or args.password_input == "terminal")
             if terminal and (not sys.stdin.isatty() or not sys.stderr.isatty()):
@@ -3871,7 +3929,12 @@ def main(*, _owned: bool = False) -> int:
     except (MailboxError, OSError, UnicodeError, ValueError, imaplib.IMAP4.error) as error:
         print(json.dumps(error_payload(error), ensure_ascii=False), file=sys.stderr)
         return 2
-    print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
+    # The host recognizes and validates the exact browser DTO. Preserve its
+    # closed shape instead of adding the ordinary CLI success flag.
+    if args.command == "webmail":
+        print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+    else:
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
     return 0
 
 
