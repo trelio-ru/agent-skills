@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "apple-calendar",
+    "version": "1.0.0",
+    "summary": "Календари iCloud через CalDAV на macOS и Windows: защищённое подключение, расписание и одноразовые проверяемые операции. Live iCloud smoke не выполнялся.",
+    "routingSummary": "Read and manage iCloud calendars through CalDAV, including availability, recurring events, reminders, invitations and RSVP on macOS and Windows."
+  },
+  "connection": null,
+  "runtime": {
+    "version": "1.0.0",
+    "minimumHostVersion": "3.31.0",
+    "entrypoint": {
+      "path": "scripts/trelio-apple-calendar.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "network",
+      "local-session",
+      "local-accounts-v1"
+    ],
+    "files": [
+      {
+        "source": "scripts/caldav.mjs",
+        "path": "scripts/caldav.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/core.mjs",
+        "path": "scripts/core.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/events.mjs",
+        "path": "scripts/events.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/operations.mjs",
+        "path": "scripts/operations.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/setup.mjs",
+        "path": "scripts/setup.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/storage.mjs",
+        "path": "scripts/storage.mjs",
+        "mode": 420
+      },
+      {
+        "source": "scripts/trelio-apple-calendar.mjs",
+        "path": "scripts/trelio-apple-calendar.mjs",
+        "mode": 493
+      },
+      {
+        "source": "scripts/vault-key.swift",
+        "path": "scripts/vault-key.swift",
+        "mode": 420
+      },
+      {
+        "source": "scripts/vault-windows.ps1",
+        "path": "scripts/vault-windows.ps1",
+        "mode": 420
+      },
+      {
+        "source": "references/workflow.md",
+        "path": "references/workflow.md",
+        "mode": 420
+      },
+      {
+        "source": "trelio-execution-resource.json",
+        "path": "trelio-execution-resource.json",
+        "mode": 420
+      },
+      {
+        "source": "trelio-secret-setup.json",
+        "path": "trelio-secret-setup.json",
+        "mode": 420
+      },
+      {
+        "source": "trelio-assistant-execution.json",
+        "path": "trelio-assistant-execution.json",
+        "mode": 420
+      },
+      {
+        "source": ".build/@js-temporal-polyfill.LICENSE",
+        "path": ".build/@js-temporal-polyfill.LICENSE",
+        "mode": 420
+      },
+      {
+        "source": ".build/ical.js.LICENSE",
+        "path": ".build/ical.js.LICENSE",
+        "mode": 420
+      },
+      {
+        "source": ".build/ical.mjs",
+        "path": ".build/ical.mjs",
+        "mode": 420
+      },
+      {
+        "source": ".build/jsbi.LICENSE",
+        "path": ".build/jsbi.LICENSE",
+        "mode": 420
+      },
+      {
+        "source": ".build/sax.LICENSE",
+        "path": ".build/sax.LICENSE",
+        "mode": 420
+      },
+      {
+        "source": ".build/temporal.mjs",
+        "path": ".build/temporal.mjs",
+        "mode": 420
+      },
+      {
+        "source": ".build/xml-js.LICENSE",
+        "path": ".build/xml-js.LICENSE",
+        "mode": 420
+      },
+      {
+        "source": ".build/xml.mjs",
+        "path": ".build/xml.mjs",
+        "mode": 420
+      }
+    ]
+  }
+}

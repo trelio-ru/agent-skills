@@ -1,0 +1,16 @@
+{
+  "name": "trelio-apple-calendar",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "0.5.1",
+    "ical.js": "2.2.1",
+    "xml-js": "1.6.11"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

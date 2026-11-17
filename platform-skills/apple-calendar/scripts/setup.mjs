@@ -1,0 +1,146 @@
+import http from 'node:http';
+import crypto from 'node:crypto';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { check, Fault, credentials, timezone, childEnvironment } from './core.mjs';
+import { CalDAV } from './caldav.mjs';
+
+function openBrowser(url) {
+  const command = process.platform === 'darwin' ? '/usr/bin/open'
+    : path.join(process.env.SystemRoot || process.env.SYSTEMROOT || '', 'System32', 'rundll32.exe');
+  check(process.platform === 'darwin' || process.platform === 'win32', 'secure_storage_unsupported');
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, process.platform === 'darwin' ? [url] : ['url.dll,FileProtocolHandler', url],
+      { shell: false, windowsHide: true, env: childEnvironment(), stdio: 'ignore' });
+    child.on('error', () => reject(new Fault('setup_browser_unavailable')));
+    child.on('close', status => status === 0 ? resolve() : reject(new Fault('setup_browser_unavailable')));
+  });
+}
+
+export async function configure(store, { makeClient = value => new CalDAV(value), open = openBrowser,
+  timeout = 300000, formModule = process.env.TRELIO_LOCAL_FORM_MODULE_URL } = {}) {
+  const original = await store.read();
+  const pending = Object.values(original.operations).some(operation => operation.state === 'unknown');
+  check(typeof formModule === 'string' && formModule.startsWith('file:'), 'host_local_form_required');
+  const ui = await import(formModule);
+  check(ui.LOCAL_FORM_API === 'trelio.local-form/v1', 'host_local_form_required');
+  const route = `/connect/${crypto.randomBytes(32).toString('hex')}`;
+  const nonce = crypto.randomBytes(24).toString('base64');
+  let origin, loaded = false, posting = false, finished = false, stage = 'credentials';
+  let candidate, calendars;
+  let complete, fail;
+  const result = new Promise((resolve, reject) => { complete = resolve; fail = reject; });
+  result.catch(() => {});
+  function page(error) {
+    return ui.renderLocalFormPage({ title: 'Подключить Apple Calendar',
+      description: stage === 'credentials' ? 'Введите Apple Account и пароль приложения. Данные сохраняются зашифрованно на этом компьютере.'
+        : 'Выберите календари, доступные этому подключению, и часовой пояс для событий без указанного пояса.',
+      ...(error ? { notice: { tone: 'error', text: error } } : {}),
+      sections: stage === 'credentials' ? [
+        { links: [{ label: 'Создать пароль приложения Apple', url: 'https://support.apple.com/ru-ru/102654' }] },
+        { fields: [{ name: 'username', label: 'Apple Account', type: 'email', required: true, maxLength: 254 },
+          { name: 'password', label: 'Пароль приложения', type: 'password', required: true, maxLength: 64 }] }
+      ] : [{ fields: calendars.map(calendar => ({ name: `calendar_${calendar.id}`, label: calendar.name || calendar.id,
+        type: 'checkbox' })) }, { fields: [{ name: 'timezone', label: 'Часовой пояс IANA',
+        type: 'text', required: true, help: 'Например, Europe/Moscow', maxLength: 128 }] }],
+      form: { action: route, nonce, actions: [{ label: stage === 'credentials' ? 'Продолжить' : 'Сохранить',
+        name: 'decision', value: 'save' }, { label: 'Отмена', name: 'decision', value: 'cancel',
+        variant: 'secondary', formNoValidate: true }] } });
+  }
+  const server = http.createServer(async (request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    const html = (status, body) => { response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(body); };
+    try {
+      check(!finished && request.socket.remoteAddress === '127.0.0.1' && request.headers.host === new URL(origin).host &&
+        request.url === route && !request.headers['x-forwarded-host'], 'setup_request_denied');
+      if (request.method === 'GET') {
+        check(!loaded && request.headers['sec-fetch-mode'] === 'navigate' &&
+          ['none','same-origin'].includes(request.headers['sec-fetch-site']), 'setup_request_denied');
+        loaded = true;
+        html(200, page());
+        return;
+      }
+      check(loaded && !posting && request.method === 'POST' && request.headers.origin === origin &&
+        request.headers['sec-fetch-site'] === 'same-origin' &&
+        request.headers['content-type']?.split(';')[0] === 'application/x-www-form-urlencoded' &&
+        !request.headers['content-encoding'], 'setup_request_denied');
+      posting = true;
+      const chunks = [];
+      let bytes = 0, form;
+      try {
+        for await (const chunk of request) { bytes += chunk.length; check(bytes <= 16000, 'setup_request_denied'); chunks.push(chunk); }
+        form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+      } finally { chunks.forEach(chunk => chunk.fill(0)); }
+      check([...form.keys()].every(key => form.getAll(key).length === 1) && form.get('nonce') === nonce, 'setup_request_denied');
+      if (form.get('decision') === 'cancel') {
+        finished = true;
+        html(200, ui.renderLocalFormMessage('Apple Calendar', 'Подключение отменено'));
+        fail(new Fault('user_cancelled'));
+        return;
+      }
+      check(form.get('decision') === 'save', 'setup_request_denied');
+      if (stage === 'credentials') {
+        check([...form.keys()].every(key => ['username','password','nonce','decision'].includes(key)), 'setup_request_denied');
+        try {
+          candidate = credentials({ username: form.get('username'), password: form.get('password') });
+          // Reauthentication can restore read-only reconciliation after Apple
+          // revokes an app password, but cannot change the account or its scope.
+          check(!pending || candidate.username.toLowerCase() === original.credentials?.username.toLowerCase(), 'unknown_write_pending');
+          calendars = await makeClient(candidate).calendars();
+          check(!finished, 'setup_expired');
+          check(calendars.length > 0 && calendars.length <= 50, 'calendar_selection_limit');
+        } catch (error) {
+          candidate = null;
+          html(422, page(error.code === 'needs_reconnect' ? 'Apple отклонил вход. Проверьте Apple Account и пароль приложения.'
+            : 'Подключение не подтверждено. Проверьте данные и доступность iCloud.'));
+          return;
+        }
+        stage = 'calendars';
+        html(200, page());
+        return;
+      }
+      const allowed = ['nonce','decision','timezone',...calendars.map(calendar => `calendar_${calendar.id}`)];
+      check([...form.keys()].every(key => allowed.includes(key)), 'setup_request_denied');
+      let zone;
+      try { zone = timezone(form.get('timezone')); }
+      catch { html(422, page('Введите действующий часовой пояс IANA')); return; }
+      const selected = calendars.filter(calendar => form.has(`calendar_${calendar.id}`)).map(calendar => calendar.id);
+      if (!selected.length) { html(422, page('Выберите хотя бы один календарь')); return; }
+      // Persist only after a positive provider read and an explicit calendar
+      // selection. The success page follows the durable encrypted write.
+      check(!finished, 'setup_expired');
+      const state = await store.read();
+      check(!finished, 'setup_expired');
+      if (pending) check(zone === original.preferences.timezone &&
+        [...selected].sort().join() === [...original.preferences.calendars].sort().join(), 'pending_scope_must_be_preserved');
+      // A submit admitted before expiry owns one durable write. The timer must
+      // not report expiry while that already-started atomic save is completing.
+      finished = true;
+      clearTimeout(timer);
+      state.credentials = candidate;
+      state.preferences = { calendars: selected, timezone: zone };
+      if (!pending) { state.references = {}; state.plans = {}; }
+      await store.write(state);
+      html(200, ui.renderLocalFormMessage('Apple Calendar подключён', 'Выбранные календари доступны. Можно вернуться в чат.'));
+      complete({ configured: true, calendarCount: selected.length, timezone: zone });
+    } catch (error) {
+      finished = true;
+      if (!response.headersSent) html(403, ui.renderLocalFormMessage('Подключение не завершено', 'Повторно проверьте состояние подключения.'));
+      fail(error instanceof Fault ? error : new Fault('setup_failed'));
+    } finally { posting = false; }
+  });
+  server.requestTimeout = 35000;
+  server.headersTimeout = 5000;
+  server.on('clientError', (_error, socket) => socket.destroy());
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  origin = `http://127.0.0.1:${server.address().port}`;
+  const timer = setTimeout(() => { finished = true; fail(new Fault('setup_expired')); }, timeout);
+  try { await open(`${origin}${route}`); return await result; }
+  finally {
+    clearTimeout(timer); candidate = null;
+    server.close(); server.closeAllConnections();
+  }
+}

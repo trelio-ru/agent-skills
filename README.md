@@ -4,12 +4,19 @@
 Инструкции, runtime-код, тесты и инструменты сборки публикуются отдельно от
 корпоративных навыков, личных подключений и production signing.
 
-В `platform-skills/` находятся 26 общих навыков: 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
+В `platform-skills/` находятся 27 общих навыков: Apple Calendar, 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
 DeepSeek Search, DodoStats / DrinkitStats, Google: поиск и ИИ, Google Календарь, GigaChat, почта, ГАС «Правосудие», Госуслуги,
 iPhone Mirroring, Perplexity Search, Yandex Search, ИИ-Консьерж от Гига / Сбер,
 MAX, поиск Ozon, заказные письма Почты России, Т-Банк, Telegram MTProto,
 Telegram Web, WhatsApp, факсимиле для документов, ВК Реклама и локальная расшифровка аудио. Для конкретного provider
 читай его `SKILL.md`.
+
+[Apple Calendar](platform-skills/apple-calendar/SKILL.md) использует CalDAV iCloud
+на macOS и Windows: защищённая локальная форма, Keychain/DPAPI, выбранные календари,
+расписание, повторы, свободное время и одноразовые event/RSVP writes с ETag и
+GET-only reconciliation. Настройка нужна на каждом устройстве. Реальное подключение
+iCloud в 1.0.0 не проверялось по решению заказчика. Полный
+[контракт](platform-skills/apple-calendar/references/workflow.md) входит в package.
 
 [ИИ-Консьерж от Гига / Сбер](platform-skills/giga-concierge/SKILL.md) —
 instruction-only навык для поручений официальному боту: звонки, бронирование,
