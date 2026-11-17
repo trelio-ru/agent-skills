@@ -1,6 +1,9 @@
 """The signed Python CLI keeps the browser helper out of the IMAP/SMTP vault."""
 
 import json
+import base64
+import struct
+import zlib
 from pathlib import Path
 import subprocess
 import unittest
@@ -117,6 +120,31 @@ class WebmailInputTests(unittest.TestCase):
             "input": {"frameId": "fresh-frame", "text": "Reviewed letter"},
         })
         MODULE.load_password.assert_not_called()
+
+    def test_screenshot_transports_a_real_png_larger_than_the_text_budget_despite_native_warning(self):
+        # Deterministic RGB pixels, not an encoded text stand-in. The common
+        # host owns PNG/MCP validation; this boundary must preserve its bytes.
+        width, height = 300, 200
+        def chunk(kind, payload):
+            return struct.pack("!I", len(payload)) + kind + payload + struct.pack("!I", zlib.crc32(kind + payload))
+        pixels = b"".join(b"\0" + bytes((index + row) % 256 for index in range(width * 3)) for row in range(height))
+        png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        png += chunk(b"IDAT", zlib.compress(pixels, level=0)) + chunk(b"IEND", b"")
+        result = {"kind": "trelio.browser-visual/v1", "state": "ready", "reason": "none",
+                  "image": {"mimeType": "image/png", "data": base64.b64encode(png).decode("ascii")}}
+        payload = json.dumps(result).encode()
+        self.assertGreater(len(payload), 40000)
+        account = {**browser.VALUES, "credential_store": "file"}; account.pop("password")
+        MODULE.write_raw_config({"accounts": {"work": account}})
+        args = MODULE.build_parser().parse_args(["webmail", "screenshot", "--account", "work"])
+        with (
+            mock.patch.object(MODULE, "selected_local_account", return_value=BOUND),
+            mock.patch.dict(MODULE.os.environ, {"TRELIO_LOCAL_FORM_NODE_EXECUTABLE": str(Path(MODULE.CONFIG_DIR) / "node"),
+                "TRELIO_VISUAL_SESSION_MODULE_URL": "file:///host/trelio-visual-session.mjs"}),
+            mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, payload, b"Synthetic native warning")),
+        ):
+            self.assertEqual(MODULE.command_webmail(args), result)
 
     def test_existing_read_only_mailbox_policy_still_blocks_browser_input(self):
         account = {**browser.VALUES, "credential_store": "file"}

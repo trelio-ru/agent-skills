@@ -4006,7 +4006,10 @@ def command_webmail(args: argparse.Namespace) -> dict[str, Any]:
             env=environment, capture_output=True, timeout=180, check=False, shell=False,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
-        if result.returncode or result.stderr or len(result.stdout) > 40_000:
+        # Browser PNGs use the host's separate image protocol and can exceed
+        # the ordinary text budget. Stderr stays private; a native warning
+        # must not discard a successful, complete browser result.
+        if result.returncode or len(result.stdout) > 3 * 1024 * 1024:
             raise ValueError
         value = json.loads(result.stdout.decode("utf-8", errors="strict"))
         if not isinstance(value, dict):

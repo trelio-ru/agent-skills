@@ -116,7 +116,11 @@ test('the real CLI opens known and discovered sites without invoking the routing
       export const VISUAL_PROFILE_AUTH_API = 'trelio.visual-profile-auth/v1';
       export const VISUAL_SEMANTIC_CONTROLS_API = 'trelio.visual-semantic-controls/v1';
       export const visualSessionBinding = () => ({skillId:'email-imap-smtp', scope:'synthetic-account'});
-      export const runVisualSession = async options => ({state:'manual_input_required', opened:options.args.url});
+      export const runVisualSession = async options => {
+        if (!options.externalNavigation || !options.profileAuthentication) throw Error('UNEXPECTED_RESTRICTION');
+        return options.operation === 'type-text' ? {state:'ready',textBytes:Buffer.byteLength(options.args.text)}
+          : {state:'manual_input_required',opened:options.args.url};
+      };
     `);
     fs.writeFileSync(path.join(root, 'trelio-visual-bootstrap.mjs'), `
       import fs from 'node:fs';
@@ -129,11 +133,20 @@ test('the real CLI opens known and discovered sites without invoking the routing
     const requests = [
       { mailbox: 'reader@list.ru', operation: 'setup' },
       { mailbox, operation: 'setup', url, authOrigins: ['https://sso.identity.test'] },
+      { mailbox, operation: 'type', input: {frameId:'fresh-frame', text:'Проверенный текст '.repeat(500)} },
     ];
     for (const [index, request] of requests.entries()) {
       const storage = path.join(root, String(index));
+      if (request.operation === 'type') {
+        const file = path.join(storage, 'visual-browser', 'synthetic-account', 'webmail.json');
+        fs.mkdirSync(path.dirname(file), {recursive:true}); fs.writeFileSync(file,JSON.stringify(configured));
+      }
+      // Reproduce Python's ASCII-escaped private stdin, rather than measuring
+      // only the smaller UTF-8 body passed to the browser input API.
+      const encoded = JSON.stringify(request).replace(/[^\x00-\x7f]/gu, ch => '\\u'+ch.charCodeAt(0).toString(16).padStart(4,'0'));
+      if (request.operation === 'type') assert.ok(Buffer.byteLength(encoded)>16384);
       const cli = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/webmail.mjs', import.meta.url))], {
-        input: JSON.stringify(request), encoding: 'utf8', timeout: 10_000,
+        input: encoded, encoding: 'utf8', timeout: 10_000,
         env: { ...process.env, SYNTHETIC_WEBMAIL_ROOT: storage,
           TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(path.join(root, 'trelio-visual-session.mjs')).href,
           TRELIO_LOCAL_FORM_MODULE_URL: pathToFileURL(path.join(root, 'trelio-workspace.mjs')).href },
@@ -141,6 +154,9 @@ test('the real CLI opens known and discovered sites without invoking the routing
       assert.equal(cli.status, 0, cli.stderr);
       assert.equal(cli.stderr, '');
       const output = JSON.parse(cli.stdout);
+      if (request.operation === 'type') {
+        assert.equal(output.state,'ready');assert.equal(output.textBytes,Buffer.byteLength(request.input.text));continue;
+      }
       assert.equal(output.state, 'manual_input_required');
       assert.equal(output.opened, request.url ?? 'https://e.mail.ru/inbox/');
       const saved = JSON.parse(fs.readFileSync(path.join(storage, 'visual-browser', 'synthetic-account', 'webmail.json')));

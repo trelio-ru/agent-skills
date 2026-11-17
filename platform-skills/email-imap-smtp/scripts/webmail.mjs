@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 
 const operations = new Set(['status', 'setup', 'open', 'ready', 'view', 'read', 'follow', 'close', 'navigate', 'screenshot', 'click', 'type', 'key', 'scroll']);
 const maxConfigBytes = 16_384;
+// Python escapes Unicode in the private request pipe. Keep enough transport
+// space for the host's normal 32 KiB input command, not just small settings.
+const maxRequestBytes = 128 * 1024;
 // Match exact known mailbox domains or explicitly configured protocol hosts.
 // Similar names, MX guesses and custom domains alone do not choose a login site.
 const standardWebmail = [
@@ -250,7 +253,7 @@ async function main() {
     const chunks = [];
     for await (const chunk of process.stdin) {
       bytes += chunk.length;
-      if (bytes > maxConfigBytes) fail('EMAIL_WEBMAIL_COMMAND_INVALID');
+      if (bytes > maxRequestBytes) fail('EMAIL_WEBMAIL_COMMAND_INVALID');
       chunks.push(chunk);
     }
     const request = JSON.parse(Buffer.concat(chunks).toString('utf8'));
