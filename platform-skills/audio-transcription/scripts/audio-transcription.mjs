@@ -10,7 +10,7 @@ import {atomicJson, privateDirectory, readJson, stateDirectory} from './storage.
 // The catalog has its own patch history. This executable implements the
 // source-original protocol admitted by the common host/backend from 1.2.0;
 // aligning it down to the catalog version would disable genuine voice reads.
-export const RUNTIME_VERSION = '1.4.1';
+export const RUNTIME_VERSION = '1.4.2';
 const busy = new Set(['queued', 'validating', 'loading', 'transcribing']);
 // The suffix admits a local file to the worker. FFmpeg detects its container
 // from the bytes because some recorders save CAF audio with an .m4a suffix.
@@ -105,7 +105,12 @@ function projection(directory, state) {
     answer.state = 'interrupted'; answer.errorCode = launched?.failed ? 'AUDIO_WORKER_START_FAILED' : 'AUDIO_WORKER_INTERRUPTED';
   }
   if (state.model === whisper.model) answer.language = state.language;
-  if (state.state === 'completed') answer.files = ['transcript.txt', 'transcript.srt', 'transcript.json'].map(name => path.join(directory, name));
+  if (state.state === 'completed') {
+    answer.files = ['transcript.txt', 'transcript.srt', 'transcript.json'].map(name => path.join(directory, name));
+    // The media job cannot infer or authorize a meeting write. Remind the agent
+    // to carry the original request through completion, including after resume.
+    answer.completionGuidance = 'If the user identified this recording as a meeting or call in operational Trelio work, continue the meeting workflow with the complete transcript.txt before replying. Honor transcription-only, analysis-only, read-only and do-not-save requests. Report a specific blocker if capture cannot finish.';
+  }
   return answer;
 }
 

@@ -271,6 +271,8 @@ Node launcher и Python worker до inference, без изменения сох�
 Потоковый decoder сохраняет все samples; cursor продвигается после durable
 segment. Resume не теряет cancellation нового run и не меняет исходник.
 CAF проверяется через обычный CLI с расширениями `.caf` и `.m4a`.
+Подсказка о встрече доступна после полной обычной ASR job. Право сохранения
+определяет исходный запрос и сценарий встреч Trelio. См. [результат ASR](platform-skills/audio-transcription/references/workflow.md#результат-и-ограничения).
 Обязательны нативные first-install/inference gates на всех заявленных OS;
 синтетический decoder не заменяет проверку настоящей официальной модели.
 Task execution explicitly signs its bounded ordinary ASR command prefixes,

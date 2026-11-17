@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "audio-transcription",
-    "version": "1.2.1",
-    "summary": "Записи CAF, в том числе сохранённые с расширением .m4a, расшифровываются напрямую без конвертации в WAV.",
+    "version": "1.2.2",
+    "summary": "После расшифровки записи рабочей встречи навык напоминает агенту сохранить полный текст и оформить итог в Trelio.",
     "routingSummary": "Transcribe audio and video locally using GigaAM for Russian and multilingual Whisper for other languages or poor Russian results."
   },
   "connection": null,
   "runtime": {
-    "version": "1.4.1",
+    "version": "1.4.2",
     "minimumHostVersion": "1.4.0",
     "entrypoint": {
       "path": "scripts/audio-transcription.mjs",

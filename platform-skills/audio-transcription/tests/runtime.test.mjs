@@ -95,6 +95,7 @@ test('source ASR starts once, returns byte-free progress and verifies complete o
   fs.writeFileSync(path.join(input.outputDirectory,'transcript.txt'),words,{mode:0o600});
   const completed=await processSourceOriginal(input,{root:directory,run:execute});
   assert.equal(completed.state,'completed');assert.equal(completed.contentRead,false,'host must independently read and verify transcript bytes');
+  assert.equal(completed.completionGuidance, undefined, 'protected source protocol stays metadata-only');
   assert.deepEqual(completed.text,{sizeBytes:words.length,sha256:digest(words)});
   assert.deepEqual(calls,['doctor','start','doctor','status']);
   assert.doesNotMatch(JSON.stringify(completed),/проверенное|voice\.ogg|job/);
@@ -371,6 +372,8 @@ test('completed E2E results stay readable through status without the new model i
   assert.equal(status.model, 'v3_e2e_rnnt');
   assert.equal(status.state, 'completed');
   assert.equal(status.files.length, 3);
+  assert.match(status.completionGuidance, /If the user identified.*meeting or call.*complete transcript.txt before replying/u);
+  assert.match(status.completionGuidance, /Honor transcription-only, analysis-only, read-only and do-not-save requests/u);
   assert.deepEqual(fs.readFileSync(path.join(root, 'job.json')), before);
   assert.equal(fs.existsSync(path.join(root, 'launch.json')), false);
   fs.rmSync(root, {recursive: true});
@@ -488,7 +491,9 @@ test('a worker that dies before its first checkpoint is reported as interrupted'
   const root = privateDirectory(temporary());
   atomicJson(path.join(root, 'job.json'), {schemaVersion: 1, model: artifacts.model, state: 'queued', runId: 'fixture', segments: []});
   atomicJson(path.join(root, 'launch.json'), {runId: 'fixture', pid: null, startedAt: Date.now() - 60000});
-  assert.equal((await run(['status', '--job-dir', root])).state, 'interrupted');
+  const status = await run(['status', '--job-dir', root]);
+  assert.equal(status.state, 'interrupted');
+  assert.equal(status.completionGuidance, undefined, 'an incomplete job cannot trigger a handoff');
   fs.rmSync(root, {recursive: true});
 });
 
