@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import ctypes
 import datetime as dt
 import email
@@ -42,7 +43,7 @@ from email.message import EmailMessage, Message
 from email.policy import default
 from email.utils import formataddr, format_datetime, make_msgid
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 try:
     import tomllib
@@ -84,6 +85,7 @@ GOOGLE_APP_PASSWORDS_URL = "https://myaccount.google.com/apppasswords"
 GMAIL_DOMAINS = {"gmail.com", "googlemail.com"}
 GMAIL_IMAP_HOST = "imap.gmail.com"
 GMAIL_SMTP_HOST = "smtp.gmail.com"
+GMAIL_SMTP_SECURITY_BY_PORT = {465: "ssl", 587: "starttls"}
 # This is a local setup hint table, not MX discovery or credential routing.
 # Exact domains/hosts avoid treating lookalike domains as a supported provider.
 # Official prerequisite/source links are documented in agent-skill-connections.
@@ -204,8 +206,11 @@ class SmtpFailure(MailboxError):
     provider text into the agent's instructions or a diagnostic log.
     """
 
-    def __init__(self, details: dict[str, Any]):
+    def __init__(self, details: dict[str, Any], *, can_try_alternate_endpoint: bool = False):
         self.details = details
+        # Private control flow for the explicit repair command. The public
+        # no-retry contract for sending stays independent of transport setup.
+        self.can_try_alternate_endpoint = can_try_alternate_endpoint
         super().__init__(
             f"SMTP {details['outcome']} at {details['stage']}: {details['reasonCode']}"
             + (f"; status {details['smtpCode']}" if details.get("smtpCode") else "")
@@ -266,6 +271,8 @@ def smtp_failure(error: Exception, *, stage: str, transaction_started: bool = Fa
         stage, reason = "rcpt_to", "all_recipients_refused"
     elif isinstance(error, smtplib.SMTPNotSupportedError):
         reason = "extension_not_supported"
+    elif isinstance(error, ssl.SSLCertVerificationError):
+        reason = "certificate_verification_failed"
     elif isinstance(error, UnicodeError):
         reason = "invalid_encoding"
     # A negative SMTP response proves rejection; a connection loss during
@@ -281,7 +288,13 @@ def smtp_failure(error: Exception, *, stage: str, transaction_started: bool = Fa
     }
     if isinstance(error, smtplib.SMTPRecipientsRefused):
         details["recipientResponses"] = smtp_recipient_responses(error.recipients)
-    return SmtpFailure(details)
+    can_try_alternate_endpoint = not transaction_started and code is None and stage in {"connection", "tls"} and (
+        isinstance(error, (TimeoutError, ConnectionError, smtplib.SMTPServerDisconnected))
+        or (stage == "tls" and isinstance(error, smtplib.SMTPNotSupportedError))
+        or (isinstance(error, ssl.SSLError) and not isinstance(error, ssl.SSLCertVerificationError)
+            and getattr(error, "reason", None) in {"WRONG_VERSION_NUMBER", "UNEXPECTED_EOF_WHILE_READING", "UNKNOWN_PROTOCOL"})
+    )
+    return SmtpFailure(details, can_try_alternate_endpoint=can_try_alternate_endpoint)
 
 
 def smtp_recipient_responses(refused: dict) -> dict[str, Any]:
@@ -487,6 +500,36 @@ def load_raw_config() -> dict[str, Any]:
     if not isinstance(accounts, dict):
         raise MailboxError(f"{CONFIG_PATH} must contain an [accounts] table.")
     return data
+
+
+@contextlib.contextmanager
+def account_config_lock() -> Iterator[None]:
+    """Serialize account TOML writers, including unbound legacy commands."""
+    ensure_private_directory(CONFIG_DIR)
+    lock_path = CONFIG_PATH.with_suffix(".lock")
+    # The private directory owns one stable lock inode. Closing the handle
+    # releases it even after worker loss. Never unlink it on contention.
+    if lock_path.exists() or lock_path.is_symlink():
+        info = lock_path.lstat()
+        if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise MailboxError("email_config_lock_invalid")
+        ensure_private_file(lock_path)
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    with os.fdopen(os.open(lock_path, flags, 0o600), "r+b") as handle:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                # Lock byte zero even on a new, empty file. No lock data is
+                # written, and a fresh handle always starts at offset zero.
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise MailboxError("email_config_lock_unavailable") from None
+        yield
 
 
 def write_raw_config(data: dict[str, Any]) -> None:
@@ -1494,6 +1537,16 @@ def prompt_configuration_terminal(args: argparse.Namespace, name: str, existing:
 
 
 def command_configure(args: argparse.Namespace) -> dict[str, Any]:
+    if args.repair_smtp:
+        # This option repairs the selected saved account. Never reinterpret
+        # a form, supplied endpoint, or one-use secret as a recovery request.
+        if (args.smtp_only or args.from_agent_secret or args.terminal_prompts or args.password_input != "browser"
+                or any(value is not None for value in (
+                    args.description, args.setup_email, args.setup_username, args.setup_display_name,
+                    args.setup_smtp_host, args.setup_smtp_port, args.setup_smtp_security,
+                ))):
+            raise MailboxError("email_smtp_repair_requires_saved_configuration")
+        return check_mailbox_connection(args.account, repair_smtp=True)
     binding = selected_local_account()
     if binding:
         if args.description is not None and args.description != binding["comment"]:
@@ -1532,41 +1585,46 @@ def command_configure(args: argparse.Namespace) -> dict[str, Any]:
         candidate = replace(candidate, description=binding["comment"])
     password = normalize_password_for_account(candidate, raw_password)
     backup_path = None
-    if existing and existing.get("credential_store", "file") == "file":
-        # Explicit reconfiguration may replace the active legacy reference, but
-        # preserve both its nonsecret config and old credential file until the
-        # user has verified the new connection. Never read/copy the old password.
-        filename = f"accounts-before-encryption-{secrets.token_hex(8)}.toml"
-        if sys.platform == "win32":
-            try:
-                backup_path = native_runtime().windows_config_backup(CONFIG_DIR, filename, CONFIG_PATH.read_bytes())
-            except native_runtime().NativeError as error:
-                raise MailboxError(str(error)) from None
-        else:
-            backup_path = CONFIG_DIR / "previous" / filename
-            ensure_private_directory(backup_path.parent)
-            descriptor = os.open(backup_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(descriptor, "wb") as backup:
-                backup.write(CONFIG_PATH.read_bytes())
-                backup.flush()
-                os.fsync(backup.fileno())
-    credential_store = store_password(candidate, password)
-    data = load_raw_config()
-    data.setdefault("accounts", {})[name] = {
-        "email": candidate.email_address,
-        "display_name": candidate.display_name,
-        "description": candidate.description,
-        "signature": candidate.signature,
-        "username": candidate.username,
-        "imap_host": candidate.imap_host,
-        "imap_port": candidate.imap_port,
-        "smtp_host": candidate.smtp_host,
-        "smtp_port": candidate.smtp_port,
-        "smtp_security": candidate.smtp_security,
-        "credential_store": credential_store,
-        "connection_mode": candidate.connection_mode,
-    }
-    write_raw_config(data)
+    with account_config_lock():
+        data = load_raw_config()
+        # The protected form can be open while another chat configures this
+        # mailbox. Never replace a different row chosen after the form opened.
+        if data["accounts"].get(name, {}) != existing:
+            raise MailboxError("email_config_changed")
+        if existing and existing.get("credential_store", "file") == "file":
+            # Explicit reconfiguration may replace the active legacy reference, but
+            # preserve both its nonsecret config and old credential file until the
+            # user has verified the new connection. Never read/copy the old password.
+            filename = f"accounts-before-encryption-{secrets.token_hex(8)}.toml"
+            if sys.platform == "win32":
+                try:
+                    backup_path = native_runtime().windows_config_backup(CONFIG_DIR, filename, CONFIG_PATH.read_bytes())
+                except native_runtime().NativeError as error:
+                    raise MailboxError(str(error)) from None
+            else:
+                backup_path = CONFIG_DIR / "previous" / filename
+                ensure_private_directory(backup_path.parent)
+                descriptor = os.open(backup_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "wb") as backup:
+                    backup.write(CONFIG_PATH.read_bytes())
+                    backup.flush()
+                    os.fsync(backup.fileno())
+        credential_store = store_password(candidate, password)
+        data.setdefault("accounts", {})[name] = {
+            "email": candidate.email_address,
+            "display_name": candidate.display_name,
+            "description": candidate.description,
+            "signature": candidate.signature,
+            "username": candidate.username,
+            "imap_host": candidate.imap_host,
+            "imap_port": candidate.imap_port,
+            "smtp_host": candidate.smtp_host,
+            "smtp_port": candidate.smtp_port,
+            "smtp_security": candidate.smtp_security,
+            "credential_store": credential_store,
+            "connection_mode": candidate.connection_mode,
+        }
+        write_raw_config(data)
     return {
         "configured": name,
         "description": candidate.description,
@@ -2118,20 +2176,67 @@ def command_accounts(_args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
-    account = load_account(args.account)
+def probe_smtp(account: Account) -> bool:
+    # Keep connection failures distinct from failures after login, including
+    # NOOP and context-manager QUIT. None of the latter allow changing ports.
+    connection = smtp_connection(account)
+    try:
+        with connection as smtp_client:
+            smtp_code, _ = smtp_client.noop()
+            return 200 <= smtp_code < 300
+    except (OSError, UnicodeError, smtplib.SMTPException) as error:
+        raise smtp_failure(error, stage="preflight") from None
+
+
+def repair_gmail_smtp(account: Account, failure: SmtpFailure) -> dict[str, Any]:
+    # A Gmail address alone does not authorize credentials on another host.
+    # A nonstandard port is an explicit setting and has no supported fallback.
+    ports = GMAIL_SMTP_SECURITY_BY_PORT
+    if (account.smtp_host.lower() != GMAIL_SMTP_HOST or account.smtp_port not in ports
+            or not failure.can_try_alternate_endpoint):
+        raise failure
+    port = account.smtp_port
+    if ports[port] == account.smtp_security:
+        port = 587 if port == 465 else 465
+    candidate = replace(account, smtp_port=port, smtp_security=ports[port])
+    with account_config_lock():
+        # Recheck the selected mailbox after the first probe. Hold the same
+        # writer lock through the second login and commit so reconnects cannot
+        # replace its credentials or settings under a successful probe.
+        if load_account(account.name) != account:
+            raise MailboxError("email_config_changed")
+        if not probe_smtp(candidate):
+            raise MailboxError("email_smtp_repair_noop_failed")
+        require_credential_lease()
+        data = load_raw_config()
+        data["accounts"][account.name].update(smtp_port=port, smtp_security=candidate.smtp_security)
+        write_raw_config(data)
+    return {"port": port, "security": candidate.smtp_security}
+
+
+def check_mailbox_connection(account_name: str, *, repair_smtp: bool = False) -> dict[str, Any]:
+    account = load_account(account_name)
     imap_ok = None
     if account.connection_mode == "imap_smtp":
         with imap_connection(account) as imap_client:
             status, _ = imap_client.noop()
             imap_ok = status == "OK"
-    with smtp_connection(account) as smtp_client:
-        smtp_code, _ = smtp_client.noop()
-        smtp_ok = 200 <= smtp_code < 400
+    repair = {}
+    try:
+        smtp_ok = probe_smtp(account)
+    except SmtpFailure as failure:
+        if not repair_smtp or (account.connection_mode == "imap_smtp" and not imap_ok):
+            raise
+        repair = {"smtpRepaired": repair_gmail_smtp(account, failure)}
+        smtp_ok = True
     return {"account": account.name, "imap": imap_ok, "smtp": smtp_ok,
             "connectionMode": account.connection_mode,
             "imapStatus": "disabled" if imap_ok is None else "ok" if imap_ok else "failed",
-            "smtpChecks": ["connection", "authentication", "noop"], "messageAcceptanceChecked": False}
+            "smtpChecks": ["connection", "authentication", "noop"], "messageAcceptanceChecked": False, **repair}
+
+
+def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
+    return check_mailbox_connection(args.account)
 
 
 def command_folders(args: argparse.Namespace) -> dict[str, Any]:
@@ -3531,15 +3636,16 @@ def command_description(args: argparse.Namespace) -> dict[str, Any]:
             raise MailboxError("Use account update --comment to change the common account description.")
         return {"account": binding["id"], "description": binding["comment"]}
     name = normalize_account_name(args.account)
-    data = load_raw_config()
-    account = data.get("accounts", {}).get(name)
-    if not isinstance(account, dict):
-        raise MailboxError(f'Account "{name}" is not configured. Run configure first.')
-    if args.description_command != "show":
-        account["description"] = normalize_account_description(
-            args.text if args.description_command == "set" else ""
-        )
-        write_raw_config(data)
+    with account_config_lock() if args.description_command != "show" else contextlib.nullcontext():
+        data = load_raw_config()
+        account = data.get("accounts", {}).get(name)
+        if not isinstance(account, dict):
+            raise MailboxError(f'Account "{name}" is not configured. Run configure first.')
+        if args.description_command != "show":
+            account["description"] = normalize_account_description(
+                args.text if args.description_command == "set" else ""
+            )
+            write_raw_config(data)
     return {
         "account": name,
         "description": normalize_account_description(account.get("description", "")),
@@ -3555,31 +3661,32 @@ def command_signature(args: argparse.Namespace) -> dict[str, Any]:
     """
 
     name = normalize_account_name(args.account)
-    data = load_raw_config()
-    account = data.get("accounts", {}).get(name)
-    if not isinstance(account, dict):
-        raise MailboxError(f'Account "{name}" is not configured. Run configure first.')
-    signature = normalize_signature(account.get("signature", ""))
-    if args.signature_command != "show":
-        value = ""
-        if args.signature_command == "set":
-            if args.text_file is not None:
-                # Bound the file before decoding; don't materialize an arbitrary
-                # large source merely to reject it after reading. Read bytes to
-                # apply the same portable line-ending normalization as --text.
-                with Path(args.text_file).expanduser().open("rb") as source:
-                    raw = source.read(MAX_SIGNATURE_BYTES + 1)
-                if len(raw) > MAX_SIGNATURE_BYTES:
-                    raise MailboxError("Email signature file exceeds the UTF-8 byte limit.")
-                try:
-                    value = raw.decode("utf-8")
-                except UnicodeError:
-                    raise MailboxError("Email signature file must be UTF-8 text.") from None
-            else:
-                value = args.text
-        signature = normalize_signature(value)
-        account["signature"] = signature
-        write_raw_config(data)
+    with account_config_lock() if args.signature_command != "show" else contextlib.nullcontext():
+        data = load_raw_config()
+        account = data.get("accounts", {}).get(name)
+        if not isinstance(account, dict):
+            raise MailboxError(f'Account "{name}" is not configured. Run configure first.')
+        signature = normalize_signature(account.get("signature", ""))
+        if args.signature_command != "show":
+            value = ""
+            if args.signature_command == "set":
+                if args.text_file is not None:
+                    # Bound the file before decoding; don't materialize an arbitrary
+                    # large source merely to reject it after reading. Read bytes to
+                    # apply the same portable line-ending normalization as --text.
+                    with Path(args.text_file).expanduser().open("rb") as source:
+                        raw = source.read(MAX_SIGNATURE_BYTES + 1)
+                    if len(raw) > MAX_SIGNATURE_BYTES:
+                        raise MailboxError("Email signature file exceeds the UTF-8 byte limit.")
+                    try:
+                        value = raw.decode("utf-8")
+                    except UnicodeError:
+                        raise MailboxError("Email signature file must be UTF-8 text.") from None
+                else:
+                    value = args.text
+            signature = normalize_signature(value)
+            account["signature"] = signature
+            write_raw_config(data)
     binding = selected_local_account()
     return {"account": binding["id"] if binding else name, "signature": signature,
             "signatureSha256": signature_sha256(signature)}
@@ -3604,6 +3711,10 @@ def build_parser() -> argparse.ArgumentParser:
     auth_profile.set_defaults(handler=command_authentication_browser)
     configure_parser = subparsers.add_parser("configure", help="Configure one account interactively")
     configure_parser.add_argument("--account", required=True)
+    # Doctor is admitted to assistant tasks by its signed positional prefix.
+    # Keep the local settings write in the existing human setup command.
+    configure_parser.add_argument("--repair-smtp", action="store_true",
+                                  help="Verify and save one alternate Gmail SMTP endpoint without prompting")
     configure_parser.add_argument("--smtp-only", action="store_true",
                                   help="Configure outgoing SMTP without IMAP or saved Sent copies")
     configure_parser.add_argument("--from-agent-secret", action="store_true",
