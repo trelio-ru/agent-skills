@@ -61,3 +61,28 @@ class WebmailBridgeTests(unittest.TestCase):
             self.assertRaisesRegex(MODULE.MailboxError, "EMAIL_WEBMAIL_REQUIRES_MAILBOX"),
         ):
             MODULE.command_webmail(self.args())
+
+    def test_setup_forwards_saved_server_hints_and_public_discovery_arguments(self):
+        account = {**browser.VALUES, "credential_store": "file"}
+        account.pop("password")
+        MODULE.write_raw_config({"accounts": {"work": account}})
+        node = str(Path(MODULE.CONFIG_DIR) / "node")
+        args = MODULE.build_parser().parse_args([
+            "webmail", "setup", "--account", "work", "--url", "https://webmail.example.com/",
+            "--auth-origin", "https://sso.example.org", "--auth-origin", "https://example.org",
+        ])
+        with (
+            mock.patch.object(MODULE, "selected_local_account", return_value=BOUND),
+            mock.patch.dict(MODULE.os.environ, {"TRELIO_LOCAL_FORM_NODE_EXECUTABLE": node,
+                "TRELIO_VISUAL_SESSION_MODULE_URL": "file:///host/trelio-visual-session.mjs"}),
+            mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, b'{"state":"manual_input_required"}', b"")) as child,
+        ):
+            MODULE.command_webmail(args)
+        self.assertEqual(json.loads(child.call_args.kwargs["input"]), {
+            "operation": "setup", "mailbox": browser.VALUES["email"],
+            "imapHost": browser.VALUES["imap_host"], "smtpHost": browser.VALUES["smtp_host"],
+            "url": "https://webmail.example.com/",
+            "authOrigins": ["https://sso.example.org", "https://example.org"],
+        })
+        MODULE.load_password.assert_not_called()

@@ -3,7 +3,7 @@
   "release": {
     "skillId": "email-imap-smtp",
     "version": "2.9.0",
-    "summary": "Почтовый ящик можно дополнить браузерным резервом со своим HTTPS-адресом и сохранить вход через веб-почту или отдельный SSO.",
+    "summary": "Браузерный резерв почты сразу открывает известный сервис. Для другого провайдера агент сначала находит официальный адрес веб-почты и входа.",
     "routingSummary": "Read and send email over IMAP/SMTP, inspect attachments locally, and use an optional protected webmail session when the protocol connection is unavailable."
   },
   "connection": null,

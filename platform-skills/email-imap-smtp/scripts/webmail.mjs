@@ -5,12 +5,25 @@ import { fileURLToPath } from 'node:url';
 const operations = new Set(['status', 'setup', 'open', 'ready', 'view', 'read', 'follow', 'close']);
 const active = new Set(['preparing', 'ready', 'manual_input_required']);
 const maxConfigBytes = 16_384;
-// Convenience for exact public webmail origins only. A custom corporate
-// deployment uses its own address and owner-entered SSO origins.
+// Match exact known mailbox domains or explicitly configured protocol hosts.
+// Similar names, MX guesses and custom domains alone do not choose a login site.
+const standardWebmail = [
+  { domains: ['gmail.com', 'googlemail.com'], hosts: ['imap.gmail.com', 'smtp.gmail.com'],
+    url: 'https://mail.google.com/mail/' },
+  { domains: ['yandex.ru', 'ya.ru', 'yandex.com', 'yandex.by', 'yandex.kz', 'yandex.com.tr'],
+    hosts: ['imap.yandex.ru', 'imap.ya.ru', 'smtp.yandex.ru'], url: 'https://mail.yandex.ru/' },
+  { domains: ['mail.ru', 'bk.ru', 'list.ru', 'inbox.ru', 'internet.ru'],
+    hosts: ['imap.mail.ru', 'smtp.mail.ru'], url: 'https://e.mail.ru/inbox/' },
+];
+// Public login and parent-cookie origins apply equally to a known default or
+// an explicitly supplied webmail address. Custom SSO remains additive.
 const standardAuthOrigins = new Map([
   ['https://mail.google.com', ['https://accounts.google.com', 'https://google.com']],
   ['https://mail.yandex.ru', ['https://passport.yandex.ru', 'https://yandex.ru']],
-  ['https://e.mail.ru', ['https://account.mail.ru', 'https://mail.ru']],
+  // Mail's official login guidance includes VK ID even for an ordinary mail
+  // account. Retain its login hosts and parent cookie origin on first setup.
+  ['https://e.mail.ru', ['https://account.mail.ru', 'https://mail.ru',
+    'https://id.vk.com', 'https://login.vk.com', 'https://vk.com']],
 ]);
 const result = (state, code) => ({ ok: state !== 'error', webmail: true, state, ...(code ? { code } : {}) });
 const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -40,6 +53,15 @@ const mailboxAddress = value => {
 };
 
 const includesMailbox = (label, mailbox) => label.toLowerCase().split(/[\s<>()\[\],;:«»]+/u).includes(mailbox);
+
+export function standardWebmailAddress(mailbox, { imapHost = '', smtpHost = '' } = {}) {
+  const domain = mailboxAddress(mailbox).split('@')[1];
+  const known = standardWebmail.find(provider => provider.domains.includes(domain));
+  if (known) return known.url;
+  const hosts = [imapHost, smtpHost].map(host => typeof host === 'string' ? host.trim().toLowerCase() : '');
+  const candidates = standardWebmail.filter(provider => hosts.some(host => provider.hosts.includes(host)));
+  return candidates.length === 1 ? candidates[0].url : null;
+}
 
 export function resolveWebmailSettings(fields, mailbox, previous = null) {
   const url = stableHttpsAddress(fields.url.trim());
@@ -125,18 +147,36 @@ export async function runWebmail(request, host) {
   const command = (operation, args = {}) => host.visual({ origins: settings.origins,
     presentation: 'windowed', observationMode: 'text', semanticControls: true, operation, args });
   if (request.operation === 'setup') {
-    if (settings && active.has((await command('status')).state)) {
-      return result('error', 'EMAIL_WEBMAIL_CLOSE_BEFORE_SETUP');
-    }
     const initial = settings;
-    settings = await host.collectSettings({
-      mailbox, previous: initial,
-      validate: fields => resolveWebmailSettings(fields, mailbox, initial),
-      persist: candidate => host.withSettingsLock(async () => {
+    if (request.edit !== undefined && typeof request.edit !== 'boolean'
+        || request.url !== undefined && typeof request.url !== 'string'
+        || request.authOrigins !== undefined && (!Array.isArray(request.authOrigins)
+          || request.authOrigins.length > 15 || request.authOrigins.some(origin => typeof origin !== 'string'))
+        || request.edit && (request.url !== undefined || request.authOrigins?.length)) fail('EMAIL_WEBMAIL_COMMAND_INVALID');
+    const persist = async candidate => {
+      if (initial && JSON.stringify(candidate) !== JSON.stringify(initial)
+          && active.has((await command('status')).state)) fail('EMAIL_WEBMAIL_CLOSE_BEFORE_SETUP');
+      await host.withSettingsLock(async () => {
         if (JSON.stringify(await readSettings()) !== JSON.stringify(initial)) fail('EMAIL_WEBMAIL_SETTINGS_CHANGED');
         await host.writeSettings(candidate);
-      }),
-    });
+      });
+    };
+    if (request.edit) {
+      settings = await host.collectSettings({
+        mailbox, previous: initial,
+        validate: fields => resolveWebmailSettings(fields, mailbox, initial), persist,
+      });
+    } else {
+      // The ordinary setup opens the known or already saved mail site directly.
+      // For another provider the agent can supply its verified official URL.
+      // Only unresolved discovery calls for more information, not another form.
+      const address = request.url ?? initial?.url ?? standardWebmailAddress(mailbox, request);
+      if (!address) return result('not_configured', 'EMAIL_WEBMAIL_ADDRESS_DISCOVERY_REQUIRED');
+      const candidate = resolveWebmailSettings({ url: address,
+        authOrigins: (request.authOrigins ?? []).join('\n'), accountControl: initial?.accountControl ?? '' }, mailbox, initial);
+      if (JSON.stringify(candidate) !== JSON.stringify(initial)) await persist(candidate);
+      settings = candidate;
+    }
     return command('setup', { url: settings.url });
   }
   if (!settings) return result('not_configured', 'EMAIL_WEBMAIL_SETUP_AVAILABLE');
@@ -256,7 +296,7 @@ async function main() {
     const chunks = [];
     for await (const chunk of process.stdin) {
       bytes += chunk.length;
-      if (bytes > 4096) fail('EMAIL_WEBMAIL_COMMAND_INVALID');
+      if (bytes > maxConfigBytes) fail('EMAIL_WEBMAIL_COMMAND_INVALID');
       chunks.push(chunk);
     }
     const request = JSON.parse(Buffer.concat(chunks).toString('utf8'));

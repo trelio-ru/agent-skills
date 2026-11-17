@@ -3638,6 +3638,12 @@ def build_parser() -> argparse.ArgumentParser:
     for operation in ("status", "setup", "open", "ready", "view", "read", "follow", "close"):
         operation_parser = webmail_subparsers.add_parser(operation)
         operation_parser.add_argument("--account", required=True)
+        if operation == "setup":
+            operation_parser.add_argument("--url", help="Official HTTPS webmail entry address, when discovered separately")
+            operation_parser.add_argument("--auth-origin", action="append", default=[],
+                                          help="Additional official HTTPS authentication origin")
+            operation_parser.add_argument("--edit", action="store_true",
+                                          help="Open the optional local form to edit webmail settings")
         if operation == "read":
             operation_parser.add_argument("--offset", type=int, default=0)
         if operation == "follow":
@@ -3830,6 +3836,17 @@ def command_webmail(args: argparse.Namespace) -> dict[str, Any]:
     if not node.is_absolute() or not os.environ.get("TRELIO_VISUAL_SESSION_MODULE_URL"):
         raise MailboxError("EMAIL_WEBMAIL_HOST_UNAVAILABLE")
     values = {"operation": args.webmail_operation, "mailbox": account.email_address}
+    if args.webmail_operation == "setup":
+        # These endpoints are public routing metadata for this exact mailbox.
+        # They allow custom-domain Google/Yandex/Mail accounts to reuse the
+        # provider already selected in their saved IMAP/SMTP configuration.
+        values.update(imapHost=account.imap_host, smtpHost=account.smtp_host)
+        if args.url is not None:
+            values["url"] = args.url
+        if args.auth_origin:
+            values["authOrigins"] = args.auth_origin
+        if args.edit:
+            values["edit"] = True
     if args.webmail_operation == "read":
         values["offset"] = args.offset
     if args.webmail_operation == "follow":
