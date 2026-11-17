@@ -42,6 +42,8 @@ New account hints use `--initial-account-cursor` instead: authenticate the old
 account checkpoint date and include messages already read on another device.
 Never use it to reset an existing cursor or claim historical edit recovery.
 `read-reference` сверяет exact native ID/revision без context/ACK и требует полный текст;
+его отказ сохраняет closed category/stage через native resolver и CLI pipes.
+Пустой lookup не доказывает удаление; stage не разрешает replay/reset или ACK.
 Signed original-audio opt-in retains that SAME exact read and private stdin;
 bounded original bytes use the host-owned scratch/receipt, never model paths,
 automatic transcription/quota or ACK. See the exact-read media contract.

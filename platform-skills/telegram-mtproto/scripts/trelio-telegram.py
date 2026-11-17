@@ -4583,6 +4583,44 @@ def exact_read_failure(*, category: str, stage: str) -> TelegramRuntimeError:
     )
 
 
+class ReferenceReadUnavailable(TelegramRuntimeError):
+    """Internal marker for an already closed source-reader diagnostic."""
+
+
+def reference_read_failure(error: Exception, *, stage: str) -> TelegramRuntimeError:
+    """Keep the source-read refusal while exposing its closed execution stage.
+
+    The source adapter must not mistake failed authorization, an empty native
+    lookup, invalid identity, or failed cleanup for a deleted message. Reuse
+    the ordinary exact-read and SDK classifiers without exporting exception
+    prose/arguments or granting a retry. A proven version/scope conflict keeps
+    its existing code; a cleanup failure never replaces the original failure.
+    """
+    if isinstance(error, ReferenceReadUnavailable):
+        return error
+    if isinstance(error, TelegramRuntimeError) and error.code in {
+        "TELEGRAM_REFERENCE_CHANGED", "TELEGRAM_REFERENCE_INCOMPLETE", "TELEGRAM_REFERENCE_SCOPE_CHANGED",
+    }:
+        return error
+    diagnostic = {"category": "unclassified", "stage": stage,
+                  "nextStep": "inspect_exact_operation", "automaticRetry": False}
+    if isinstance(error, TelegramRuntimeError):
+        prior = (error.details or {}).get("diagnostic")
+        # Only our two exact-read shapes may cross this boundary. Arbitrary
+        # provider details cannot smuggle paths, message text, or new actions.
+        if error.code == "TELEGRAM_EXACT_READ_UNAVAILABLE" and isinstance(prior, dict):
+            if prior.get("category") in {"unknown", "reference_mismatch"}:
+                diagnostic["category"] = prior["category"]
+                diagnostic["nextStep"] = ("verify_native_message_mapping"
+                    if prior["category"] == "reference_mismatch" else "verify_original_link_and_chat_access")
+        elif error.code == "TELEGRAM_SESSION_UNAVAILABLE":
+            diagnostic.update(category="authorization_required", nextStep="review_personal_connection")
+    failure = ReferenceReadUnavailable("The exact Telegram message reference is unavailable.",
+        code="TELEGRAM_REFERENCE_UNAVAILABLE", details={"diagnostic": diagnostic})
+    failure.__cause__ = error
+    return import_inbox_tools().safe_error(failure, sys.modules[__name__], stage=stage)
+
+
 def exact_provider_message(message: Any, entity: Any, message_id: int, utils: Any, *, diagnose_read: bool = False) -> Any:
     empty = not message or type(message).__name__ == "MessageEmpty"
     peer = None if empty else getattr(message, "peer_id", None)
@@ -4634,13 +4672,33 @@ async def discussion_root(client: Any, entity: Any, post_id: int) -> tuple[Any, 
     return group, root
 
 
-async def resolve_message_target(client: Any, reference: MessageReference, *, diagnose_read: bool = False) -> tuple[Any, Any]:
-    _functions, _types, utils, _events, _markdown = import_telethon_workflows()
-    entity = await resolve_entity(client, reference.chat)
-    message = exact_provider_message(
-        await client.get_messages(entity, ids=reference.message_id), entity, reference.message_id, utils,
-        diagnose_read=diagnose_read,
-    )
+async def resolve_message_target(client: Any, reference: MessageReference, *, diagnose_read: bool = False,
+                                 diagnose_reference: bool = False) -> tuple[Any, Any]:
+    # The same exact lookup/order is used by reads and mutations. Only the
+    # source-reader opts into staged diagnostics; other callers retain their
+    # existing error and unknown-write contracts.
+    stage = "native_api_preparation"
+    try:
+        _functions, _types, utils, _events, _markdown = import_telethon_workflows()
+        stage = "peer_resolution"
+        entity = await resolve_entity(client, reference.chat)
+        stage = "message_lookup"
+        candidate = await client.get_messages(entity, ids=reference.message_id)
+        stage = "reference_validation"
+        message = exact_provider_message(candidate, entity, reference.message_id, utils,
+                                        diagnose_read=diagnose_read or diagnose_reference)
+    except Exception as error:
+        if diagnose_reference:
+            # An empty response is a lookup absence, not an identity mismatch.
+            # Preserve that implementation-selected stage from the validator.
+            if (isinstance(error, TelegramRuntimeError) and error.code == "TELEGRAM_EXACT_READ_UNAVAILABLE"
+                    and (error.details or {}).get("diagnostic", {}).get("stage") == "message_lookup"):
+                stage = "message_lookup"
+            failure = reference_read_failure(error, stage=stage)
+            if failure is error:
+                raise
+            raise failure from error
+        raise
     if reference.comment_id is not None:
         entity, root = await discussion_root(client, entity, reference.message_id)
         message = exact_provider_message(
@@ -4789,17 +4847,21 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
     reference = message_reference(args)
     client = build_client(args, identity)
     failure = None
+    stage = "authorization"
     try:
         await ensure_authorized(client)
         if exact_reference:
             # Validate account/company/device correlation BEFORE fetching the
             # private body. Native IDs can coincide in two different accounts;
             # an old task mapping must not silently read the replacement one.
+            stage = "conversation_binding"
             conversation_key = await reference_conversation_key(client, identity, args)
         # Keep owner/assistant revision reads and all mutation callers on
         # their existing error contracts.
-        entity, message = await resolve_message_target(client, reference, diagnose_read=not exact_reference)
+        entity, message = await resolve_message_target(client, reference, diagnose_read=not exact_reference,
+                                                      diagnose_reference=exact_reference)
         if exact_reference:
+            stage = "semantic_revision"
             _functions, _types, utils, _events, _markdown = import_telethon_workflows()
             observed = monitor_message(message, utils, kind="new", channel_peer=int(args.chat))
             observed["conversationKey"] = conversation_key
@@ -4808,17 +4870,20 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
             # The ordinary safe field projection is shared, but its optional
             # reply/context resolver is deliberately NOT called: one queued
             # reference may not fetch a quoted message or neighboring history.
+            stage = "message_projection"
             normalized = public_message(message)
             normalized["link"] = message_link(entity, message.id)
             if normalized["textTruncated"]:
                 raise TelegramRuntimeError("The exact Telegram text exceeds its read bound; no complete read was delivered.", code="TELEGRAM_REFERENCE_INCOMPLETE")
             original_audio = None
             if original_input is not None:
+                stage = "original_audio"
                 original_audio = await read_original_audio(client, message, original_input)
                 # The download may outlive an edit/delete. Re-resolve this SAME
                 # native peer/ID and semantic revision before releasing either
                 # caption or receipt. Do not silently adopt a new original.
-                _entity, current = await resolve_message_target(client, reference)
+                stage = "media_revalidation"
+                _entity, current = await resolve_message_target(client, reference, diagnose_reference=True)
                 if monitor_message(current, utils, kind="new", channel_peer=int(args.chat))["revision"] != args.expected_revision:
                     raise TelegramRuntimeError("The original Telegram message changed during media read.", code="TELEGRAM_REFERENCE_CHANGED")
             return {"schemaVersion": 1, "protocol": "telegram-message-read/v1",
@@ -4838,12 +4903,13 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
     except TelegramRuntimeError as error:
         failure = error
         if exact_reference and error.code not in {"TELEGRAM_REFERENCE_CHANGED", "TELEGRAM_REFERENCE_INCOMPLETE", "TELEGRAM_REFERENCE_SCOPE_CHANGED"}:
-            failure = TelegramRuntimeError("The exact Telegram message reference is unavailable.", code="TELEGRAM_REFERENCE_UNAVAILABLE")
-            raise failure from error
+            failure = reference_read_failure(error, stage=stage)
+            if failure is not error:
+                raise failure from error
         raise
     except Exception as error:
-        failure = TelegramRuntimeError("Cannot read the selected Telegram message; no action was taken.",
-                                       code="TELEGRAM_REFERENCE_UNAVAILABLE" if exact_reference else None)
+        failure = (reference_read_failure(error, stage=stage) if exact_reference else
+                   TelegramRuntimeError("Cannot read the selected Telegram message; no action was taken."))
         raise failure from error
     finally:
         try:
@@ -4852,6 +4918,8 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
             # Do not replace a proven changed/unavailable result with raw SDK
             # diagnostics. A failed cleanup also cannot publish a new success.
             if failure is None:
+                if exact_reference:
+                    raise reference_read_failure(error, stage="cleanup") from error
                 raise TelegramRuntimeError("Telegram read cleanup failed; no result was delivered.",
                                            code="TELEGRAM_REFERENCE_UNAVAILABLE" if exact_reference else None) from error
 
@@ -7951,6 +8019,10 @@ def main() -> int:
             # The async reader already classified a known SDK cause using its
             # actual stage. Reclassification here would replace that stage
             # with provider_command and erase the useful execution location.
+            error_payload = error.public_payload()
+        elif args.command == "read-reference" and isinstance(error, ReferenceReadUnavailable):
+            # The exact reader already classified the native stage. A second
+            # generic pass would erase it with `provider_command`.
             error_payload = error.public_payload()
         else:
             error_payload = import_inbox_tools().safe_error(error, sys.modules[__name__]).public_payload()

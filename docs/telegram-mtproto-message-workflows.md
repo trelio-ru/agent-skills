@@ -957,6 +957,17 @@ exact first-install consent; source access never grants installation.
 `TELEGRAM_REFERENCE_CHANGED` требует обработки нового события/решения host-а,
 а не замены записанного digest или silent reset. Ошибка источника/cleanup –
 `TELEGRAM_REFERENCE_UNAVAILABLE` без private diagnostics и partial success.
+Её `details.diagnostic` содержит только closed category, implementation-selected
+stage, nextStep и `automaticRetry=false`. Этапы: `authorization`,
+`conversation_binding`, `native_api_preparation`, `peer_resolution`,
+`message_lookup`, `reference_validation`, `semantic_revision`,
+`message_projection`, `original_audio`, `media_revalidation`, `cleanup`.
+Пустой lookup сохраняет category `unknown`, несовпавшие native peer/ID –
+`reference_mismatch`; stage не доказывает удаление, причину сети либо потерю
+доступа. Известные SDK причины классифицирует прежний safe-error projector.
+Main/stdio сохраняет исходный этап, exit 2 и отсутствие partial success.
+Cleanup не заменяет доказанную исходную ошибку. Эти metadata не разрешают
+повтор исходного сообщения, смену транспорта, reset, отправку или ACK.
 После фактического чтения нужен отдельный native допуск host-а: model delivery
 с read-confirmation либо прежний task-профиль committed processing. Source merge,
 успех этой команды и message body не создают задачи/разрешения на другие системы.
