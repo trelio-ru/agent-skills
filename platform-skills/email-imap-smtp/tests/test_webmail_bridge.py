@@ -86,3 +86,46 @@ class WebmailBridgeTests(unittest.TestCase):
             "authOrigins": ["https://sso.example.org", "https://example.org"],
         })
         MODULE.load_password.assert_not_called()
+
+
+class WebmailInputTests(unittest.TestCase):
+    setUp = browser.BrowserConfigureTests.setUp
+    def test_browser_input_keeps_its_frame_and_public_text_in_private_stdio(self):
+        account = {**browser.VALUES, "credential_store": "file"}
+        account.pop("password")
+        MODULE.write_raw_config({"accounts": {"work": account}})
+        node = str(Path(MODULE.CONFIG_DIR) / "node")
+        args = MODULE.build_parser().parse_args([
+            "webmail", "type", "--account", "work", "--frame-id", "fresh-frame", "--text", "Reviewed letter",
+        ])
+        with (
+            mock.patch.object(MODULE, "selected_local_account", return_value=BOUND),
+            mock.patch.dict(MODULE.os.environ, {"TRELIO_LOCAL_FORM_NODE_EXECUTABLE": node,
+                "TRELIO_VISUAL_SESSION_MODULE_URL": "file:///host/trelio-visual-session.mjs"}),
+            mock.patch.object(MODULE, "load_email_policy", return_value={"sendMode": "confirm"}),
+            mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, b'{"state":"ready"}', b"")) as child,
+        ):
+            MODULE.command_webmail(args)
+        self.assertEqual(json.loads(child.call_args.kwargs["input"]), {
+            "operation": "type", "mailbox": browser.VALUES["email"],
+            "input": {"frameId": "fresh-frame", "text": "Reviewed letter"},
+        })
+        MODULE.load_password.assert_not_called()
+
+    def test_existing_read_only_mailbox_policy_still_blocks_browser_input(self):
+        account = {**browser.VALUES, "credential_store": "file"}
+        account.pop("password")
+        MODULE.write_raw_config({"accounts": {"work": account}})
+        args = MODULE.build_parser().parse_args([
+            "webmail", "click", "--account", "work", "--frame-id", "frame", "--x", "20", "--y", "30",
+        ])
+        with (
+            mock.patch.object(MODULE, "selected_local_account", return_value=BOUND),
+            mock.patch.dict(MODULE.os.environ, {"TRELIO_LOCAL_FORM_NODE_EXECUTABLE": str(Path(MODULE.CONFIG_DIR) / "node"),
+                "TRELIO_VISUAL_SESSION_MODULE_URL": "file:///host/trelio-visual-session.mjs"}),
+            mock.patch.object(MODULE, "load_email_policy", return_value={"sendMode": "read-only"}),
+            mock.patch.object(subprocess, "run", side_effect=AssertionError("unexpected browser input")),
+            self.assertRaisesRegex(MODULE.MailboxError, "read-only"),
+        ):
+            MODULE.command_webmail(args)

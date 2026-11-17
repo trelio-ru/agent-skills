@@ -2,14 +2,14 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.9.0",
-    "summary": "При настройке почты навык сам проверяет рабочий защищённый порт SMTP на том же сервере. Браузерный резерв поддерживает свой адрес веб-почты, автоматический выбор известных сервисов и поиск официального адреса остальных провайдеров.",
+    "version": "2.9.1",
+    "summary": "Убрали списки разрешённых сайтов и ручную настройку SSO в браузерном резерве почты. Вход свободно проходит через связанные сайты, сессия сохраняется целиком в своём профиле; агент читает и работает с почтовым интерфейсом без настройки кнопки аккаунта.",
     "routingSummary": "Read and send email over IMAP/SMTP, inspect attachments locally, and use an optional protected webmail session when the protocol connection is unavailable."
   },
   "connection": null,
   "runtime": {
-    "version": "2.10.0",
-    "minimumHostVersion": "3.32.0",
+    "version": "2.11.0",
+    "minimumHostVersion": "3.34.0",
     "entrypoint": {
       "path": "trelio-email.py",
       "interpreter": "python"

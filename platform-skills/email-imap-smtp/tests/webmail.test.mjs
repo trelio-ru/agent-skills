@@ -39,17 +39,16 @@ function fixture(initial, replies = []) {
   };
 }
 
-test('custom mailbox URL and explicit SSO origins stay bound to the same profile', async () => {
+test('custom mailbox URL opens without a site or account-label restriction', async () => {
   const host = fixture(null, [{ state: 'manual_input_required' }]);
   assert.equal((await runWebmail({ mailbox, operation: 'setup', edit: true }, host)).state, 'manual_input_required');
   assert.deepEqual(await host.readSettings(), configured);
-  assert.deepEqual(host.calls, [{ origins: ['https://mail.example.test', 'https://auth.example.org', 'https://example.org'],
+  assert.deepEqual(host.calls, [{ origins: ['https://mail.example.test'], externalNavigation: true, profileAuthentication: true,
     presentation: 'windowed', observationMode: 'text', semanticControls: true,
     operation: 'setup', args: { url } }]);
-  const amended = resolveWebmailSettings({ ...fields, authOrigins: 'https://sso.new.example' }, mailbox, configured);
-  assert.deepEqual(amended.origins, [...configured.origins, 'https://sso.new.example']);
-  assert.throws(() => resolveWebmailSettings({ ...fields, url: 'https://other.example.test/' }, mailbox, configured),
-    { code: 'EMAIL_WEBMAIL_PROFILE_MISMATCH' });
+  const changed = resolveWebmailSettings({ url: 'https://other.example.test/' }, mailbox, configured);
+  assert.equal(changed.url, 'https://other.example.test/');
+  assert.equal(changed.schemaVersion, 2);
 });
 
 test('ordinary setup opens known providers directly without a routing form', async () => {
@@ -66,7 +65,8 @@ test('ordinary setup opens known providers directly without a routing form', asy
     assert.equal(host.calls[0].args.url, expected);
     assert.equal((await host.readSettings()).url, expected);
     assert.equal((await host.readSettings()).mailbox, address);
-    assert.ok((await host.readSettings()).origins.length > 1);
+    assert.equal(host.calls[0].externalNavigation, true);
+    assert.equal(host.calls[0].profileAuthentication, true);
   }
 });
 
@@ -80,12 +80,12 @@ test('custom-domain routing uses exact saved protocol hosts without guessing fro
   assert.equal(standardWebmailAddress(mailbox, { imapHost: 'imap.gmail.com.example' }), null);
 });
 
-test('an officially discovered custom URL and SSO origins can be configured without a form', async () => {
+test('an officially discovered custom URL opens without a form', async () => {
   const host = fixture(null, [{ state: 'manual_input_required' }]);
   host.collectSettings = () => assert.fail('verified public routing needs no form');
   await runWebmail({ mailbox, operation: 'setup', url, authOrigins: authOrigins.split('\n') }, host);
   assert.equal(host.calls[0].args.url, url);
-  assert.deepEqual((await host.readSettings()).origins, configured.origins);
+  assert.deepEqual(await host.readSettings(), configured);
 });
 
 test('unresolved providers request discovery before any browser or configuration form', async () => {
@@ -113,6 +113,7 @@ test('the real CLI opens known and discovered sites without invoking the routing
       };
     `);
     fs.writeFileSync(path.join(root, 'trelio-visual-session.mjs'), `
+      export const VISUAL_PROFILE_AUTH_API = 'trelio.visual-profile-auth/v1';
       export const VISUAL_SEMANTIC_CONTROLS_API = 'trelio.visual-semantic-controls/v1';
       export const visualSessionBinding = () => ({skillId:'email-imap-smtp', scope:'synthetic-account'});
       export const runVisualSession = async options => ({state:'manual_input_required', opened:options.args.url});
@@ -161,7 +162,7 @@ test('setup reuses the saved custom route for a known email domain', async () =>
   assert.equal(host.calls[0].args.url, url);
 });
 
-test('automatic settings refuse a concurrent replacement and a live route change', async () => {
+test('automatic settings preserve a concurrent replacement', async () => {
   const host = fixture(null);
   host.withSettingsLock = async action => {
     await host.writeSettings(configured);
@@ -170,32 +171,23 @@ test('automatic settings refuse a concurrent replacement and a live route change
   await assert.rejects(() => runWebmail({ mailbox, operation: 'setup', url }, host),
     { code: 'EMAIL_WEBMAIL_SETTINGS_CHANGED' });
   assert.deepEqual(host.calls, []);
-  const live = fixture(configured, [{ state: 'manual_input_required' }]);
-  await assert.rejects(() => runWebmail({ mailbox, operation: 'setup', authOrigins: ['https://new-sso.example'] }, live),
-    { code: 'EMAIL_WEBMAIL_CLOSE_BEFORE_SETUP' });
-  assert.deepEqual(await live.readSettings(), configured);
+
 });
 
-test('setup rejects callback, credential-bearing and non-HTTPS addresses', () => {
+test('setup accepts ordinary query/hash routes and rejects credential-bearing addresses', () => {
   for (const input of ['http://mail.example.test/', 'https:example.test',
-    'https://user:pass@mail.example.test/', 'https://mail.example.test/?code=foo',
-    'https://mail.example.test/#access_token=foo', 'https://mail.example.test/\n']) {
+    'https://user:pass@mail.example.test/', 'https://mail.example.test/\n']) {
     assert.throws(() => stableHttpsAddress(input), { code: 'EMAIL_WEBMAIL_INVALID_HTTPS_ADDRESS' });
   }
-  assert.throws(() => resolveWebmailSettings({ ...fields, authOrigins: 'https://sso.example.test/continue' }, mailbox),
-    { code: 'EMAIL_WEBMAIL_INVALID_AUTH_ORIGIN' });
+  assert.equal(stableHttpsAddress('https://mail.example.test/?view=inbox#folder').hash, '#folder');
 });
 
-test('common webmail addresses retain their known SSO and parent cookie origins', () => {
-  for (const [url, origins] of [
-    ['https://mail.google.com/mail/', ['https://accounts.google.com', 'https://google.com']],
-    ['https://mail.yandex.ru/', ['https://passport.yandex.ru', 'https://yandex.ru']],
-    ['https://e.mail.ru/inbox/', ['https://account.mail.ru', 'https://mail.ru',
-      'https://id.vk.com', 'https://login.vk.com', 'https://vk.com']],
-  ]) {
-    assert.deepEqual(resolveWebmailSettings({ url, authOrigins: '', accountControl: '' }, mailbox).origins,
-      [new URL(url).origin, ...origins]);
-  }
+test('legacy origin lists and account controls migrate without retaining their restrictions', async () => {
+  const legacy = { schemaVersion: 1, mailbox, url, origins: ['https://mail.example.test'], accountControl: 'outdated control' };
+  const host = fixture(legacy, [status, text([])]);
+  assert.equal((await runWebmail({ mailbox, operation: 'view' }, host)).state, 'ready');
+  assert.equal(host.calls[1].externalNavigation, true);
+  assert.equal(host.calls[1].profileAuthentication, true);
 });
 
 test('unconfigured status does not start a browser and another mailbox cannot reuse the route', async () => {
@@ -214,43 +206,37 @@ test('authorization session can restore and hand off its existing owned window',
   assert.equal((await runWebmail({ mailbox, operation: 'open' }, host)).state, 'manual_input_required');
   assert.equal(await runWebmail({ mailbox, operation: 'ready' }, host), status);
   assert.deepEqual(host.calls.map(item => item.operation), ['status', 'setup', 'ready']);
-  assert.ok(host.calls.every(item => JSON.stringify(item.origins) === JSON.stringify(configured.origins)));
+  assert.ok(host.calls.every(item => item.profileAuthentication && item.externalNavigation));
 });
 
-test('a fresh view suppresses mailbox text until the unique exact account control is present', async () => {
-  const wrong = text([{ role: 'link', label: mailbox }]);
-  const invalid = fixture(configured, [status, wrong, wrong]);
-  const refusal = await runWebmail({ mailbox, operation: 'view' }, invalid);
-  assert.equal(refusal.code, 'EMAIL_WEBMAIL_MAILBOX_UNVERIFIED');
-  assert.equal(refusal.text, undefined);
-  const confirmed = text([accountControl]);
-  const host = fixture(configured, [status, wrong, confirmed]);
-  assert.equal(await runWebmail({ mailbox, operation: 'view' }, host), confirmed);
-  assert.deepEqual(host.calls.at(-1).args, { includeControls: true, controlQuery: label });
-  const ambiguous = fixture(configured, [text([accountControl, accountControl])]);
-  assert.equal((await runWebmail({ mailbox, operation: 'read', offset: 1 }, ambiguous)).code,
-    'EMAIL_WEBMAIL_MAILBOX_UNVERIFIED');
+test('read and view use the live mail interface without an account-label form', async () => {
+  const page = text([]);
+  const host = fixture(configured, [status, page, page]);
+  assert.equal(await runWebmail({ mailbox, operation: 'view' }, host), page);
+  assert.equal(await runWebmail({ mailbox, operation: 'read', offset: 12 }, host), page);
+  assert.deepEqual(host.calls.at(-1).args, {includeControls:true, offset:12});
 });
 
-test('a webmail without a verifiable account control remains available to the human', async () => {
-  const settings = resolveWebmailSettings({ ...fields, accountControl: '' }, mailbox);
-  const host = fixture(settings, [{ state: 'manual_input_required' }]);
-  assert.equal((await runWebmail({ mailbox, operation: 'view' }, host)).code, 'EMAIL_WEBMAIL_ACCOUNT_CONTROL_REQUIRED');
-  assert.deepEqual(host.calls, []);
-  assert.equal((await runWebmail({ mailbox, operation: 'open' }, host)).state, 'manual_input_required');
+test('follow accepts a fresh cross-domain interface link', async () => {
+  const link = { role:'link', label:'Inbox', url:'https://another-mail-host.test/inbox' };
+  const page = text([]), host = fixture(configured, [text([link]), page]);
+  assert.equal(await runWebmail({ mailbox, operation:'follow', label:'Inbox' }, host), page);
+  assert.equal(host.calls[1].args.url, link.url);
 });
 
-test('follow uses a fresh, unique, same-origin UI link and checks identity again', async () => {
-  const link = { role: 'link', label: 'Входящие', url: 'https://mail.example.test/roundcube/?_task=mail#inbox' };
-  const confirmed = text([accountControl]);
-  const host = fixture(configured, [confirmed, text([link]), text([]), confirmed]);
-  assert.equal(await runWebmail({ mailbox, operation: 'follow', label: link.label }, host), confirmed);
-  assert.deepEqual(host.calls.map(item => item.operation), ['read-text', 'read-text', 'navigate', 'read-text']);
-  assert.deepEqual(host.calls[2].args, { url: link.url });
-  for (const links of [[link, link], [{ ...link, url: 'https://auth.example.org/' }], [{ ...link, role: 'button' }]]) {
-    const denied = fixture(configured, [confirmed, text(links)]);
-    assert.equal((await runWebmail({ mailbox, operation: 'follow', label: link.label }, denied)).code,
-      'EMAIL_WEBMAIL_LINK_UNVERIFIED');
-    assert.ok(denied.calls.every(call => call.operation === 'read-text'));
+test('normal browser controls reach the same profile without provider-specific input restrictions', async () => {
+  for (const operation of ['click','type','key','scroll']) {
+    const input={frameId:'frame',text:'Reviewed letter',key:'Enter',x:10,y:20};
+    const page=text([]),host=fixture(configured,[page]);
+    assert.equal(await runWebmail({mailbox,operation,input},host),page);
+    assert.equal(host.calls[0].operation,operation==='type'?'type-text':operation);
+    assert.deepEqual(host.calls[0].args,input);
   }
+});
+
+test('opening a previous-release window saves it and reopens once without its old allowlist', async () => {
+  const host=fixture(configured,[{state:'error',reason:'observation_mode_mismatch'},
+    {state:'closed'},status,{state:'manual_input_required'}]);
+  assert.equal((await runWebmail({mailbox,operation:'open'},host)).state,'manual_input_required');
+  assert.deepEqual(host.calls.map(value=>value.operation),['setup','close','status','setup']);
 });

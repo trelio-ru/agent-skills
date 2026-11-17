@@ -3747,15 +3747,28 @@ def build_parser() -> argparse.ArgumentParser:
     configure_parser.set_defaults(handler=command_configure)
     webmail_parser = subparsers.add_parser("webmail", help="Use the selected mailbox's protected browser fallback")
     webmail_subparsers = webmail_parser.add_subparsers(dest="webmail_operation", required=True)
-    for operation in ("status", "setup", "open", "ready", "view", "read", "follow", "close"):
+    for operation in ("status", "setup", "open", "ready", "view", "read", "follow", "close", "navigate", "screenshot", "click", "type", "key", "scroll"):
         operation_parser = webmail_subparsers.add_parser(operation)
         operation_parser.add_argument("--account", required=True)
+        if operation in {"setup", "navigate"}:
+            operation_parser.add_argument("--url", required=operation == "navigate", help="Official HTTPS webmail entry address, when discovered separately")
         if operation == "setup":
-            operation_parser.add_argument("--url", help="Official HTTPS webmail entry address, when discovered separately")
             operation_parser.add_argument("--auth-origin", action="append", default=[],
-                                          help="Additional official HTTPS authentication origin")
+                                          help=argparse.SUPPRESS)
             operation_parser.add_argument("--edit", action="store_true",
                                           help="Open the optional local form to edit webmail settings")
+        if operation in {"click", "type", "key", "scroll"}:
+            operation_parser.add_argument("--frame-id", required=True)
+        if operation in {"click", "scroll"}:
+            operation_parser.add_argument("--x", type=int, required=True)
+            operation_parser.add_argument("--y", type=int, required=True)
+        if operation == "type":
+            operation_parser.add_argument("--text", required=True)
+        if operation == "key":
+            operation_parser.add_argument("--key", required=True)
+        if operation == "scroll":
+            operation_parser.add_argument("--delta-y", type=int, required=True)
+            operation_parser.add_argument("--delta-x", type=int, default=0)
         if operation == "read":
             operation_parser.add_argument("--offset", type=int, default=0)
         if operation == "follow":
@@ -3959,6 +3972,18 @@ def command_webmail(args: argparse.Namespace) -> dict[str, Any]:
             values["authOrigins"] = args.auth_origin
         if args.edit:
             values["edit"] = True
+    if args.webmail_operation == "navigate":
+        values["url"] = args.url
+    if args.webmail_operation in {"click", "type", "key", "scroll"}:
+        # Browser input keeps the mailbox's existing read-only sending policy.
+        # The host owns fresh frame validation and single-dispatch semantics;
+        # the operator conversation supplies the separate business authority.
+        if load_email_policy(args.account)["sendMode"] == "read-only":
+            raise MailboxError("Local email policy is read-only; browser input is disabled.")
+        values["input"] = {"frameId": args.frame_id}
+        for field in ("x", "y", "text", "key", "delta_y", "delta_x"):
+            if hasattr(args, field):
+                values["input"][{"delta_y": "deltaY", "delta_x": "deltaX"}.get(field, field)] = getattr(args, field)
     if args.webmail_operation == "read":
         values["offset"] = args.offset
     if args.webmail_operation == "follow":

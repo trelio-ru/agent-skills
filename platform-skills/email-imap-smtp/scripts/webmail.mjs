@@ -2,8 +2,7 @@ import path from 'node:path';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const operations = new Set(['status', 'setup', 'open', 'ready', 'view', 'read', 'follow', 'close']);
-const active = new Set(['preparing', 'ready', 'manual_input_required']);
+const operations = new Set(['status', 'setup', 'open', 'ready', 'view', 'read', 'follow', 'close', 'navigate', 'screenshot', 'click', 'type', 'key', 'scroll']);
 const maxConfigBytes = 16_384;
 // Match exact known mailbox domains or explicitly configured protocol hosts.
 // Similar names, MX guesses and custom domains alone do not choose a login site.
@@ -15,16 +14,6 @@ const standardWebmail = [
   { domains: ['mail.ru', 'bk.ru', 'list.ru', 'inbox.ru', 'internet.ru'],
     hosts: ['imap.mail.ru', 'smtp.mail.ru'], url: 'https://e.mail.ru/inbox/' },
 ];
-// Public login and parent-cookie origins apply equally to a known default or
-// an explicitly supplied webmail address. Custom SSO remains additive.
-const standardAuthOrigins = new Map([
-  ['https://mail.google.com', ['https://accounts.google.com', 'https://google.com']],
-  ['https://mail.yandex.ru', ['https://passport.yandex.ru', 'https://yandex.ru']],
-  // Mail's official login guidance includes VK ID even for an ordinary mail
-  // account. Retain its login hosts and parent cookie origin on first setup.
-  ['https://e.mail.ru', ['https://account.mail.ru', 'https://mail.ru',
-    'https://id.vk.com', 'https://login.vk.com', 'https://vk.com']],
-]);
 const result = (state, code) => ({ ok: state !== 'error', webmail: true, state, ...(code ? { code } : {}) });
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 
@@ -33,7 +22,7 @@ export function stableHttpsAddress(value) {
   // callback URLs, userinfo, one-time links and arbitrary origins from mail
   // content are never used as persistent routing settings.
   if (typeof value !== 'string' || !/^https:\/\//iu.test(value) || value.length > 2048
-      || /[\x00-\x20\x7f\\?#]/u.test(value)) {
+      || /[\x00-\x20\x7f\\]/u.test(value)) {
     fail('EMAIL_WEBMAIL_INVALID_HTTPS_ADDRESS');
   }
   let url;
@@ -52,8 +41,6 @@ const mailboxAddress = value => {
   return value.trim().toLowerCase();
 };
 
-const includesMailbox = (label, mailbox) => label.toLowerCase().split(/[\s<>()\[\],;:«»]+/u).includes(mailbox);
-
 export function standardWebmailAddress(mailbox, { imapHost = '', smtpHost = '' } = {}) {
   const domain = mailboxAddress(mailbox).split('@')[1];
   const known = standardWebmail.find(provider => provider.domains.includes(domain));
@@ -65,37 +52,19 @@ export function standardWebmailAddress(mailbox, { imapHost = '', smtpHost = '' }
 
 export function resolveWebmailSettings(fields, mailbox, previous = null) {
   const url = stableHttpsAddress(fields.url.trim());
-  // Retain the same profile when approving a supplementary SSO or cookie
-  // origin. Rebinding an existing protected profile to a different mailbox
-  // or starting site requires a separate account instead of moving cookies.
-  if (previous && (previous.mailbox !== mailbox || new URL(previous.url).origin !== url.origin)) {
-    fail('EMAIL_WEBMAIL_PROFILE_MISMATCH');
-  }
-  const origins = new Set([url.origin, ...(previous?.origins ?? []), ...(standardAuthOrigins.get(url.origin) ?? [])]);
-  for (const line of fields.authOrigins.split(/\s+/u).filter(Boolean)) {
-    let auth;
-    try { auth = stableHttpsAddress(line); }
-    catch { fail('EMAIL_WEBMAIL_INVALID_AUTH_ORIGIN'); }
-    if (auth.pathname !== '/') fail('EMAIL_WEBMAIL_INVALID_AUTH_ORIGIN');
-    origins.add(auth.origin);
-  }
-  if (origins.size > 16) fail('EMAIL_WEBMAIL_TOO_MANY_ORIGINS');
-  const accountControl = fields.accountControl.trim() || previous?.accountControl || '';
-  // With an arbitrary provider no stable selector can certify identity.
-  // The operator may identify the account control, but its exact label must
-  // contain the mailbox address. Never use message bodies or senders as proof.
-  if (accountControl && (accountControl.length > 120 || /[\x00-\x1f\x7f]/u.test(accountControl)
-      || !includesMailbox(accountControl, mailbox))) fail('EMAIL_WEBMAIL_INVALID_ACCOUNT_CONTROL');
-  return { schemaVersion: 1, mailbox, url: url.href, origins: [...origins], accountControl };
+  // The selected host account owns this whole profile. A new webmail entry
+  // address can keep its existing login; old origin lists/account labels are
+  // ignored during migration rather than becoming another setup requirement.
+  if (previous && previous.mailbox !== mailbox) fail('EMAIL_WEBMAIL_PROFILE_MISMATCH');
+  return { schemaVersion: 2, mailbox, url: url.href };
 }
 
 function storedSettings(value, mailbox) {
   if (!value || !Object.keys(value).length) return null;
-  if (value.schemaVersion !== 1 || value.mailbox !== mailbox || typeof value.url !== 'string'
-      || !Array.isArray(value.origins) || value.origins.some(item => typeof item !== 'string')
-      || typeof value.accountControl !== 'string') fail('EMAIL_WEBMAIL_PROFILE_MISMATCH');
-  return resolveWebmailSettings({ url: value.url, authOrigins: value.origins.join('\n'),
-    accountControl: value.accountControl }, mailbox);
+  if (![1, 2].includes(value.schemaVersion) || value.mailbox !== mailbox || typeof value.url !== 'string') {
+    fail('EMAIL_WEBMAIL_PROFILE_MISMATCH');
+  }
+  return resolveWebmailSettings({ url: value.url }, mailbox);
 }
 
 const controlsOptions = (query, offset = 0) => ({
@@ -104,36 +73,15 @@ const controlsOptions = (query, offset = 0) => ({
 const textReady = value => value?.kind === 'trelio.browser-text/v1' && value.state === 'ready'
   && Array.isArray(value.controls);
 
-async function readBoundMailbox(settings, command, offset = 0) {
-  if (!settings.accountControl) return result('error', 'EMAIL_WEBMAIL_ACCOUNT_CONTROL_REQUIRED');
-  // Pass the exact account control label as a filter; page body and unknown
-  // account details stay in this process when the expected control is absent.
-  const view = await command('read-text', controlsOptions(settings.accountControl, offset));
-  if (!textReady(view)) return view;
-  const bound = view.controls.filter(control => ['button', 'link'].includes(control.role)
-    && control.label === settings.accountControl);
-  return bound.length === 1 ? view : result('error', 'EMAIL_WEBMAIL_MAILBOX_UNVERIFIED');
-}
-
-async function followMailboxLink(settings, command, label) {
-  const verified = await readBoundMailbox(settings, command);
-  if (!textReady(verified)) return verified;
+async function followMailboxLink(command, label) {
+  // Resolve a fresh visible link. Host navigation supports the webmail's own
+  // cross-domain routes just as it supports the browser's SSO redirects.
   const links = await command('read-text', controlsOptions(label));
-  if (!textReady(links) || links.sessionId !== verified.sessionId) {
-    return result('error', 'EMAIL_WEBMAIL_LINK_UNVERIFIED');
-  }
+  if (!textReady(links)) return links;
   const matches = links.controls.filter(control => control.role === 'link'
     && control.label === label && typeof control.url === 'string');
   if (matches.length !== 1) return result('error', 'EMAIL_WEBMAIL_LINK_UNVERIFIED');
-  // Link targets come from the host's filtered, fresh visible controls. Mail
-  // apps can use queries or fragments for message IDs; these transient links
-  // are never saved as webmail/SSO configuration or taken from command argv.
-  const target = new URL(matches[0].url);
-  if (target.origin !== new URL(settings.url).origin || target.username || target.password) {
-    return result('error', 'EMAIL_WEBMAIL_LINK_UNVERIFIED');
-  }
-  const opened = await command('navigate', { url: target.href });
-  return textReady(opened) ? readBoundMailbox(settings, command) : opened;
+  return command('navigate', { url: matches[0].url });
 }
 
 export async function runWebmail(request, host) {
@@ -144,18 +92,32 @@ export async function runWebmail(request, host) {
         || request.label.length > 120 || /[\x00-\x1f\x7f]/u.test(request.label))) fail('EMAIL_WEBMAIL_COMMAND_INVALID');
   const readSettings = async () => storedSettings(await host.readSettings(), mailbox);
   let settings = await readSettings();
-  const command = (operation, args = {}) => host.visual({ origins: settings.origins,
-    presentation: 'windowed', observationMode: 'text', semanticControls: true, operation, args });
+  const command = async (operation, args = {}) => {
+    const options = { origins: [new URL(settings.url).origin], externalNavigation: true,
+      profileAuthentication: true, presentation: 'windowed', observationMode: 'text', semanticControls: true };
+    const value = await host.visual({ ...options, operation, args });
+    if (operation !== 'setup' || value.reason !== 'observation_mode_mismatch') return value;
+    // An open window from the previous release still owns its old allowlist.
+    // Save and close only that selected account's window, then reopen its saved
+    // login once with the new profile policy. No credential input or mail action
+    // is replayed, and no snapshot is deleted.
+    const closed = await host.visual({ ...options, operation: 'close', args: {} });
+    if (closed.state === 'error') return closed;
+    for (let index = 0; index < 40; index++) {
+      const status = await host.visual({ ...options, operation: 'status', args: {} });
+      if (['saved_unverified', 'not_configured'].includes(status.state)) {
+        return host.visual({ ...options, operation, args });
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    return value;
+  };
   if (request.operation === 'setup') {
     const initial = settings;
     if (request.edit !== undefined && typeof request.edit !== 'boolean'
         || request.url !== undefined && typeof request.url !== 'string'
-        || request.authOrigins !== undefined && (!Array.isArray(request.authOrigins)
-          || request.authOrigins.length > 15 || request.authOrigins.some(origin => typeof origin !== 'string'))
-        || request.edit && (request.url !== undefined || request.authOrigins?.length)) fail('EMAIL_WEBMAIL_COMMAND_INVALID');
+        || request.edit && request.url !== undefined) fail('EMAIL_WEBMAIL_COMMAND_INVALID');
     const persist = async candidate => {
-      if (initial && JSON.stringify(candidate) !== JSON.stringify(initial)
-          && active.has((await command('status')).state)) fail('EMAIL_WEBMAIL_CLOSE_BEFORE_SETUP');
       await host.withSettingsLock(async () => {
         if (JSON.stringify(await readSettings()) !== JSON.stringify(initial)) fail('EMAIL_WEBMAIL_SETTINGS_CHANGED');
         await host.writeSettings(candidate);
@@ -172,8 +134,7 @@ export async function runWebmail(request, host) {
       // Only unresolved discovery calls for more information, not another form.
       const address = request.url ?? initial?.url ?? standardWebmailAddress(mailbox, request);
       if (!address) return result('not_configured', 'EMAIL_WEBMAIL_ADDRESS_DISCOVERY_REQUIRED');
-      const candidate = resolveWebmailSettings({ url: address,
-        authOrigins: (request.authOrigins ?? []).join('\n'), accountControl: initial?.accountControl ?? '' }, mailbox, initial);
+      const candidate = resolveWebmailSettings({ url: address }, mailbox, initial);
       if (JSON.stringify(candidate) !== JSON.stringify(initial)) await persist(candidate);
       settings = candidate;
     }
@@ -188,15 +149,17 @@ export async function runWebmail(request, host) {
       // Human auth, drafts and sending remain in the provider's own UI.
       return command('setup', { url: settings.url });
     case 'read':
-      return readBoundMailbox(settings, command, request.offset);
+      return command('read-text', controlsOptions(null, request.offset));
     case 'follow':
-      return followMailboxLink(settings, command, request.label);
+      return followMailboxLink(command, request.label);
+    case 'navigate': return command('navigate', { url: stableHttpsAddress(request.url).href });
+    case 'screenshot': return command('screenshot');
+    case 'click': case 'type': case 'key': case 'scroll':
+      return command(request.operation === 'type' ? 'type-text' : request.operation, request.input);
     case 'view': {
-      if (!settings.accountControl) return result('error', 'EMAIL_WEBMAIL_ACCOUNT_CONTROL_REQUIRED');
       const status = await command('status');
       if (!status.hasStoredSession && status.state !== 'ready') return result('not_configured', 'EMAIL_WEBMAIL_SIGN_IN_REQUIRED');
-      const opened = await command('navigate', { url: settings.url });
-      return textReady(opened) ? readBoundMailbox(settings, command) : opened;
+      return command('navigate', { url: settings.url });
     }
   }
   fail('EMAIL_WEBMAIL_COMMAND_INVALID');
@@ -218,7 +181,8 @@ async function trustedHost(env) {
     import(moduleUrl), import(workspaceUrl), import(new URL('trelio-visual-bootstrap.mjs', moduleUrl)),
     import(new URL('trelio-browser-session.mjs', moduleUrl)), import(new URL('trelio-remote-mcp.mjs', moduleUrl)),
   ]);
-  if (visual.VISUAL_SEMANTIC_CONTROLS_API !== 'trelio.visual-semantic-controls/v1'
+  if (visual.VISUAL_PROFILE_AUTH_API !== 'trelio.visual-profile-auth/v1'
+      || visual.VISUAL_SEMANTIC_CONTROLS_API !== 'trelio.visual-semantic-controls/v1'
       || workspace.LOCAL_FORM_API !== 'trelio.local-form/v1') fail('EMAIL_WEBMAIL_HOST_UNAVAILABLE');
   const binding = visual.visualSessionBinding(env);
   if (binding.skillId !== 'email-imap-smtp') fail('EMAIL_WEBMAIL_INVALID_BINDING');
@@ -243,23 +207,14 @@ async function trustedHost(env) {
           description: 'Войдите в тот же ящик на сайте почтового сервиса. Вход сохраняется в отдельном браузерном профиле на этом устройстве.',
           sections: [
             { rows: [{ label: 'Почтовый ящик', value: mailbox },
-              ...(previous ? [{ label: 'Текущий адрес веб-почты', value: previous.url },
-                { label: 'Сохранённые сайты входа', value: previous.origins.join('\n') }] : [])] },
-            { ...(errorMessage ? { notice: { tone: 'error', text: 'Проверьте HTTPS-адреса и подпись элемента аккаунта. Настройки не сохранены.' } } : {}),
+              ...(previous ? [{ label: 'Текущий адрес веб-почты', value: previous.url }] : [])] },
+            { ...(errorMessage ? { notice: { tone: 'error', text: 'Проверьте адрес веб-почты. Настройки не сохранены.' } } : {}),
               fields: [
                 { name: 'url', type: 'url', label: 'Адрес веб-почты', required: !previous, maxLength: 2048,
                   ...(errorMessage === 'EMAIL_WEBMAIL_INVALID_HTTPS_ADDRESS'
                     ? { error: 'Введите постоянный HTTPS-адрес веб-почты.' } : {}),
                   ...(errorMessage === 'EMAIL_WEBMAIL_PROFILE_MISMATCH'
                     ? { error: 'У этого ящика уже есть сессия на другом сайте. Используйте его сохранённый адрес.' } : {}) },
-                { name: 'auth_origins', type: 'textarea', label: 'Дополнительные адреса входа (необязательно)', maxLength: 4096,
-                  ...(['EMAIL_WEBMAIL_INVALID_AUTH_ORIGIN', 'EMAIL_WEBMAIL_TOO_MANY_ORIGINS'].includes(errorMessage)
-                    ? { error: 'Укажите HTTPS-адреса сайтов входа без пути, по одному на строку. Всего до 16 сайтов.' } : {}),
-                  help: 'Основные сайты входа Google, Яндекса и Mail добавятся автоматически. Для других схем входа укажите HTTPS-адрес каждого сайта с новой строки.' },
-                { name: 'account_control', type: 'text', label: 'Подпись кнопки аккаунта (необязательно)', maxLength: 120,
-                  ...(errorMessage === 'EMAIL_WEBMAIL_INVALID_ACCOUNT_CONTROL'
-                    ? { error: 'В подписи должен быть полный адрес этого почтового ящика.' } : {}),
-                  help: 'Укажите точную подпись кнопки профиля вместе с адресом ящика, если хотите дать агенту возможность читать веб-почту после проверки аккаунта.' },
               ] },
           ],
           form: { action: '/credential', nonce, actions: [
@@ -268,13 +223,12 @@ async function trustedHost(env) {
           ] },
         }),
         parseSubmission: form => {
-          const fields = ['nonce', 'decision', 'url', 'auth_origins', 'account_control'];
+          const fields = ['nonce', 'decision', 'url'];
           if (form.get('decision') !== 'save'
             || [...form.keys()].some(key => !fields.includes(key) || form.getAll(key).length !== 1)) {
             fail('EMAIL_WEBMAIL_INVALID_FORM');
           }
-          return validate({ url: form.get('url')?.trim() || previous?.url || '',
-            authOrigins: form.get('auth_origins') || '', accountControl: form.get('account_control') || '' });
+          return validate({ url: form.get('url')?.trim() || previous?.url || '' });
         },
         doctorCredential: async () => {},
         persistCredential: async (_origin, _resolved, candidate, { signal }) => {
