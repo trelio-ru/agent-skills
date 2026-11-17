@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "apple-calendar",
-    "version": "1.0.1",
-    "summary": "Подключение через прямую ссылку Apple Account: путь к паролям приложений и подготовка пароля до пятиминутной локальной формы. Live iCloud smoke не выполнялся.",
+    "version": "1.0.2",
+    "summary": "Подключение за один ввод Apple Account и пароля приложения: все календари и часовой пояс компьютера выбираются автоматически. Ручной выбор необязателен; повторный вход сохраняет прежние настройки.",
     "routingSummary": "Read and manage iCloud calendars through CalDAV, including availability, recurring events, reminders, invitations and RSVP on macOS and Windows."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.1",
+    "version": "1.0.2",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "scripts/trelio-apple-calendar.mjs",

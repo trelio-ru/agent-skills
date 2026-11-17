@@ -238,7 +238,7 @@ export function createEvent(changes, defaultZone, organizer) {
   check(changes.title && changes.start && changes.end, 'event_fields_required');
   const calendar = new ICAL.Component('vcalendar');
   calendar.addPropertyWithValue('version', '2.0');
-  calendar.addPropertyWithValue('prodid', '-//Trelio//Apple Calendar 1.0.1//EN');
+  calendar.addPropertyWithValue('prodid', '-//Trelio//Apple Calendar 1.0.2//EN');
   const event = new ICAL.Component('vevent');
   event.addPropertyWithValue('uid', crypto.randomUUID());
   calendar.addSubcomponent(event);

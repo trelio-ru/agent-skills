@@ -1,4 +1,33 @@
-# Release review 1.0.1
+# Release review 1.0.2
+
+Published baseline: skill-apple-calendar-v1.0.1 at
+9d4bd44be7898c6bf070355e39db3ef9b28200ca. Review covers the full provider diff
+to the candidate recorded by the integration coordinator.
+
+The same protected credential submit now explains and selects all discovered
+calendars plus the native device IANA zone for NEW connections. Optional custom
+settings retain the old explicit subset path. Reconnect preserves the exact
+saved subset and zone, including unresolved operations; missing saved calendars
+refuse before persistence. Both paths share the SAME durable encrypted writer,
+expiry checks and success completion. No provider write is added to discovery.
+
+This changes provider setup workflow inside the existing local-form/v1 API;
+there is no host ABI, command/assistant admission, tenant/account namespace,
+credential transport, iCloud privilege, journal format or replay change. The
+same all-calendar grant remains visibly approved by the human's submit; existing
+bindings never expand automatically. Host minimum remains 3.31.0.
+
+Selected checks: actual host-rendered HTTP regressions for one-step ALL, detected
+non-Moscow timezone, saved subset/zone on reconnect, custom subset/default zone,
+unavailable timezone, missing saved calendar, unknown-operation preservation,
+forged request/cancel/expiry and save-before-success. Ordinary native provider
+gates on hosted Linux/macOS/Windows, instruction/package/source checks, tagged
+artifact and signed-package read-back remain mandatory. No backend/host release
+or unrelated full question-system stand is needed: their boundaries are unchanged.
+Synthetic browser smoke inspects the changed form without human credentials.
+Real iCloud setup/readiness is checked separately in the authorized local account.
+
+## Historical review 1.0.1
 
 Published baseline: skill-apple-calendar-v1.0.0 at
 eed339bcba54bf0451b90daad517871e59d385e4. Review covers the complete provider

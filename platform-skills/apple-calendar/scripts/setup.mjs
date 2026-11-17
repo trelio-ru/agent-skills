@@ -18,9 +18,17 @@ function openBrowser(url) {
 }
 
 export async function configure(store, { makeClient = value => new CalDAV(value), open = openBrowser,
-  timeout = 300000, formModule = process.env.TRELIO_LOCAL_FORM_MODULE_URL } = {}) {
+  timeout = 300000, formModule = process.env.TRELIO_LOCAL_FORM_MODULE_URL,
+  detectTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone } = {}) {
   const original = await store.read();
   const pending = Object.values(original.operations).some(operation => operation.state === 'unknown');
+  // Reauthentication must never widen a saved scope or silently reinterpret
+  // existing floating events. A new account uses the device's actual IANA
+  // zone, not the empty vault's historical Europe/Moscow placeholder.
+  const savedScope = original.preferences?.calendars?.length > 0;
+  let automaticZone;
+  try { automaticZone = timezone(savedScope ? original.preferences.timezone : detectTimezone()); }
+  catch { automaticZone = null; }
   check(typeof formModule === 'string' && formModule.startsWith('file:'), 'host_local_form_required');
   const ui = await import(formModule);
   check(ui.LOCAL_FORM_API === 'trelio.local-form/v1', 'host_local_form_required');
@@ -37,6 +45,10 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
         : 'Выберите календари, доступные этому подключению, и часовой пояс для событий без указанного пояса.',
       ...(error ? { notice: { tone: 'error', text: error } } : {}),
       sections: stage === 'credentials' ? [
+        { paragraphs: [savedScope ? 'При повторном входе сохранится текущий набор календарей.'
+          : 'Подключатся все календари этого Apple Account.',
+          automaticZone ? `Часовой пояс: ${automaticZone}. ${savedScope ? 'Сохранён в подключении.' : 'Определён на этом компьютере.'}`
+            : 'Не удалось определить часовой пояс. После входа укажите его в настройках.'] },
         // Go straight to account management: a support article is not the
         // credential entry point and its availability must not block setup.
         // Apple sign-in and password creation stay entirely with the human.
@@ -48,13 +60,36 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
           paragraphs: ['Нужна двухфакторная аутентификация Apple. Пароль вводите только в эту форму, в чат его не присылайте.',
             'Форма действует 5 минут. Если она закроется, подготовьте пароль и попросите агента открыть новую форму.'] },
         { fields: [{ name: 'username', label: 'Apple Account', type: 'email', required: true, maxLength: 254 },
-          { name: 'password', label: 'Пароль приложения', type: 'password', required: true, maxLength: 64 }] }
+          { name: 'password', label: 'Пароль приложения', type: 'password', required: true, maxLength: 64 },
+          { name: 'customize', label: 'Выбрать отдельные календари или изменить часовой пояс', type: 'checkbox' }] }
       ] : [{ fields: calendars.map(calendar => ({ name: `calendar_${calendar.id}`, label: calendar.name || calendar.id,
         type: 'checkbox' })) }, { fields: [{ name: 'timezone', label: 'Часовой пояс IANA',
-        type: 'text', required: true, help: 'Например, Europe/Moscow', maxLength: 128 }] }],
-      form: { action: route, nonce, actions: [{ label: stage === 'credentials' ? 'Продолжить' : 'Сохранить',
+        type: 'text', required: !automaticZone, help: automaticZone ? `Можно оставить пустым: ${automaticZone}`
+          : 'Например, Europe/Moscow', maxLength: 128 }] }],
+      form: { action: route, nonce, actions: [{ label: stage === 'credentials' ? 'Подключить' : 'Сохранить',
         name: 'decision', value: 'save' }, { label: 'Отмена', name: 'decision', value: 'cancel',
         variant: 'secondary', formNoValidate: true }] } });
+  }
+  async function save(selected, zone, respond) {
+    // Both the one-step path and optional custom settings converge on this
+    // SAME durable writer. Never save credentials after expiry, accept an
+    // unavailable saved calendar, or alter an unresolved operation's scope.
+    check(!finished, 'setup_expired');
+    check(selected.length > 0 && selected.every(id => calendars.some(calendar => calendar.id === id)), 'calendar_selection_unavailable');
+    const state = await store.read();
+    check(!finished, 'setup_expired');
+    if (pending) check(zone === original.preferences.timezone &&
+      [...selected].sort().join() === [...original.preferences.calendars].sort().join(), 'pending_scope_must_be_preserved');
+    // Once admitted, the one durable save owns completion: expiry cannot
+    // report failure halfway through an already-started encrypted atomic write.
+    finished = true;
+    clearTimeout(timer);
+    state.credentials = candidate;
+    state.preferences = { calendars: selected, timezone: zone };
+    if (!pending) { state.references = {}; state.plans = {}; }
+    await store.write(state);
+    respond(ui.renderLocalFormMessage('Apple Calendar подключён', 'Календари доступны. Можно вернуться в чат.'));
+    complete({ configured: true, calendarCount: selected.length, timezone: zone });
   }
   const server = http.createServer(async (request, response) => {
     response.setHeader('Cache-Control', 'no-store');
@@ -98,7 +133,8 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
       }
       check(form.get('decision') === 'save', 'setup_request_denied');
       if (stage === 'credentials') {
-        check([...form.keys()].every(key => ['username','password','nonce','decision'].includes(key)), 'setup_request_denied');
+        check([...form.keys()].every(key => ['username','password','customize','nonce','decision'].includes(key)) &&
+          (!form.has('customize') || form.get('customize') === 'on'), 'setup_request_denied');
         try {
           candidate = credentials({ username: form.get('username'), password: form.get('password') });
           // Reauthentication can restore read-only reconciliation after Apple
@@ -113,34 +149,26 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
             : 'Подключение не подтверждено. Проверьте данные и доступность iCloud.'));
           return;
         }
-        stage = 'calendars';
-        html(200, page());
+        if (form.has('customize') || !automaticZone) {
+          stage = 'calendars';
+          html(200, page());
+        } else {
+          // The credential page explicitly explains all-calendar access before
+          // the human submits. Existing bindings keep their exact snapshot;
+          // newly discovered calendars do not enlarge it during reconnect.
+          const selected = savedScope ? [...original.preferences.calendars] : calendars.map(calendar => calendar.id);
+          await save(selected, automaticZone, body => html(200, body));
+        }
         return;
       }
       const allowed = ['nonce','decision','timezone',...calendars.map(calendar => `calendar_${calendar.id}`)];
       check([...form.keys()].every(key => allowed.includes(key)), 'setup_request_denied');
       let zone;
-      try { zone = timezone(form.get('timezone')); }
+      try { zone = timezone(form.get('timezone') || automaticZone); }
       catch { html(422, page('Введите действующий часовой пояс IANA')); return; }
       const selected = calendars.filter(calendar => form.has(`calendar_${calendar.id}`)).map(calendar => calendar.id);
       if (!selected.length) { html(422, page('Выберите хотя бы один календарь')); return; }
-      // Persist only after a positive provider read and an explicit calendar
-      // selection. The success page follows the durable encrypted write.
-      check(!finished, 'setup_expired');
-      const state = await store.read();
-      check(!finished, 'setup_expired');
-      if (pending) check(zone === original.preferences.timezone &&
-        [...selected].sort().join() === [...original.preferences.calendars].sort().join(), 'pending_scope_must_be_preserved');
-      // A submit admitted before expiry owns one durable write. The timer must
-      // not report expiry while that already-started atomic save is completing.
-      finished = true;
-      clearTimeout(timer);
-      state.credentials = candidate;
-      state.preferences = { calendars: selected, timezone: zone };
-      if (!pending) { state.references = {}; state.plans = {}; }
-      await store.write(state);
-      html(200, ui.renderLocalFormMessage('Apple Calendar подключён', 'Выбранные календари доступны. Можно вернуться в чат.'));
-      complete({ configured: true, calendarCount: selected.length, timezone: zone });
+      await save(selected, zone, body => html(200, body));
     } catch (error) {
       finished = true;
       if (!response.headersSent) html(403, ui.renderLocalFormMessage('Подключение не завершено', 'Повторно проверьте состояние подключения.'));

@@ -14,8 +14,10 @@ Telegram Web, WhatsApp, факсимиле для документов, ВК Р�
 [Apple Calendar](platform-skills/apple-calendar/SKILL.md) использует CalDAV iCloud
 на macOS и Windows: защищённая локальная форма, Keychain/DPAPI, выбранные календари,
 расписание, повторы, свободное время и одноразовые event/RSVP writes с ETag и
-GET-only reconciliation. Настройка нужна на каждом устройстве. Реальное подключение
-iCloud в 1.0.0 не проверялось по решению заказчика. Полный
+GET-only reconciliation. Настройка нужна на каждом устройстве. Новое подключение
+использует один ввод credentials: все календари и timezone устройства выбираются
+автоматически, отдельный выбор необязателен; reconnect сохраняет прежний scope.
+Реальное подключение iCloud в 1.0.0 не проверялось по решению заказчика. Полный
 [контракт](platform-skills/apple-calendar/references/workflow.md) входит в package.
 
 [ИИ-Консьерж от Гига / Сбер](platform-skills/giga-concierge/SKILL.md) —

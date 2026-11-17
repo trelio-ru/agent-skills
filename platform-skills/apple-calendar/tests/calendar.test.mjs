@@ -200,11 +200,74 @@ test('protected shared form: failed input can be corrected, scope is explicit, s
     const post=values=>visit(url,'POST',new URLSearchParams({nonce,decision:'save',...values}).toString(),{origin:'null'});
     const failure=await post(auth);assert.equal(failure.status,422);assert.ok(!failure.body.includes(auth.password));assert.equal(writes,0);
     assert.match(failure.body, /href="https:\/\/account\.apple\.com\/"/);
-    const selection=await post(auth);assert.equal(selection.status,200);assert.equal(writes,0);assert.ok(!selection.body.includes(auth.username));
+    const selection=await post({...auth,customize:'on'});assert.equal(selection.status,200);assert.equal(writes,0);assert.ok(!selection.body.includes(auth.username));
     assert.equal((await post({timezone:'Europe/Moscow'})).status,422);
     const done=await post({timezone:'Europe/Moscow',[`calendar_${calendar.id}`]:'on'});assert.equal(done.status,200);assert.equal(writes,1);
   }});
   assert.equal(result.configured,true);assert.equal((await store.read()).credentials.username,auth.username);
+});
+test('new connection saves all discovered calendars and device timezone after one human credential submit', async()=> {
+  const store=memory(), initial=await store.read();initial.credentials=null;initial.preferences.calendars=[];await store.write(initial);
+  const extra={...calendar,id:'d'.repeat(32),name:'Synthetic second calendar',writable:false};
+  let writes=0;const persist=store.write;store.write=async state=>{writes++;await persist(state);};
+  const result=await configure(store,{formModule:contractModule,detectTimezone:()=> 'America/New_York',
+    makeClient:()=>({calendars:async()=>[calendar,extra]}),open:async url=>{
+      const first=await visit(url);assert.match(first.body,/Подключатся все календари/);
+      assert.match(first.body,/America\/New_York/);assert.ok(!first.body.includes('Часовой пояс IANA'));
+      const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
+      const saved=await visit(url,'POST',new URLSearchParams({nonce,decision:'save',...auth}).toString());
+      assert.equal(saved.status,200);assert.match(saved.body,/Apple Calendar подключён/);
+      assert.ok(!saved.body.includes(auth.password));assert.ok(!saved.body.includes('calendar_'));
+    }});
+  assert.equal(writes,1);assert.equal(result.calendarCount,2);
+  assert.deepEqual((await store.read()).preferences,{calendars:[calendar.id,extra.id],timezone:'America/New_York'});
+});
+test('one-step reconnect preserves saved scope, timezone and pending journal despite new device settings or calendars', async()=> {
+  for(const pending of [false,true]) {
+    const store=memory(),state=await store.read();
+    state.preferences.timezone='Asia/Tokyo';state.operations=pending?{operation:{state:'unknown'}}:{};await store.write(state);
+    const result=await configure(store,{formModule:contractModule,
+      detectTimezone:()=>{throw Error('saved zone must not be replaced');},
+      makeClient:()=>({calendars:async()=>[calendar,{...calendar,id:'d'.repeat(32)}]}),open:async url=>{
+        const first=await visit(url);assert.match(first.body,/сохранится текущий набор/);assert.match(first.body,/Asia\/Tokyo/);
+        const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
+        assert.equal((await visit(url,'POST',new URLSearchParams({nonce,decision:'save',...auth}).toString())).status,200);
+      }});
+    assert.equal(result.calendarCount,1);assert.deepEqual((await store.read()).preferences,state.preferences);
+    assert.deepEqual((await store.read()).operations,state.operations);
+  }
+});
+test('custom settings may reuse detected timezone; missing detection requires a real zone, never a guessed default', async()=> {
+  for(const zone of ['Europe/Berlin',null]) {
+    const store=memory(),initial=await store.read();initial.credentials=null;initial.preferences.calendars=[];await store.write(initial);
+    const result=await configure(store,{formModule:contractModule,detectTimezone:()=>zone,
+      makeClient:()=>({calendars:async()=>[calendar]}),open:async url=>{
+        const first=await visit(url);const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
+        const post=values=>visit(url,'POST',new URLSearchParams({nonce,decision:'save',...values}).toString());
+        const settings=await post({...auth,...(zone?{customize:'on'}:{})});
+        assert.match(settings.body,/Часовой пояс IANA/);
+        if(!zone) assert.equal((await post({[`calendar_${calendar.id}`]:'on',timezone:''})).status,422);
+        assert.equal((await post({[`calendar_${calendar.id}`]:'on',timezone:zone?'':'Asia/Tokyo'})).status,200);
+      }});
+    assert.equal(result.timezone,zone||'Asia/Tokyo');
+  }
+});
+test('missing saved calendar and attempted pending scope expansion refuse before any credential save', async()=> {
+  for(const custom of [false,true]) {
+    const store=memory(),initial=await store.read();initial.operations={operation:{state:'unknown'}};await store.write(initial);
+    let writes=0;store.write=async()=>{writes++;};
+    const extra={...calendar,id:'d'.repeat(32)};
+    const task=configure(store,{formModule:contractModule,
+      makeClient:()=>({calendars:async()=>custom?[calendar,extra]:[extra]}),open:async url=>{
+        const first=await visit(url);const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
+        const post=values=>visit(url,'POST',new URLSearchParams({nonce,decision:'save',...values}).toString());
+        const response=await post({...auth,...(custom?{customize:'on'}:{})});
+        assert.equal(response.status,custom?200:403);
+        if(custom) assert.equal((await post({[`calendar_${extra.id}`]:'on',timezone:''})).status,403);
+      }});
+    await assert.rejects(task,{code:custom?'pending_scope_must_be_preserved':'calendar_selection_unavailable'});
+    assert.equal(writes,0);assert.deepEqual((await store.read()).operations,initial.operations);
+  }
 });
 test('cancel and forged Origin never save; timeout does not commit a late authentication response', async()=> {
   for(const scenario of ['cancel','origin','cross-site-null','late']) {
