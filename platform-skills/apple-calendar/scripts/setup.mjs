@@ -37,7 +37,16 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
         : 'Выберите календари, доступные этому подключению, и часовой пояс для событий без указанного пояса.',
       ...(error ? { notice: { tone: 'error', text: error } } : {}),
       sections: stage === 'credentials' ? [
-        { links: [{ label: 'Создать пароль приложения Apple', url: 'https://support.apple.com/ru-ru/102654' }] },
+        // Go straight to account management: a support article is not the
+        // credential entry point and its availability must not block setup.
+        // Apple sign-in and password creation stay entirely with the human.
+        { heading: 'Как получить пароль приложения',
+          links: [{ label: 'Открыть Apple Account', url: 'https://account.apple.com/' }],
+          items: ['Войдите в Apple Account и откройте «Вход в учётную запись и безопасность» → «Пароли приложений».',
+            'Создайте пароль с названием Trelio Calendar.',
+            'Вернитесь в эту форму и вставьте созданный пароль в поле «Пароль приложения».'],
+          paragraphs: ['Нужна двухфакторная аутентификация Apple. Пароль вводите только в эту форму, в чат его не присылайте.',
+            'Форма действует 5 минут. Если она закроется, подготовьте пароль и попросите агента открыть новую форму.'] },
         { fields: [{ name: 'username', label: 'Apple Account', type: 'email', required: true, maxLength: 254 },
           { name: 'password', label: 'Пароль приложения', type: 'password', required: true, maxLength: 64 }] }
       ] : [{ fields: calendars.map(calendar => ({ name: `calendar_${calendar.id}`, label: calendar.name || calendar.id,

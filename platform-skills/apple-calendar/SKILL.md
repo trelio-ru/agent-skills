@@ -29,12 +29,19 @@ Host >=3.31.0. macOS и Windows; Linux credential flow закрыт. На macOS 
 Выбор существующего аккаунта/привязки делает пользователь. Имя не является identity.
 Account, company, member и binding берутся только из проверенного host.
 
-`doctor` → при setup_required/needs_reconnect `configure` по поручению пользователя.
+`doctor` → при setup_required/needs_reconnect подготовь человека к `configure`.
+Сначала дай прямую ссылку [Apple Account](https://account.apple.com/) и путь:
+«Вход в учётную запись и безопасность» → «Пароли приложений» → создать пароль
+с названием Trelio Calendar. Справочная статья Apple для подключения не нужна.
+Предложи подготовить пароль до открытия формы: она действует пять минут.
+Когда пароль готов, запусти `configure` по уже полученному поручению.
 Пароль приложения Apple и email вводит только человек в одноразовой локальной форме.
 Не проси пароль в чат, не читай поля/страницу, не используй основной пароль Apple,
 env, Git, Workspace или Agent Secret как обход. Нужна двухфакторная защита Apple.
 Человек выбирает доступные календари и IANA timezone. Настройка не требует Run.
 После завершения `configure` один `doctor`, затем продолжай уже порученную работу.
+При setup_expired проверь `doctor`; если подключение ещё не готово, открывай
+новую форму только когда человек готов ввести пароль. Не повторяй вход циклом.
 
 Рабочие команды: `calendars`, `list/find/free --from ISO --to ISO`, `read`,
 `plan --spec ABSOLUTE_JSON_PATH`, `apply --plan UUID --hash SHA256 --confirm yes`,

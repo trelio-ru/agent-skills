@@ -188,9 +188,18 @@ test('protected shared form: failed input can be corrected, scope is explicit, s
   let attempts=0;
   const result=await configure(store,{formModule:contractModule,makeClient:()=>({calendars:async()=>{if(++attempts===1)throw new Fault('needs_reconnect');return[calendar];}}),open:async url=>{
     const first=await visit(url);assert.equal(first.status,200);assert.match(first.body,/data-trelio-local-form/);
+    // Exercise the actual host-rendered page: the user can reach account
+    // management without a support redirect, and password entry stays local.
+    assert.match(first.body, /href="https:\/\/account\.apple\.com\/"/);
+    assert.match(first.body, /Вход в учётную запись и безопасность/);
+    assert.match(first.body, /Пароли приложений/);
+    assert.match(first.body, /Trelio Calendar/);
+    assert.match(first.body, /Форма действует 5 минут/);
+    assert.ok(!first.body.includes('support.apple.com'));
     const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
     const post=values=>visit(url,'POST',new URLSearchParams({nonce,decision:'save',...values}).toString(),{origin:'null'});
     const failure=await post(auth);assert.equal(failure.status,422);assert.ok(!failure.body.includes(auth.password));assert.equal(writes,0);
+    assert.match(failure.body, /href="https:\/\/account\.apple\.com\/"/);
     const selection=await post(auth);assert.equal(selection.status,200);assert.equal(writes,0);assert.ok(!selection.body.includes(auth.username));
     assert.equal((await post({timezone:'Europe/Moscow'})).status,422);
     const done=await post({timezone:'Europe/Moscow',[`calendar_${calendar.id}`]:'on'});assert.equal(done.status,200);assert.equal(writes,1);

@@ -4,6 +4,8 @@ Apple Calendar: до правки читать полный [CalDAV workflow](pl
 Сохранять выбранный scope, ETag CAS, organizer/RSVP identity и encrypted unknown
 fence до записи; только GET reconciliation, без replay. Keychain/DPAPI проверяются
 native gates; реальный iCloud smoke 1.0.0 отменён прямым решением заказчика.
+Подключение ведёт прямо на account.apple.com и к «Паролям приложений»;
+пароль готовят до пятиминутной формы. Справочная статья не является обязательным шагом.
 
 Ошибки входа Telegram и исправление факторов на локальной странице следуют
 [контракту](docs/telegram-mtproto-message-workflows.md#вход-и-ошибки-локальной-формы):

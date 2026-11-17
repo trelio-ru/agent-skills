@@ -1,4 +1,28 @@
-# Release review 1.0.0
+# Release review 1.0.1
+
+Published baseline: skill-apple-calendar-v1.0.0 at
+eed339bcba54bf0451b90daad517871e59d385e4. Review covers the complete provider
+diff from that tag to this candidate, including instructions and release files;
+the exact committed candidate is recorded by the integration coordinator.
+
+Only setup guidance changes: the protected form links directly to Apple Account
+and explains the menu path, local password field and existing five-minute expiry.
+The main instruction/packaged guide prepare the human before opening that form.
+There is no dependency, host ABI, command admission, account/scope, encrypted
+storage, authentication, timer, network dispatch or recovery-code change.
+The existing VERSION, User-Agent and PRODID identify the new immutable runtime.
+Host minimum remains 3.31.0; no backend/host/plugin release or full cross-component
+question-system stand is needed for this compatible presentation-only patch.
+
+Selected checks: actual shared-renderer HTTP setup regression (including failed
+input, local-only password, explicit calendar selection and timeout); ordinary
+provider gates on hosted Linux/macOS/Windows, instruction/package/source-boundary
+checks and exact tagged artifact. The changed presentation is additionally
+inspected with the actual host renderer and synthetic setup only. No human
+Apple password or live sign-in page is inspected. This release does not claim
+new iCloud connectivity or invitation-delivery evidence.
+
+## Historical review 1.0.0
 
 Initial provider; no earlier apple-calendar tag or runtime exists. Base is public
 origin/main 2df16c5; candidate is the committed diff containing this document.
