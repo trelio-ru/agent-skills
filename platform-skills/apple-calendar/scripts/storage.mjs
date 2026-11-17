@@ -121,7 +121,7 @@ export class Store {
   async read() {
     const file = path.join(this.dir, 'state.enc');
     try { const stat = await privateFile(file); check(stat.size <= 4 * 1024 * 1024, 'vault_too_large'); return await this.open(await fs.readFile(file, 'utf8')); }
-    catch (error) { if (error.code === 'ENOENT') return { version: 1, credentials: null, preferences: { calendars: [], timezone: 'Europe/Moscow' }, plans: {}, operations: {} }; throw error; }
+    catch (error) { if (error.code === 'ENOENT') return { version: 1, credentials: null, preferences: { calendars: [], timezone: null }, plans: {}, operations: {} }; throw error; }
   }
   async write(value) { const text = await this.seal(value); check(Buffer.byteLength(text) <= 4 * 1024 * 1024, 'vault_too_large'); await atomic(path.join(this.dir, 'state.enc'), text); }
   async lock(action) {

@@ -23,32 +23,28 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
   const original = await store.read();
   const pending = Object.values(original.operations).some(operation => operation.state === 'unknown');
   // Reauthentication must never widen a saved scope or silently reinterpret
-  // existing floating events. A new account uses the device's actual IANA
-  // zone, not the empty vault's historical Europe/Moscow placeholder.
+  // existing floating events. On first connection, take one snapshot of the
+  // device zone before asking for credentials. An invalid zone stops setup.
   const savedScope = original.preferences?.calendars?.length > 0;
-  let automaticZone;
-  try { automaticZone = timezone(savedScope ? original.preferences.timezone : detectTimezone()); }
-  catch { automaticZone = null; }
+  let zone;
+  try { zone = timezone(savedScope ? original.preferences.timezone : detectTimezone()); }
+  catch { throw new Fault('setup_timezone_unavailable'); }
   check(typeof formModule === 'string' && formModule.startsWith('file:'), 'host_local_form_required');
   const ui = await import(formModule);
   check(ui.LOCAL_FORM_API === 'trelio.local-form/v1', 'host_local_form_required');
   const route = `/connect/${crypto.randomBytes(32).toString('hex')}`;
   const nonce = crypto.randomBytes(24).toString('base64');
-  let origin, loaded = false, posting = false, finished = false, stage = 'credentials';
-  let candidate, calendars;
+  let origin, loaded = false, posting = false, finished = false;
   let complete, fail;
   const result = new Promise((resolve, reject) => { complete = resolve; fail = reject; });
   result.catch(() => {});
   function page(error) {
     return ui.renderLocalFormPage({ title: 'Подключить Apple Calendar',
-      description: stage === 'credentials' ? 'Введите Apple Account и пароль приложения. Данные сохраняются зашифрованно на этом компьютере.'
-        : 'Выберите календари, доступные этому подключению, и часовой пояс для событий без указанного пояса.',
+      description: 'Введите Apple Account и пароль приложения. Данные сохраняются зашифрованно на этом компьютере.',
       ...(error ? { notice: { tone: 'error', text: error } } : {}),
-      sections: stage === 'credentials' ? [
-        { paragraphs: [savedScope ? 'При повторном входе сохранится текущий набор календарей.'
-          : 'Подключатся все календари этого Apple Account.',
-          automaticZone ? `Часовой пояс: ${automaticZone}. ${savedScope ? 'Сохранён в подключении.' : 'Определён на этом компьютере.'}`
-            : 'Не удалось определить часовой пояс. После входа укажите его в настройках.'] },
+      sections: [
+        { paragraphs: [savedScope ? 'Сохранятся прежние календари и часовой пояс.'
+          : 'Подключатся все доступные календари iCloud. Часовой пояс берётся из настроек компьютера.'] },
         // Go straight to account management: a support article is not the
         // credential entry point and its availability must not block setup.
         // Apple sign-in and password creation stay entirely with the human.
@@ -60,36 +56,11 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
           paragraphs: ['Нужна двухфакторная аутентификация Apple. Пароль вводите только в эту форму, в чат его не присылайте.',
             'Форма действует 5 минут. Если она закроется, подготовьте пароль и попросите агента открыть новую форму.'] },
         { fields: [{ name: 'username', label: 'Apple Account', type: 'email', required: true, maxLength: 254 },
-          { name: 'password', label: 'Пароль приложения', type: 'password', required: true, maxLength: 64 },
-          { name: 'customize', label: 'Выбрать отдельные календари или изменить часовой пояс', type: 'checkbox' }] }
-      ] : [{ fields: calendars.map(calendar => ({ name: `calendar_${calendar.id}`, label: calendar.name || calendar.id,
-        type: 'checkbox' })) }, { fields: [{ name: 'timezone', label: 'Часовой пояс IANA',
-        type: 'text', required: !automaticZone, help: automaticZone ? `Можно оставить пустым: ${automaticZone}`
-          : 'Например, Europe/Moscow', maxLength: 128 }] }],
-      form: { action: route, nonce, actions: [{ label: stage === 'credentials' ? 'Подключить' : 'Сохранить',
+          { name: 'password', label: 'Пароль приложения', type: 'password', required: true, maxLength: 64 }] }
+      ],
+      form: { action: route, nonce, actions: [{ label: 'Подключить',
         name: 'decision', value: 'save' }, { label: 'Отмена', name: 'decision', value: 'cancel',
         variant: 'secondary', formNoValidate: true }] } });
-  }
-  async function save(selected, zone, respond) {
-    // Both the one-step path and optional custom settings converge on this
-    // SAME durable writer. Never save credentials after expiry, accept an
-    // unavailable saved calendar, or alter an unresolved operation's scope.
-    check(!finished, 'setup_expired');
-    check(selected.length > 0 && selected.every(id => calendars.some(calendar => calendar.id === id)), 'calendar_selection_unavailable');
-    const state = await store.read();
-    check(!finished, 'setup_expired');
-    if (pending) check(zone === original.preferences.timezone &&
-      [...selected].sort().join() === [...original.preferences.calendars].sort().join(), 'pending_scope_must_be_preserved');
-    // Once admitted, the one durable save owns completion: expiry cannot
-    // report failure halfway through an already-started encrypted atomic write.
-    finished = true;
-    clearTimeout(timer);
-    state.credentials = candidate;
-    state.preferences = { calendars: selected, timezone: zone };
-    if (!pending) { state.references = {}; state.plans = {}; }
-    await store.write(state);
-    respond(ui.renderLocalFormMessage('Apple Calendar подключён', 'Календари доступны. Можно вернуться в чат.'));
-    complete({ configured: true, calendarCount: selected.length, timezone: zone });
   }
   const server = http.createServer(async (request, response) => {
     response.setHeader('Cache-Control', 'no-store');
@@ -97,12 +68,25 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
     const html = (status, body) => { response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(body); };
+    // Browser asset requests, navigation probes, and duplicate requests must
+    // not close the user's form or release a submit already being processed.
+    // Deny them before they can touch the form's nonce, credentials or state.
+    if (finished || posting || request.socket.remoteAddress !== '127.0.0.1' || request.headers.host !== new URL(origin).host ||
+      request.url !== route || request.headers['x-forwarded-host']) {
+      response.writeHead(404).end();
+      return;
+    }
+    if (request.method !== 'GET' && request.method !== 'POST') {
+      response.writeHead(405).end();
+      return;
+    }
+    const navigation = request.headers['sec-fetch-mode'] === 'navigate' && request.headers['sec-fetch-dest'] === 'document';
     try {
-      check(!finished && request.socket.remoteAddress === '127.0.0.1' && request.headers.host === new URL(origin).host &&
-        request.url === route && !request.headers['x-forwarded-host'], 'setup_request_denied');
       if (request.method === 'GET') {
-        check(!loaded && request.headers['sec-fetch-mode'] === 'navigate' && request.headers['sec-fetch-dest'] === 'document' &&
-          ['none','same-origin'].includes(request.headers['sec-fetch-site']), 'setup_request_denied');
+        if (loaded || !navigation || !['none','same-origin'].includes(request.headers['sec-fetch-site'])) {
+          response.writeHead(403).end();
+          return;
+        }
         loaded = true;
         html(200, page());
         return;
@@ -111,12 +95,13 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
       // that ONLY with its exact same-origin document-navigation tuple, the
       // unguessable route, exact Host/socket and the one-use nonce below. An
       // opaque cross-site/sandbox origin must never acquire this exception.
-      const nativeForm = request.headers['sec-fetch-site'] === 'same-origin' &&
-        request.headers['sec-fetch-mode'] === 'navigate' && request.headers['sec-fetch-dest'] === 'document';
-      check(loaded && !posting && request.method === 'POST' && nativeForm &&
+      const nativeForm = navigation && request.headers['sec-fetch-site'] === 'same-origin';
+      if (!(loaded && nativeForm &&
         (request.headers.origin === origin || request.headers.origin === 'null') &&
         request.headers['content-type']?.split(';')[0] === 'application/x-www-form-urlencoded' &&
-        !request.headers['content-encoding'], 'setup_request_denied');
+        !request.headers['content-encoding'])) {
+        throw new Fault('setup_request_denied', { stage: 'form_transport' });
+      }
       posting = true;
       const chunks = [];
       let bytes = 0, form;
@@ -124,51 +109,51 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
         for await (const chunk of request) { bytes += chunk.length; check(bytes <= 16000, 'setup_request_denied'); chunks.push(chunk); }
         form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
       } finally { chunks.forEach(chunk => chunk.fill(0)); }
-      check([...form.keys()].every(key => form.getAll(key).length === 1) && form.get('nonce') === nonce, 'setup_request_denied');
+      check(!finished, 'setup_expired');
+      const fields = ['username','password','nonce','decision'];
+      if (![...form.keys()].every(key => fields.includes(key) && form.getAll(key).length === 1) ||
+        form.get('nonce') !== nonce || !['cancel','save'].includes(form.get('decision'))) {
+        throw new Fault('setup_request_denied', { stage: 'form_fields' });
+      }
       if (form.get('decision') === 'cancel') {
         finished = true;
         html(200, ui.renderLocalFormMessage('Apple Calendar', 'Подключение отменено'));
         fail(new Fault('user_cancelled'));
         return;
       }
-      check(form.get('decision') === 'save', 'setup_request_denied');
-      if (stage === 'credentials') {
-        check([...form.keys()].every(key => ['username','password','customize','nonce','decision'].includes(key)) &&
-          (!form.has('customize') || form.get('customize') === 'on'), 'setup_request_denied');
-        try {
-          candidate = credentials({ username: form.get('username'), password: form.get('password') });
-          // Reauthentication can restore read-only reconciliation after Apple
-          // revokes an app password, but cannot change the account or its scope.
-          check(!pending || candidate.username.toLowerCase() === original.credentials?.username.toLowerCase(), 'unknown_write_pending');
-          calendars = await makeClient(candidate).calendars();
-          check(!finished, 'setup_expired');
-          check(calendars.length > 0 && calendars.length <= 50, 'calendar_selection_limit');
-        } catch (error) {
-          candidate = null;
-          html(422, page(error.code === 'needs_reconnect' ? 'Apple отклонил вход. Проверьте Apple Account и пароль приложения.'
-            : 'Подключение не подтверждено. Проверьте данные и доступность iCloud.'));
-          return;
-        }
-        if (form.has('customize') || !automaticZone) {
-          stage = 'calendars';
-          html(200, page());
-        } else {
-          // The credential page explicitly explains all-calendar access before
-          // the human submits. Existing bindings keep their exact snapshot;
-          // newly discovered calendars do not enlarge it during reconnect.
-          const selected = savedScope ? [...original.preferences.calendars] : calendars.map(calendar => calendar.id);
-          await save(selected, automaticZone, body => html(200, body));
-        }
+      let candidate, calendars;
+      try {
+        candidate = credentials({ username: form.get('username'), password: form.get('password') });
+        // An unresolved write can only be reconciled with the same identity,
+        // calendars and time zone. Preserve its journal and references below.
+        check(!pending || (savedScope && candidate.username.toLowerCase() === original.credentials?.username.toLowerCase()), 'unknown_write_pending');
+        calendars = await makeClient(candidate).calendars();
+        check(!finished, 'setup_expired');
+        check(calendars.length > 0 && calendars.length <= 50, 'calendar_selection_limit');
+      } catch (error) {
+        if (finished || error.code === 'unknown_write_pending') throw error;
+        html(422, page(error.code === 'needs_reconnect' ? 'Apple отклонила вход. Проверьте Apple Account и пароль приложения.'
+          : 'Подключение не подтверждено. Проверьте данные и доступность iCloud.'));
         return;
       }
-      const allowed = ['nonce','decision','timezone',...calendars.map(calendar => `calendar_${calendar.id}`)];
-      check([...form.keys()].every(key => allowed.includes(key)), 'setup_request_denied');
-      let zone;
-      try { zone = timezone(form.get('timezone') || automaticZone); }
-      catch { html(422, page('Введите действующий часовой пояс IANA')); return; }
-      const selected = calendars.filter(calendar => form.has(`calendar_${calendar.id}`)).map(calendar => calendar.id);
-      if (!selected.length) { html(422, page('Выберите хотя бы один календарь')); return; }
-      await save(selected, zone, body => html(200, body));
+      const available = new Set(calendars.map(calendar => calendar.id));
+      check(available.size === calendars.length, 'calendar_discovery_ambiguous');
+      // First-time consent covers the calendars discovered at this submit.
+      // Reconnect keeps the exact saved set and refuses missing calendars.
+      const selected = savedScope ? [...original.preferences.calendars] : [...available];
+      check(selected.every(id => available.has(id)), 'calendar_selection_unavailable');
+      const state = await store.read();
+      check(!finished, 'setup_expired');
+      // The account lock owns the entire form. Once the atomic save starts,
+      // expiry must not report failure while the encrypted write completes.
+      finished = true;
+      clearTimeout(timer);
+      state.credentials = candidate;
+      state.preferences = { calendars: selected, timezone: zone };
+      if (!pending) { state.references = {}; state.plans = {}; }
+      await store.write(state);
+      html(200, ui.renderLocalFormMessage('Apple Calendar подключён', 'Календари доступны. Можно вернуться в чат.'));
+      complete({ configured: true, calendarCount: selected.length, timezone: zone });
     } catch (error) {
       finished = true;
       if (!response.headersSent) html(403, ui.renderLocalFormMessage('Подключение не завершено', 'Повторно проверьте состояние подключения.'));
@@ -183,7 +168,8 @@ export async function configure(store, { makeClient = value => new CalDAV(value)
   const timer = setTimeout(() => { finished = true; fail(new Fault('setup_expired')); }, timeout);
   try { await open(`${origin}${route}`); return await result; }
   finally {
-    clearTimeout(timer); candidate = null;
+    finished = true;
+    clearTimeout(timer);
     server.close(); server.closeAllConnections();
   }
 }

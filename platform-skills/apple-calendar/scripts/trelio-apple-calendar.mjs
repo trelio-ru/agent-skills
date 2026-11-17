@@ -104,6 +104,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     // Raw Node/native/HTTP errors may contain URLs, local paths or credentials.
     // Only package-owned closed codes leave this process.
     process.stdout.write(`${JSON.stringify({ state: 'error', code: error instanceof Fault ? error.code : 'calendar_runtime_failed',
+      ...(error instanceof Fault && error.code === 'setup_request_denied' &&
+        ['form_transport','form_fields'].includes(error.details.stage) ? { stage: error.details.stage } : {}),
       requiredAction: error.code === 'needs_reconnect' ? 'configure' : 'Inspect the exact operation without repeating a write' })}\n`);
     process.exitCode = 1;
   }

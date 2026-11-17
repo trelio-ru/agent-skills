@@ -183,7 +183,7 @@ function visit(url, method='GET', body='', supplied={}) {
     request.on('error',reject);request.end(body);
   });
 }
-test('protected shared form: failed input can be corrected, scope is explicit, success follows encrypted save', async()=> {
+test('protected shared form: rejects invalid credentials and saves after a fresh human submit', async()=> {
   const store=memory();let writes=0;const save=store.write;store.write=async value=>{writes++;await save(value);};
   let attempts=0;
   const result=await configure(store,{formModule:contractModule,makeClient:()=>({calendars:async()=>{if(++attempts===1)throw new Fault('needs_reconnect');return[calendar];}}),open:async url=>{
@@ -200,20 +200,26 @@ test('protected shared form: failed input can be corrected, scope is explicit, s
     const post=values=>visit(url,'POST',new URLSearchParams({nonce,decision:'save',...values}).toString(),{origin:'null'});
     const failure=await post(auth);assert.equal(failure.status,422);assert.ok(!failure.body.includes(auth.password));assert.equal(writes,0);
     assert.match(failure.body, /href="https:\/\/account\.apple\.com\/"/);
-    const selection=await post({...auth,customize:'on'});assert.equal(selection.status,200);assert.equal(writes,0);assert.ok(!selection.body.includes(auth.username));
-    assert.equal((await post({timezone:'Europe/Moscow'})).status,422);
-    const done=await post({timezone:'Europe/Moscow',[`calendar_${calendar.id}`]:'on'});assert.equal(done.status,200);assert.equal(writes,1);
+    assert.equal(attempts,1);
+    const done=await post(auth);assert.equal(done.status,200);assert.equal(writes,1);
+    assert.ok(!done.body.includes(auth.username));
   }});
   assert.equal(result.configured,true);assert.equal((await store.read()).credentials.username,auth.username);
 });
-test('new connection saves all discovered calendars and device timezone after one human credential submit', async()=> {
+test('one credential submit saves all calendars and device timezone despite incidental browser requests', async()=> {
   const store=memory(), initial=await store.read();initial.credentials=null;initial.preferences.calendars=[];await store.write(initial);
   const extra={...calendar,id:'d'.repeat(32),name:'Synthetic second calendar',writable:false};
   let writes=0;const persist=store.write;store.write=async state=>{writes++;await persist(state);};
   const result=await configure(store,{formModule:contractModule,detectTimezone:()=> 'America/New_York',
     makeClient:()=>({calendars:async()=>[calendar,extra]}),open:async url=>{
-      const first=await visit(url);assert.match(first.body,/Подключатся все календари/);
-      assert.match(first.body,/America\/New_York/);assert.ok(!first.body.includes('Часовой пояс IANA'));
+      // A browser can fetch an icon or probe the page independently of the
+      // document. Neither request is allowed to interrupt the human submit.
+      const first=await visit(url);assert.match(first.body,/Подключатся все доступные календари/);
+      assert.deepEqual([...first.body.matchAll(/<input\b[^>]* name="([^"]+)"/g)].map(match=>match[1]).sort(),
+        ['nonce','password','username']);
+      assert.equal((await visit(new URL('/favicon.ico',url),'GET','',{'sec-fetch-dest':'image'})).status,404);
+      assert.equal((await visit(url,'GET','',{'sec-fetch-dest':'empty'})).status,403);
+      assert.equal(writes,0);
       const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
       const saved=await visit(url,'POST',new URLSearchParams({nonce,decision:'save',...auth}).toString());
       assert.equal(saved.status,200);assert.match(saved.body,/Apple Calendar подключён/);
@@ -229,7 +235,7 @@ test('one-step reconnect preserves saved scope, timezone and pending journal des
     const result=await configure(store,{formModule:contractModule,
       detectTimezone:()=>{throw Error('saved zone must not be replaced');},
       makeClient:()=>({calendars:async()=>[calendar,{...calendar,id:'d'.repeat(32)}]}),open:async url=>{
-        const first=await visit(url);assert.match(first.body,/сохранится текущий набор/);assert.match(first.body,/Asia\/Tokyo/);
+        const first=await visit(url);assert.match(first.body,/Сохранятся прежние календари и часовой пояс/);
         const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
         assert.equal((await visit(url,'POST',new URLSearchParams({nonce,decision:'save',...auth}).toString())).status,200);
       }});
@@ -237,36 +243,28 @@ test('one-step reconnect preserves saved scope, timezone and pending journal des
     assert.deepEqual((await store.read()).operations,state.operations);
   }
 });
-test('custom settings may reuse detected timezone; missing detection requires a real zone, never a guessed default', async()=> {
-  for(const zone of ['Europe/Berlin',null]) {
-    const store=memory(),initial=await store.read();initial.credentials=null;initial.preferences.calendars=[];await store.write(initial);
-    const result=await configure(store,{formModule:contractModule,detectTimezone:()=>zone,
-      makeClient:()=>({calendars:async()=>[calendar]}),open:async url=>{
-        const first=await visit(url);const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
-        const post=values=>visit(url,'POST',new URLSearchParams({nonce,decision:'save',...values}).toString());
-        const settings=await post({...auth,...(zone?{customize:'on'}:{})});
-        assert.match(settings.body,/Часовой пояс IANA/);
-        if(!zone) assert.equal((await post({[`calendar_${calendar.id}`]:'on',timezone:''})).status,422);
-        assert.equal((await post({[`calendar_${calendar.id}`]:'on',timezone:zone?'':'Asia/Tokyo'})).status,200);
-      }});
-    assert.equal(result.timezone,zone||'Asia/Tokyo');
-  }
+test('missing device timezone stops before opening the form or asking for credentials', async()=> {
+  const store=memory(),initial=await store.read();initial.credentials=null;initial.preferences.calendars=[];await store.write(initial);
+  await assert.rejects(configure(store,{formModule:contractModule,detectTimezone:()=>null,
+    makeClient:()=>assert.fail('provider must not be called'),open:async()=>assert.fail('form must not open')}),
+  {code:'setup_timezone_unavailable'});
+  assert.deepEqual(await store.read(),initial);
 });
-test('missing saved calendar and attempted pending scope expansion refuse before any credential save', async()=> {
-  for(const custom of [false,true]) {
+test('missing saved calendar and unexpected scope fields refuse before changing the pending connection', async()=> {
+  for(const extraFields of [{},{timezone:'Asia/Tokyo'},{customize:'on'}]) {
     const store=memory(),initial=await store.read();initial.operations={operation:{state:'unknown'}};await store.write(initial);
     let writes=0;store.write=async()=>{writes++;};
     const extra={...calendar,id:'d'.repeat(32)};
     const task=configure(store,{formModule:contractModule,
-      makeClient:()=>({calendars:async()=>custom?[calendar,extra]:[extra]}),open:async url=>{
+      makeClient:()=>({calendars:async()=>[extra]}),open:async url=>{
         const first=await visit(url);const nonce=first.body.match(/name="nonce" value="([^"]+)"/)[1];
         const post=values=>visit(url,'POST',new URLSearchParams({nonce,decision:'save',...values}).toString());
-        const response=await post({...auth,...(custom?{customize:'on'}:{})});
-        assert.equal(response.status,custom?200:403);
-        if(custom) assert.equal((await post({[`calendar_${extra.id}`]:'on',timezone:''})).status,403);
+        const response=await post({...auth,...extraFields});
+        assert.equal(response.status,403);
       }});
-    await assert.rejects(task,{code:custom?'pending_scope_must_be_preserved':'calendar_selection_unavailable'});
-    assert.equal(writes,0);assert.deepEqual((await store.read()).operations,initial.operations);
+    await assert.rejects(task,Object.keys(extraFields).length ?
+      {code:'setup_request_denied',details:{stage:'form_fields'}} : {code:'calendar_selection_unavailable'});
+    assert.equal(writes,0);assert.deepEqual(await store.read(),initial);
   }
 });
 test('cancel and forged Origin never save; timeout does not commit a late authentication response', async()=> {

@@ -55,7 +55,7 @@ export class CalDAV {
       let response;
       try {
         response = await this.fetcher(url, { method, body, signal: deadline, redirect: 'manual',
-          headers: { 'User-Agent': 'Trelio-Apple-Calendar/1.0.2',
+          headers: { 'User-Agent': 'Trelio-Apple-Calendar/1.0.3',
             Authorization: `Basic ${Buffer.from(`${this.credentials.username}:${this.credentials.password}`).toString('base64')}`,
             ...(body ? { 'Content-Type': method === 'PUT' ? 'text/calendar; charset=utf-8' : 'application/xml; charset=utf-8' } : {}), ...headers } });
       } catch { throw new Fault('network_outcome_unknown'); }

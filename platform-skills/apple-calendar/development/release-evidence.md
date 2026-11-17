@@ -1,4 +1,26 @@
-# Release review 1.0.2
+# Release review 1.0.3
+
+Published baseline: skill-apple-calendar-v1.0.2 at
+052edcf15902d4e455cd1e1237ae1e26e622d6e0. The integration receipt records the
+exact candidate SHA for this provider-only revision.
+
+Remove the legacy settings screen. The single protected form saves all
+discovered calendars and the device time zone for a new connection. Reconnect
+retains the saved calendars and zone. Refuse an unavailable zone before
+credential entry. Incidental browser requests get an HTTP refusal without
+ending the credential session. The admitted credential POST keeps its existing
+transport and nonce checks. The production 1.0.2 refusal identified only
+setup_request_denied. Its exact trigger remains unconfirmed. The new bounded
+stage identifies transport versus form fields without exposing request data.
+
+The host form API, signed command, admission, credential storage and account
+scope are unchanged. Check the real renderer over loopback with fixtures for
+the one-submit flow, an unrelated browser request, rejected submissions,
+reconnect with a pending write, and expiry. Run the hosted Apple Calendar
+gates on macOS, Windows and Linux, then verify the exact tagged package and
+production read-back. Live connection is verified separately.
+
+## Historical review 1.0.2
 
 Published baseline: skill-apple-calendar-v1.0.1 at
 9d4bd44be7898c6bf070355e39db3ef9b28200ca. Review covers the full provider diff
