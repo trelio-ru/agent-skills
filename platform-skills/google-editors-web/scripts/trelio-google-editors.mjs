@@ -7,7 +7,9 @@ import { EditorFailure, editorLink, executeWorkflow, fieldCheckPolicy, parseWork
 
 export const SKILL_ID = 'google-editors-web';
 export const SKILL_VERSION = '0.1.0';
-export const MINIMUM_HOST_VERSION = '3.34.4';
+// This host release introduces all three required browser APIs: attachment
+// redirects, exact document references and the guarded embedded picker.
+export const MINIMUM_HOST_VERSION = '3.34.7';
 const origins = [
   'https://docs.google.com', 'https://drive.google.com', 'https://accounts.google.com',
   'https://workspace.google.com', 'https://accounts.google.ru', 'https://accounts.youtube.com',
