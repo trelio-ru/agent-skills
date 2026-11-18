@@ -145,7 +145,13 @@ export class Portal {
     const hasCode = await namedPhone.count() === 0 && await password.count() === 0 && await username.count() === 0 &&
       await code.count() > 0 && /введите.{0,60}код|код.{0,60}(смс|sms|приложени|аутентификатор|TOTP|генератор(?:а|е|ом)?\s+одноразовых\s+паролей)|подтвердите вход/i.test(text);
     const login = await namedPhone.count() ? namedPhone : this.page.locator('input[type="tel"]:visible');
-    return { text, login, password, username, code, challenge: challengeKind(text, hasCode) };
+    const challenge = challengeKind(text, hasCode);
+    // The regular login detector also sees a generic masked PIN input as a
+    // password field. Only fields explicitly marked for credentials disqualify
+    // the optional PIN screen. This does not change where secrets can be typed.
+    const hasExplicitLogin = challenge === 'manual' && Boolean(await namedPhone.count() || await username.count() ||
+      await this.page.locator('input[autocomplete="current-password"]:visible,input[name="password"]:visible').count());
+    return { text, login, password, username, code, challenge, hasExplicitLogin };
   }
   async typeSecret(locator, value, delay) {
     await this.permit(); requireThat(authOrigin(this.page.url()), 'secret_origin_rejected');
@@ -239,20 +245,22 @@ export class Portal {
         }
       } else {
         if (current.challenge === 'manual') {
-          // The live post-password screen offers a browser-local quick PIN and
-          // an explicit «Не сейчас». Declining this optional enrollment neither
-          // creates a PIN nor satisfies a mandatory security challenge. Strip
-          // only the known offer words and re-run the guard, so a concurrent
-          // CAPTCHA/device/payment warning still requires the owner.
+          // The four drawn PIN cells do not establish how many inputs are in
+          // the DOM. Verify the bank's wording and both explicit choices
+          // without inspecting or touching the PIN input. Reclassify the rest
+          // as if a code input exists, so a concurrent OTP prompt cannot hide
+          // behind the optional offer or its choice of input markup.
+          const otherText = current.text.replace(/придумайте\s+код|для\s+быстрого\s+входа\s+в\s+личный\s+кабинет/gi, '');
           const optionalPin = /придумайте\s+код/i.test(current.text) &&
             /для\s+быстрого\s+входа\s+в\s+личный\s+кабинет/i.test(current.text) &&
             /работает\s+только\s+в\s+том\s+браузере/i.test(current.text) &&
-            challengeKind(current.text.replace(/придумайте\s+код|быстрого\s+входа/gi, ''), false) === 'none' &&
-            await current.password.count() === 0 && await current.username.count() === 0 && await current.code.count() === 4;
+            current.hasExplicitLogin === false && challengeKind(otherText, true) === 'none' &&
+            !/парол|(?:переда|соглас|разреш).{0,80}(?:доступ|данн)/i.test(otherText);
           if (optionalPin && !this.optionalPinSkipped) {
             const decline = this.page.getByRole('button', { name: 'Не сейчас', exact: true })
               .or(this.page.getByRole('link', { name: 'Не сейчас', exact: true })).filter({ visible: true });
-            if (await decline.count() === 1 && await decline.isEnabled()) {
+            const install = this.page.getByRole('button', { name: 'Установить', exact: true }).filter({ visible: true });
+            if (await install.count() === 1 && await decline.count() === 1 && await decline.isEnabled()) {
               await this.permit(); requireThat(authOrigin(this.page.url()), 'secret_origin_rejected');
               this.optionalPinSkipped = true;
               await decline.click(); await this.page.waitForTimeout(500); continue;

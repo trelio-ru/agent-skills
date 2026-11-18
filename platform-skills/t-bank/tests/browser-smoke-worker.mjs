@@ -138,6 +138,7 @@ else{if(document.getElementById('otp').value!=='654321')throw Error('synthetic c
     const expectedCode = scenario === 'sms-with-seed' ? '4321' : '654321';
     const useTotp = scenario.startsWith('totp-');
     const manualCode = scenario === 'sms-with-seed' || scenario.endsWith('without-seed');
+    const quickPin = ['totp-authentication-app-segmented', 'password-anonymous-button'].includes(scenario);
     const bank = new Portal(owned.browser, permit, { onPhase: next => { phase = next; }, persist: async () => {} });
     if (manualCode) {
       // A saved seed must not turn SMS into an automatic factor; an absent
@@ -157,9 +158,15 @@ else{if(document.getElementById('otp').value!=='654321')throw Error('synthetic c
       }
       if (url.origin !== 'https://id.tbank.ru') { await route.abort(); return; }
       if (url.pathname === '/auth/quick-pin') {
+        // Keep the older four-input form and exercise the same four visible
+        // cells rendered around a single masked, editable input.
+        const pinFields = scenario === 'password-anonymous-button'
+          ? `<div style="display:flex;gap:8px">${'<span style="width:40px;height:40px;background:#ddd"></span>'.repeat(4)}</div>
+             <input type="password" maxlength="4" oninput="throw Error('PIN must not be entered')">`
+          : '<input inputmode="numeric">'.repeat(4);
         await route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<h1>Придумайте код</h1>
           <p>Для быстрого входа в личный кабинет. Работает только в том браузере, где был установлен</p>
-          ${'<input inputmode="numeric">'.repeat(4)}
+          ${pinFields}<p>Используйте только личные устройства</p>
           <a href="/auth/skip-quick-pin">Не сейчас</a><button onclick="throw Error('PIN must not be installed')">Установить</button>` }); return;
       }
       if (url.pathname === '/auth/skip-quick-pin') {
@@ -195,7 +202,7 @@ else{if(document.getElementById('otp').value!=='654321')throw Error('synthetic c
         <form>${inputs}<button>${password ? '' : 'Подтвердить'}</button></form><script>
         const form=document.querySelector('form'); let sent=false;
         async function send(){if(sent)throw Error('duplicate synthetic submission');sent=true;
-          await fetch('/auth/check',{method:'POST',body:[...form.querySelectorAll('input')].map(x=>x.value).join('')});location.href='${scenario === 'totp-authentication-app-segmented' ? '/auth/quick-pin' : 'https://www.tbank.ru/mybank/'}'}
+          await fetch('/auth/check',{method:'POST',body:[...form.querySelectorAll('input')].map(x=>x.value).join('')});location.href='${quickPin ? '/auth/quick-pin' : 'https://www.tbank.ru/mybank/'}'}
         form.onsubmit=e=>{e.preventDefault();send()};
         ${segmented ? `form.oninput=e=>{const fields=[...form.querySelectorAll('input')];
           ${controlled ? "if(e.target.value.length===1){const next=fields[fields.indexOf(e.target)+1];if(next){next.disabled=false;next.focus()}}" : ''}
@@ -217,7 +224,7 @@ else{if(document.getElementById('otp').value!=='654321')throw Error('synthetic c
     }
     assert.equal(result.ready, true); assert.equal(checked, true); assert.equal(pageError, false);
     assert.equal(submitted, 1); assert.equal(result.manualInputs, manualCode ? 1 : 0);
-    assert.equal(pinSkips, scenario === 'totp-authentication-app-segmented' ? 1 : 0);
+    assert.equal(pinSkips, quickPin ? 1 : 0);
     assert.equal(phase, 'ready'); assert.equal(owned.server.process().pid, browserPid);
     await bank.close(); scenarios++;
   }

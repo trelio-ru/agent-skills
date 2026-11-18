@@ -325,15 +325,22 @@ test('unrecognized six-cell layouts neither type TOTP nor consume the submission
 
 test('optional quick PIN is declined once; mandatory or mixed security prompts remain manual', async () => {
   const offer = 'Придумайте код. Для быстрого входа в личный кабинет. Работает только в том браузере, где был установлен';
-  for (const suffix of ['', '. Подтвердите новое устройство', '. CAPTCHA', '. Подтвердите платёж']) {
+  for (const { suffix = '', choices = 1, install = 1, enabled = true, explicitLogin = false } of [
+    {}, { suffix: '. Подтвердите новое устройство' }, { suffix: '. CAPTCHA' }, { suffix: '. Подтвердите платёж' },
+    { suffix: '. Введите код из SMS' }, { suffix: '. Введите пароль' }, { suffix: '. Подтвердите вход' },
+    { choices: 0 }, { choices: 2 }, { install: 0 }, { enabled: false }, { explicitLogin: true },
+  ]) {
     let clicks = 0; const phases = [];
     const portal = new Portal({}, async () => {}, { onPhase: phase => phases.push(phase), persist: () => assert.fail('must not persist') });
-    const decline = { or() { return this; }, filter() { return this; }, count: async () => 1, isEnabled: async () => true,
+    const decline = { or() { return this; }, filter() { return this; }, count: async () => choices, isEnabled: async () => enabled,
       click: async () => { clicks++; throw new RuntimeError('synthetic_ambiguous_click'); } };
-    portal.page = { url: () => 'https://id.tbank.ru/auth/step', getByRole: () => decline };
-    portal.inspectAuth = async () => ({ text: offer + suffix, challenge: 'manual',
-      password: { count: async () => 0 }, username: { count: async () => 0 }, code: { count: async () => 4 } });
-    if (!suffix) {
+    portal.page = { url: () => 'https://id.tbank.ru/auth/step', getByRole: (_role, { name }) => name === 'Установить'
+      ? { filter() { return this; }, count: async () => install } : decline };
+    // Four visual cells can be driven by one generic masked input, which also
+    // matches the broad password selector used by the regular login flow.
+    portal.inspectAuth = async () => ({ text: offer + suffix, challenge: 'manual', hasExplicitLogin: explicitLogin,
+      password: { count: async () => 1 }, username: { count: async () => 0 }, code: { count: async () => 1 } });
+    if (!suffix && choices === 1 && install === 1 && enabled && !explicitLogin) {
       await assert.rejects(portal.authenticate(synthetic), error => error.code === 'synthetic_ambiguous_click');
       assert.equal(await portal.authenticate(synthetic), false, 'resume must not click twice after an ambiguous result');
       assert.equal(clicks, 1);

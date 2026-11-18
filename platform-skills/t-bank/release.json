@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "t-bank",
-    "version": "2.3.11",
-    "summary": "Независимые браузерные сессии чатов и безопасное обновление общего входа через runtime 3.31.0",
+    "version": "2.3.12",
+    "summary": "При входе в личный кабинет навык пропускает необязательную настройку кода быстрого входа независимо от разметки ячеек.",
     "routingSummary": "Read personal T-Bank accounts and perform explicitly authorized banking operations."
   },
   "connection": null,
   "runtime": {
-    "version": "1.3.11",
+    "version": "1.3.12",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "scripts/trelio-t-bank.mjs",

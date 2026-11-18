@@ -645,6 +645,9 @@ MAX read-only assist сохраняет штатный phone lookup для cold 
 точная home-search кнопка проверяется и host gate, и browser event fence.
 Для каждой новой signed-runtime публикации нужна уникальная runtime version,
 даже при изменении только инструкций; порядок — docs/release-process.md.
+При прямом входе Т-Банк распознаёт необязательный PIN по надписям и явным
+действиям независимо от числа полей ввода. Проверяй обе разметки в headed fixture
+по [контракту](platform-skills/t-bank/references/secure-runtime.md#контур-автоматического-входа).
 Catalog `release.version` и executable `runtime.version` независимы. Patch
 каталога не понижает реализованный protocol SemVer: перед выпуском проверь
 готовый package на действующих native backend/host admission gates.
