@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "google-editors-web",
+    "version": "0.1.0",
+    "summary": "Первый кандидат навыка для Google Таблиц и Документов через браузер Trelio",
+    "routingSummary": "Inspect Google Sheets ranges and find or replace Google Docs text using a managed browser without Google APIs."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Войдите в Google в отдельном видимом Chromium Trelio. После входа закройте окно или сообщите «готово».",
+      "Сессия сохраняется локально в защищённом снимке. Обычная работа выполняется без открытия окна."
+    ],
+    "configFields": [],
+    "secretFields": []
+  },
+  "runtime": {
+    "version": "0.1.0",
+    "minimumHostVersion": "3.34.4",
+    "entrypoint": { "path": "trelio-google-editors.mjs", "interpreter": "node" },
+    "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
+    "browserSession": { "apiVersion": 1, "sessionClass": "protected-snapshot", "manualAssist": true },
+    "files": [
+      { "source": "scripts/trelio-google-editors.mjs", "path": "trelio-google-editors.mjs", "mode": 493 },
+      { "source": "scripts/editor-workflows.mjs", "path": "editor-workflows.mjs", "mode": 420 },
+      { "source": "scripts/editor-data.mjs", "path": "editor-data.mjs", "mode": 420 },
+      { "source": "scripts/office-export.mjs", "path": "office-export.mjs", "mode": 420 },
+      { "source": "scripts/instruction-guides/workflow.md", "path": "instruction-guides/workflow.md", "mode": 420 }
+    ]
+  }
+}

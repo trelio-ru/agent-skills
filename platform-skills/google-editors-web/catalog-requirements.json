@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "companySetup": false,
+  "personalAccount": "required",
+  "authorization": "browser",
+  "connectionLabel": "Личный аккаунт Google в отдельном браузере Trelio"
+}

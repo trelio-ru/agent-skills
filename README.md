@@ -4,8 +4,8 @@
 Инструкции, runtime-код, тесты и инструменты сборки публикуются отдельно от
 корпоративных навыков, личных подключений и production signing.
 
-В `platform-skills/` находятся 27 общих навыков: Apple Calendar, 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
-DeepSeek Search, DodoStats / DrinkitStats, Google: поиск и ИИ, Google Календарь, GigaChat, почта, ГАС «Правосудие», Госуслуги,
+В `platform-skills/` находятся 28 общих навыков: Apple Calendar, 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
+DeepSeek Search, DodoStats / DrinkitStats, Google: поиск и ИИ, Google Календарь, Google Таблицы и Документы, GigaChat, почта, ГАС «Правосудие», Госуслуги,
 iPhone Mirroring, Perplexity Search, Yandex Search, ИИ-Консьерж от Гига / Сбер,
 MAX, поиск Ozon, заказные письма Почты России, Т-Банк, Telegram MTProto,
 Telegram Web, WhatsApp, факсимиле для документов, ВК Реклама и локальная расшифровка аудио. Для конкретного provider
@@ -85,6 +85,13 @@ Google API. Обычная работа скрыта; вход выполняе�
 автоматически через общий stopped-profile save; неизвестный challenge остаётся человеку.
 Source и синтетические тесты не означают опубликованную готовность Google-входа;
 проверки и ограничения — в [browser smoke](platform-skills/google-calendar-web/development/browser-smoke.md).
+
+[Google Таблицы и Документы](platform-skills/google-editors-web/SKILL.md)
+(`google-editors-web`) — браузерный кандидат с отдельным видимым входом и
+headless Chromium. Команды читают диапазоны и формулы, переключают и добавляют
+листы, ищут и заменяют отдельный фрагмент Docs и проверяют текст сохранённой
+правки. Экспорт использует штатное меню Google.
+[Проверки браузера](platform-skills/google-editors-web/development/browser-smoke.md).
 
 GigaChat (`gigachat`) работает через скрытую вкладку `giga.chat`: вопросы,
 уточнения в одной беседе, доступные режимы «Гига», «Исследование» и «Рассуждение»,
