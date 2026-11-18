@@ -694,9 +694,10 @@ offline envelope fixture не заменяет live проверку personal la
 
 ## Координация Git и релизных версий
 
-После commit – `npm run git:integrate`: FIFO до fresh fetch/rebase и final CI,
-затем exact guarded push/read-back. Прямой `git:push-main` больше не является
-самостоятельным workflow. Разрешённый релиз резервирует exact tag до CI через
+После commit – `npm run git:integrate`: очередь до fresh fetch/rebase, final CI
+и guarded push/read-back. Вливания идут FIFO перед ожидающим релизом.
+`releaseRole=observer` читает результат исходного тикета. `git:push-main` служит
+внутренним transport. Разрешённый релиз резервирует exact tag до CI через
 `npm run git:integrate -- --tag <tag>`. Старые wrappers/boolean не дают admission.
 После checkout установить pinned maintainer dependency через `npm ci --ignore-scripts`.
 Контракт, recovery и границы общего кода – [git-coordination](docs/git-coordination.md).
