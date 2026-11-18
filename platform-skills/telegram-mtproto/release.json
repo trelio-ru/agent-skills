@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.16.10",
-    "summary": "Проверка неизвестного результата отметки прочтения сверяет фактическую границу Telegram даже после изменения или исчезновения исходного сообщения, без повторной записи",
+    "version": "2.16.11",
+    "summary": "Можно поставить первую реакцию на сообщение и проверить снятие последней, когда Telegram не присылает пустой список реакций",
     "routingSummary": "Read, search, send, and manage Telegram messages, files, and chats."
   },
   "connection": {
@@ -19,7 +19,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.17.5",
+    "version": "2.17.6",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

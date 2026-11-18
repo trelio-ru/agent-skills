@@ -438,14 +438,23 @@ async def self_reaction_identity(client, entity, account, r, f, u):
 
 async def reaction_snapshot(client, entity, message, r, f, u):
     response = await client(f.messages.GetMessagesReactionsRequest(peer=entity, id=[message.id]))
-    rows = [update for update in getattr(response, "updates", [])
+    updates = getattr(response, "updates", None)
+    # Telegram can omit the optional reactions field on a fresh, full Message
+    # with no reactions and return an empty updates vector for that exact ID.
+    # Require both signals. A short/malformed response, an unrelated update,
+    # or an existing (including min) reaction snapshot cannot prove absence.
+    if (type(response).__name__ in {"Updates", "UpdatesCombined"} and updates == []
+            and type(message).__name__ == "Message" and not getattr(message, "legacy", False)
+            and hasattr(message, "reactions") and message.reactions is None):
+        return message, []
+    rows = [update for update in updates or []
             if type(update).__name__ == "UpdateMessageReactions" and update.msg_id == message.id
             and u.get_peer_id(update.peer) == u.get_peer_id(entity)]
     if len(rows) != 1:
         raise r.TelegramRuntimeError("Telegram did not return exact fresh own reaction metadata.")
     message = copy.copy(message)
     message.reactions = rows[0].reactions
-    return message
+    return message, own_reactions(message, r)
 
 
 def own_reactions(message, r):
@@ -482,8 +491,7 @@ async def mutation(client, entity, args, identity, r, f, t, u, markdown):
             emojis = args.emoji or []
             if len(emojis) > 3 or len(set(emojis)) != len(emojis) or any(not isinstance(value, str) or not value or len(value) > 32 or any(ch.isspace() for ch in value) for value in emojis):
                 raise r.TelegramRuntimeError("Choose at most three distinct native emoji reactions, or --clear.")
-            message = await reaction_snapshot(client, entity, message, r, f, u)
-            before = own_reactions(message, r)
+            message, before = await reaction_snapshot(client, entity, message, r, f, u)
             operation.update(previous=before, emojis=emojis)
             preview.update(previousReactions=before, reactions=emojis, replacesOwnReactions=True)
             request = f.messages.SendReactionRequest(peer=entity, msg_id=message.id,
@@ -631,8 +639,7 @@ async def mutation(client, entity, args, identity, r, f, t, u, markdown):
                 if command == "react":
                     if c.content_snapshot(after, r) != operation["content"]:
                         raise ValueError
-                    after = await reaction_snapshot(client, entity, after, r, f, u)
-                    chosen = own_reactions(after, r)
+                    after, chosen = await reaction_snapshot(client, entity, after, r, f, u)
                     if any(row["type"] != "emoji" for row in chosen) or {row["emoji"] for row in chosen} != set(emojis):
                         raise ValueError
                 elif command == "poll-vote":

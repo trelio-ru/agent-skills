@@ -48,9 +48,14 @@ class CommunityTests(unittest.TestCase):
         if name == "SearchRequest":
             return NS(messages=[self.current], inexact=False)
         if name == "GetMessagesReactionsRequest":
+            if self.current.reactions is None:
+                return TL("Updates")(updates=[])
             return NS(updates=[TL("UpdateMessageReactions")(peer=self.current.peer_id, msg_id=self.current.id, reactions=self.current.reactions)])
         if name == "SendReactionRequest":
-            self.current.reactions = reactions.snapshot(results=[NS(reaction=value, count=1, chosen_order=i) for i, value in enumerate(request.reaction)])
+            # Telegram may omit the snapshot after the last reaction clears.
+            self.current.reactions = reactions.snapshot(results=[
+                NS(reaction=value, count=1, chosen_order=i) for i, value in enumerate(request.reaction)
+            ]) if request.reaction else None
             return NS(updates=[])
         if name == "UpdatePinnedMessageRequest":
             self.current.pinned = not request.unpin
@@ -151,9 +156,22 @@ class CommunityTests(unittest.TestCase):
         _preview, result = self.apply("react", "--chat", "@group", "--message-id", "42", "--emoji", "👍")
         self.assertTrue(result["applied"])
         self.assertTrue(result["message"]["reactions"]["results"][0]["chosen"])
-        self.apply("react", "--chat", "@group", "--message-id", "42", "--clear")
-        self.assertEqual(self.current.reactions.results, [])
+        _preview, cleared = self.apply("react", "--chat", "@group", "--message-id", "42", "--clear")
+        self.assertTrue(cleared["applied"])
+        self.assertIsNone(cleared["message"]["reactions"])
         self.assertFalse(self.current.out)
+
+    def test_first_reaction_when_telegram_omits_the_empty_snapshot(self):
+        self.current.reactions = None
+        argv = ("react", "--chat", "@group", "--message-id", "42", "--emoji", "👌")
+        preview = self.cli(*argv, "--dry-run")
+        self.assertEqual(preview["preview"]["previousReactions"], [])
+        self.assertIsNone(preview["preview"]["message"]["reactions"])
+        self.assertFalse(any(type(call).__name__ == "SendReactionRequest" for call in self.client.calls))
+        result = self.cli(*argv, "--confirm", "--approval-hash", preview["approvalHash"])
+        self.assertTrue(result["applied"])
+        self.assertTrue(result["message"]["reactions"]["results"][0]["chosen"])
+        self.assertEqual(sum(type(call).__name__ == "SendReactionRequest" for call in self.client.calls), 1)
 
     def test_reaction_hash_rechecks_source_and_is_one_use(self):
         argv = ["react", "--chat", "@group", "--message-id", "42", "--emoji", "👍"]
@@ -297,10 +315,27 @@ class CommunityBoundaryTests(unittest.TestCase):
     poll = CommunityTests.poll
 
     def test_unknown_reactions_do_not_become_an_empty_choice(self):
-        for snapshot in (None, reactions.snapshot(min=True, results=[])):
-            self.current.reactions = snapshot
-            with self.assertRaises(M.TelegramRuntimeError):
-                self.cli("react", "--chat", "@g", "--message-id", "42", "--clear", "--dry-run")
+        original = self.client.dispatch
+        update = TL("UpdateMessageReactions")
+        empty = TL("Updates")(updates=[])
+        malformed = update(peer=self.current.peer_id, msg_id=self.current.id, reactions=None)
+        foreign = update(peer=base.PeerChannel(channel_id=99), msg_id=self.current.id,
+                         reactions=reactions.snapshot(results=[]))
+        cases = (
+            (self.current.reactions, False, empty),
+            (reactions.snapshot(min=True, results=[]), False, empty),
+            (None, True, empty),
+            (None, False, TL("UpdatesTooLong")()),
+            (None, False, TL("Updates")(updates=[malformed])),
+            (None, False, TL("Updates")(updates=[foreign])),
+        )
+        for snapshot, legacy, response in cases:
+            with self.subTest(snapshot=snapshot, legacy=legacy, response=response):
+                self.current.reactions, self.current.legacy = snapshot, legacy
+                self.client.dispatch = lambda q: response if type(q).__name__ == "GetMessagesReactionsRequest" else original(q)
+                with self.assertRaises(M.TelegramRuntimeError):
+                    self.cli("react", "--chat", "@g", "--message-id", "42", "--emoji", "👌", "--dry-run")
+        self.assertFalse(any(type(call).__name__ == "SendReactionRequest" for call in self.client.calls))
 
     def test_missing_stats_permission_never_queries_statistics(self):
         self.group.broadcast = True

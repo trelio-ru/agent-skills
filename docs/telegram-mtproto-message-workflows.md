@@ -1057,9 +1057,13 @@ SDK/credential/filesystem IO при import. Его CLI и `part-09.md` вход�
 `react --chat EXACT --message-id ID --emoji EMOJI [--emoji EMOJI]` заменяет
 полный набор собственных обычных emoji-реакций (1–3 distinct), `--clear` снимает
 его. Custom/paid reactions не создаются. Отдельный fresh
-`messages.getMessagesReactions` выбирает exact peer/message update; missing/min
-metadata не считается пустым собственным выбором. Preview содержит старое и
-новое состояние. Счётчики других людей не входят в identity собственного выбора.
+`messages.getMessagesReactions` выбирает exact peer/message update. Если свежий
+полный обычный `Message` получен без optional `reactions`, а запрос того же ID
+вернул пустой вектор `Updates` или `UpdatesCombined`, собственный выбор пуст.
+Проверка применяется для первой реакции и после снятия последней. Сокращённые,
+неполные и чужие обновления не доказывают отсутствие реакций. Обычная проекция
+сообщения сохраняет `reactions=null` при отсутствии поля. Preview содержит старый
+и новый наборы, счётчики других людей не входят в identity собственного выбора.
 Post-read требует точного совпадения собственного набора и прежнего content.
 
 `react` и `poll-vote` проверяют fresh `ChannelFull.default_send_as`: эти API не

@@ -104,7 +104,9 @@ Bulk preview привязан к account/source/destination/bytes; однора�
 `interaction_tools.py`, `conversation_tools.py`, `inbox_tools.py` и все обязательные guides входят в signed package.
 Темы/реакции/опросы/закрепы/admin commands и scheduled bulk следуют тому же
 [контракту сообщений](docs/telegram-mtproto-message-workflows.md): exact peer/thread,
-own choice, send-as и queue namespace проверяются отдельно. Новые metadata
+own choice, send-as и queue namespace проверяются отдельно. Для первой и последней
+реакции нужны два сигнала отсутствия: полное exact сообщение без `reactions` и
+пустой вектор свежих обновлений. Обычное чтение сохраняет `null`. Новые metadata
 writes используют existing one-use preview journal и post-read, не replay.
 Исчезновение pending заявки с первой страницы не доказывает решение; approve
 проверяет membership, неполная pagination не доказывает отсутствие.

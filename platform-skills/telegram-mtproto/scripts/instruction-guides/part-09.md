@@ -61,9 +61,8 @@ Runtime сохраняет тему и проверяет exact текст/фо�
 набору. Custom emoji и платные реакции не создаются. Telegram сам проверяет
 доступность emoji и лимит аккаунта.
 
-Runtime отдельно читает свежую exact reaction metadata. Missing/min/неполная
-metadata не считается пустым собственным выбором. `sendReaction` и `sendVote`
-наследуют Telegram default send-as; если это другой канал, команда останавливается.
+Пустой выбор: свежий полный Message без `reactions` + пустой вектор обновлений.
+Иначе нужна полная reaction metadata. `sendReaction` и `sendVote` наследуют Telegram default send-as; если это другой канал, команда останавливается.
 Настройку отправителя автоматически не меняй. Новое выполнение требует повторной
 проверки default send-as и target; чужие реакции не редактируются.
 
