@@ -392,6 +392,9 @@ private fieldCheckPolicy comparisons, не значения полей/DOM/saved
 не читает поля входа и не снимает gate при неизвестной странице или challenge.
 Shared host отключает browser-level sign-in. Общий browser recovery и unknown-write
 read-back сохраняются; live события проверяются только в разрешённом scope.
+После единственного Save create/move читают ту же страницу до возврата к сетке
+без редактора. Затем заново открывают день и exact карточку. Зависший редактор
+сохраняет unknown без навигации или повторной записи.
 Task-политика Google Календаря допускает чтение и проверяемые create/move
 recipes. Delete, координатный ввод, disconnect и обычный setup закрыты.
 Human login открывается только из signed accountSetup для точного уже

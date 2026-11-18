@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "google-calendar-web",
-    "version": "0.1.2",
-    "summary": "Цифровые ассистенты могут работать с Google Календарём через отдельную защищённую сессию и проверяемые сценарии",
+    "version": "0.1.3",
+    "summary": "При создании и переносе события навык ждёт завершения работы редактора перед проверкой сохранения",
     "routingSummary": "Read Google Calendar schedules and manage events through the managed browser without the Google Calendar API."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.1.2",
+    "version": "0.1.3",
     "minimumHostVersion": "3.32.0",
     "entrypoint": {
       "path": "trelio-google-calendar.mjs",

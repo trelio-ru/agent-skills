@@ -451,10 +451,34 @@ async function commit(ui, names) {
 }
 async function verifiedEvent(ui, spec) {
   ui.stage = 'verification';
-  const day = await readDay(ui, spec);
-  if (!day.coverage.complete || day.events.filter(event => sameTarget(event, spec)).length !== 1) refuse('CALENDAR_RESULT_UNVERIFIED');
-  await openEvent(ui, spec);
-  return timedTarget(spec);
+  // Google can acknowledge the click before its asynchronous Save finishes.
+  // Leaving a still-open editor can trigger Chromium's beforeunload handoff.
+  // Wait for the Calendar grid in the same account using observations only.
+  // Its return allows the day to be reloaded. Persistence still requires
+  // independent read-back from the reloaded day and the exact card.
+  const until = Math.min(ui.deadline, ui.now() + 8_000);
+  const saveLabel = labels.save[ui.locale === 'ru' ? 0 : 1];
+  const isButton = (control, names) => control.role === 'button'
+    && names.some(name => equals(uiLabel(control.label), name));
+  for (let attempt = 0; attempt < 32 && ui.now() < until; attempt++) {
+    const frame = await ui.observe();
+    if (!frame.scanLimited && !/Страница редактирования мероприятия|Event editing page/u.test(frame.text)
+      && frame.controls.some(control => isButton(control, labels.create))
+      && frame.controls.some(control => isButton(control, labels.settings))) {
+      if (accountLabel(frame) !== ui.account) refuse('CALENDAR_ACCOUNT_MISMATCH');
+      // A quick editor may overlay the grid. Check for Save even when the
+      // first observation could not include every semantic control.
+      const buttons = await ui.controls(saveLabel);
+      if (!buttons.some(({ control }) => isButton(control, labels.save))) {
+        await openEvent(ui, spec);
+        return timedTarget(spec);
+      }
+    }
+    await ui.sleep(250);
+  }
+  // Keep the original editor and unknown-write fence if readiness never
+  // arrives. The caller must not navigate or repeat the original action.
+  refuse('CALENDAR_RESULT_UNVERIFIED');
 }
 
 /** Merge occupied intervals, keeping safe candidate slots explicit when a
