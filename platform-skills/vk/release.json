@@ -2,8 +2,9 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk",
-    "version": "0.2.0",
-    "summary": "Загрузка одного или нескольких файлов любых форматов через интерфейс ВКонтакте с сохранением исходных имён и байтов"
+    "version": "0.2.1",
+    "summary": "Скачивание оригиналов вложений из диалогов ВКонтакте и с файлового сервера ВК",
+    "routingSummary": "Read VK pages and chats; exchange messages and download or upload original attachments."
   },
   "connection": {
     "schemaVersion": 1,
@@ -15,8 +16,8 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.2.0",
-    "minimumHostVersion": "3.17.0",
+    "version": "0.2.1",
+    "minimumHostVersion": "3.34.20",
     "entrypoint": { "path": "trelio-vk.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
     "browserSession": { "apiVersion": 1, "sessionClass": "protected-snapshot", "manualAssist": true },

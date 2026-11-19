@@ -4,7 +4,11 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const MINIMUM_HOST_VERSION = '3.17.0';
+const MINIMUM_HOST_VERSION = '3.34.20';
+const ATTACHMENT_FILE_API = 'trelio.visual-attachment-file/v1';
+// VK publishes document originals on this CDN. Grant it only to the
+// coordinate-selected browser download, never to navigation or auth.
+const ATTACHMENT_FILE_ORIGINS = Object.freeze(['https://psv4.userapi.com']);
 // The user chooses the VK workflow. A section moving onto a VK subdomain must
 // not become a provider-authored product ban. Keep the network boundary at the
 // actual VK hostnames, with label-aware matching, HTTPS and no userinfo/ports.
@@ -118,7 +122,9 @@ export async function runVk(argv, env = process.env) {
   try { moduleUrl = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank'); }
   catch { throw new Error('VK_HOST_REQUIRED'); }
   if (moduleUrl.protocol !== 'file:' || env.TRELIO_SKILL_ID !== 'vk') throw new Error('VK_HOST_REQUIRED');
-  const { runVisualSession, VISUAL_FILE_UPLOAD_API } = await import(moduleUrl.href);
+  const { runVisualSession, VISUAL_FILE_UPLOAD_API, VISUAL_ATTACHMENT_FILE_API } = await import(moduleUrl.href);
+  const hasAttachmentFileApi = VISUAL_ATTACHMENT_FILE_API === ATTACHMENT_FILE_API;
+  if (operation === 'download-attachment' && !hasAttachmentFileApi) throw new Error('VK_HOST_UPGRADE_REQUIRED');
   // Never advertise successful selection through an older visual interface
   // that lacks native chooser delivery. Signed minimum admission normally
   // upgrades it first; cleanup/metadata keep their existing recovery route.
@@ -142,6 +148,7 @@ export async function runVk(argv, env = process.env) {
   const policy = {
     observationMode: 'text', attachmentDownloads: true, fileUploads: true,
     origins: [...ORIGINS], domains: [...DOMAINS], env,
+    ...(hasAttachmentFileApi ? { attachmentFilePolicy: { origins: [...ATTACHMENT_FILE_ORIGINS] } } : {}),
   };
   if (operation === 'navigate') {
     // Unlike Avito, VK has no guest work mode. A first navigation without a

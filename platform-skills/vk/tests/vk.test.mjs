@@ -117,6 +117,7 @@ test('signed host dispatch fixes VK scope, text mode, attachments and search pac
   t.after(() => fs.rm(temporary, { recursive: true, force: true }));
   const host = path.join(temporary, 'host.mjs');
   await fs.writeFile(host, `export const VISUAL_FILE_UPLOAD_API = 'trelio.visual-file-upload/v1';
+  export const VISUAL_ATTACHMENT_FILE_API = 'trelio.visual-attachment-file/v1';
   export function runVisualSession({env,...input}) {
     return input.operation === 'status' ? { state: 'saved_unverified' } : input;
   }`);
@@ -126,6 +127,8 @@ test('signed host dispatch fixes VK scope, text mode, attachments and search pac
   const setup = await runVk(['setup'], env);
   assert.equal(setup.observationMode, 'text');
   assert.equal(setup.attachmentDownloads, true);
+  assert.deepEqual(setup.attachmentFilePolicy, { origins: ['https://psv4.userapi.com'] });
+  assert.ok(!setup.origins.includes('https://psv4.userapi.com'));
   assert.equal(setup.fileUploads, true);
   assert.deepEqual(setup.domains, ['vk.ru', 'vk.com']);
   assert.deepEqual(setup.origins, [
@@ -162,6 +165,7 @@ test('signed host dispatch fixes VK scope, text mode, attachments and search pac
   const file = await runVk(['download-attachment', '--frameId', 'fresh', '--x', '10', '--y', '20'], env);
   assert.equal(file.operation, 'download-attachment');
   assert.deepEqual(file.args, { frameId: 'fresh', x: 10, y: 20 });
+  assert.deepEqual(file.attachmentFilePolicy, setup.attachmentFilePolicy);
   const files = [path.join(temporary, 'original.docx'), path.join(temporary, 'original.zip')];
   const upload = await runVk(['upload-files', '--frameId', 'fresh', '--x', '10', '--y', '20',
     '--files', JSON.stringify(files)], env);
@@ -206,11 +210,13 @@ test('first navigation enters manual login; restored session and pending failure
   }
 });
 
-test('outgoing file selection requires the actual additive host API before dispatch', async t => {
+test('file delivery requires the relevant additive host API before dispatch', async t => {
   const temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-vk-old-upload-host-')));
   t.after(() => fs.rm(temporary, { recursive: true, force: true }));
   const host = path.join(temporary, 'host.mjs');
   await fs.writeFile(host, 'export function runVisualSession() { throw new Error("MUST_NOT_DISPATCH"); }');
+  await assert.rejects(runVk(['download-attachment', '--frameId', 'fresh', '--x', '1', '--y', '2'],
+    { TRELIO_SKILL_ID: 'vk', TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(host).href }), /VK_HOST_UPGRADE_REQUIRED/);
   await assert.rejects(runVk(['upload-files', '--frameId', 'fresh', '--x', '1', '--y', '2',
     '--files', JSON.stringify([path.join(temporary, 'original.bin')])],
   { TRELIO_SKILL_ID: 'vk', TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(host).href }), /VK_HOST_UPGRADE_REQUIRED/);
@@ -218,7 +224,7 @@ test('outgoing file selection requires the actual additive host API before dispa
 
 test('VK hostname scope rejects lookalikes, credentials, ports and unsafe schemes before host import', async () => {
   const env = { TRELIO_SKILL_ID: 'vk', TRELIO_VISUAL_SESSION_MODULE_URL: 'file:///must-not-load.mjs' };
-  for (const url of ['https://other.test/', 'https://vk.ru.other.test/', 'https://other-vk.ru/',
+  for (const url of ['https://other.test/', 'https://psv4.userapi.com/', 'https://vk.ru.other.test/', 'https://other-vk.ru/',
     'https://pay.vk.com.other.test/', 'https://other-vk.com/', 'https://vk.me.other.test/',
     'https://other.vk.me/', 'https://www.vk.ru.other.test/',
     'https://vk.ru:444/', 'https://user:password@vk.ru/', 'http://vk.ru/', 'file:///private',

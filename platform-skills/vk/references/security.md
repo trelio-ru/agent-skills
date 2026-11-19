@@ -92,10 +92,14 @@ subresources/XHR и другие вкладки остаются закрыты.
 exception отзывается, прежний чат сохраняется.
 
 Authenticated browser stream ограничен 20 МиБ/30 секундами исходной lease.
-Host проверяет signature/container/closed MIME и exclusive writes под UUID
-с owner/ACL guards. Receipts содержат path/size/SHA-256/MIME/expiry; нет URL,
-исходного filename, headers, binary или base64. CDN за пределами списка origins
-даёт отказ; он не разрешает расширить allowlist или использовать raw HTTP.
+Отдельная подписанная область допускает `https://psv4.userapi.com` только
+для точного GET выбранного вложения в исходной вкладке. Правило отзывается
+после ответа или отказа и не участвует в навигации или cookie overlay.
+Проверенные форматы сохраняются с определённым по байтам расширением.
+Прочий формат допускается только при явном `Content-Disposition: attachment`,
+сохраняется по UUID как `.bin` без запуска или отображения. Receipts содержат
+path/size/SHA-256/MIME/expiry. URL, headers, имя источника и bytes не выдаются.
+Диагностика отказа использует закрытый перечень этапов.
 attachment_link_required/unsupported/too_large/limit_reached не сбрасывают auth.
 
 Локальный cache – owner-only plaintext data files на 24 часа, до 32 файлов/

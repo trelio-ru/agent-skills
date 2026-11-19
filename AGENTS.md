@@ -379,6 +379,9 @@ vk-ads и его credentials остаются отдельно. Перед за�
 PEEK, а synthetic dispatch не доказывает live VK compatibility.
 Исходящие файлы VK требуют host >=3.17.0: signed `fileUploads`, native chooser
 и frozen originals по [контракту](platform-skills/vk/references/uploads.md).
+Входящие файлы используют signed file-only scope для CDN; обычное чтение и
+cookies остаются в области навигации. Сохраняй исходные байты явно выданных
+вложений и проверяй закрытый этап отказа по [контракту](platform-skills/vk/references/security.md).
 Форматы не запрещаются; source/его ACL не меняются, input не повторяется.
 Изменение поведения одновременно обновляет контракт и содержательные тесты.
 Google (`google-ai-search`) следует полному [контракту](platform-skills/google-ai-search/SKILL.md):
