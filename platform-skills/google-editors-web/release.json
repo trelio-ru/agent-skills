@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "google-editors-web",
-    "version": "0.1.0",
-    "summary": "Первый выпуск навыка для Google Таблиц и Документов через браузер Trelio",
+    "version": "0.1.1",
+    "summary": "Правка открытого Google Документа без перезагрузки вкладки и точные этапы отказа перед заменой",
     "routingSummary": "Inspect Google Sheets ranges and find or replace Google Docs text using a managed browser without Google APIs."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.1.0",
+    "version": "0.1.1",
     "minimumHostVersion": "3.34.7",
     "entrypoint": { "path": "trelio-google-editors.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],

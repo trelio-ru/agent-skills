@@ -168,6 +168,7 @@ class Editor {
     this.spec = spec;
     this.platform = platform;
     this.sessionId = null;
+    this.stage = 'preflight';
   }
 
   async call(operation, args) {
@@ -179,7 +180,7 @@ class Editor {
       const codes = { document_blocked: 'EDITORS_DOCUMENT_BLOCKED', attachment_unsupported: 'EDITORS_EXPORT_UNVERIFIED',
         attachment_link_required: 'EDITORS_UI_UNSUPPORTED', attachment_too_large: 'EDITORS_RESULT_TOO_LARGE' };
       const code = value?.state === 'manual_input_required' ? 'EDITORS_MANUAL_INPUT_REQUIRED' : codes[value?.reason];
-      throw new EditorFailure(code || 'EDITORS_BROWSER_UNAVAILABLE');
+      throw new EditorFailure(code || 'EDITORS_BROWSER_UNAVAILABLE', this.stage);
     }
     if (typeof value.sessionId !== 'string' || this.sessionId && value.sessionId !== this.sessionId) throw new EditorFailure('EDITORS_SESSION_CHANGED');
     this.sessionId = value.sessionId;
@@ -188,6 +189,10 @@ class Editor {
 
   async observe(args = {}, { allowedTitles = [this.spec.title], allowNewSheet = false } = {}) {
     const frame = await this.call('read-text', { includeControls: true, ...args });
+    return this.verifyTarget(frame, allowedTitles, allowNewSheet);
+  }
+
+  verifyTarget(frame, allowedTitles = [this.spec.title], allowNewSheet = false) {
     if (frame.kind !== 'trelio.browser-text/v1') throw new EditorFailure('EDITORS_UI_UNSUPPORTED');
     if (!titleLabels[this.spec.kind].some(label => allowedTitles.some(title => frame.title === title + ' - ' + label))) {
       throw new EditorFailure('EDITORS_TARGET_UNVERIFIED');
@@ -207,6 +212,22 @@ class Editor {
   async reopen() {
     await this.navigate(this.spec.url);
     return this.observe();
+  }
+
+  async prepareReplacement() {
+    this.stage = 'document_observation';
+    const frame = await this.perform('read-text', { includeControls: true });
+    // The exact live file/tab can go straight to the baseline export. Reloading
+    // it adds a navigation before the one reviewed write and can discard the
+    // editor. Reuse requires fresh host evidence, including the full selector.
+    // A protected refusal must never turn into a navigation or an input.
+    if (frame?.state !== 'preparing' && !(frame?.state === 'error' && frame.reason === 'session_closed')) {
+      const ready = this.acceptReady(frame);
+      if (ready.kind !== 'trelio.browser-text/v1') throw new EditorFailure('EDITORS_UI_UNSUPPORTED', this.stage);
+      if (ready.documentReference === this.spec.url) return this.verifyTarget(ready);
+    }
+    this.stage = 'document_navigation';
+    return this.reopen();
   }
 
   async navigate(url) {
@@ -452,11 +473,13 @@ async function copyDocument(editor, spec) {
 async function replaceDocument(editor, spec) {
   // Compare a fresh Google export before opening the modal. Checking only
   // the new phrase after saving could miss a second or an adjacent edit.
+  editor.stage = 'baseline_export';
   const before = (await exportDocumentText(editor)).replaceAll('\r\n', '\n');
   const at = before.indexOf(spec.search);
   if (at < 0 || before.indexOf(spec.search, at + 1) !== -1) throw new EditorFailure('EDITORS_TARGET_AMBIGUOUS');
   if (before.includes(spec.replacement)) throw new EditorFailure('EDITORS_REPLACEMENT_ALREADY_PRESENT');
   const expected = before.slice(0, at) + spec.replacement + before.slice(at + spec.search.length);
+  editor.stage = 'replace_dialog';
   await editor.openFindDialog();
   const search = await editor.setField(UI.find, spec.search, 'search');
   const replacement = await editor.setField(UI.replacement, spec.replacement, 'replacement');
@@ -523,6 +546,10 @@ export async function executeWorkflow(name, spec, perform, { platform = process.
   if (!workflowCommands.includes(name)) throw new EditorFailure('EDITORS_SPEC_INVALID');
   const editor = new Editor(perform, spec, platform);
   if (Object.hasOwn(createKind, name)) return createFile(editor, spec);
+  if (name === 'replace-document-text') {
+    await editor.prepareReplacement();
+    return replaceDocument(editor, spec);
+  }
   await editor.reopen();
   if (name === 'inspect-file') return { kind: spec.kind, title: spec.title, url: spec.url };
   if (name === 'rename-file') return renameFile(editor, spec.newTitle);
@@ -548,7 +575,6 @@ export async function executeWorkflow(name, spec, perform, { platform = process.
     if (Buffer.byteLength(JSON.stringify(document)) > 14_000) throw new EditorFailure('EDITORS_RESULT_TOO_LARGE');
     return { text: document, representation: 'plain_text_export' };
   }
-  if (name === 'replace-document-text') return replaceDocument(editor, spec);
   if (name === 'find-document-text') {
     await editor.openFindDialog();
     const count = await editor.findCount(spec.search);

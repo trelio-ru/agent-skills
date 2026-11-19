@@ -33,7 +33,8 @@ test('validate the exact editor URL and command before touching the host', async
 });
 
 async function docsFixture(t, { errorAfterClick = false, persistWrite = true, initial = 'first marker', title = 'Fixture', fieldMismatch = false,
-  unexpectedEdit = '', createPage = false, copyWithSharing = false } = {}) {
+  unexpectedEdit = '', createPage = false, copyWithSharing = false, openedReference = null, targetReference = docUrl,
+  blockedExport = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'editors-doc-fixture-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filePath = join(directory, 'fixture.txt');
@@ -43,14 +44,14 @@ async function docsFixture(t, { errorAfterClick = false, persistWrite = true, in
   let field;
   let selectAll = false;
   let fields = {};
-  let toggles = {};
+  let toggles = { 'Match using regular expressions': true, 'Ignore diacritics (ä = a)': true, 'Match case': false };
   let clickHandlers = [];
   let writes = 0;
   let navigations = 0;
   let exports = 0;
   let copies = 0;
   let lastFrame;
-  const result = { state: 'ready', kind: 'trelio.browser-text/v1', documentReference: docUrl, sessionId: 'fixture-session' };
+  const result = { state: 'ready', kind: 'trelio.browser-text/v1', documentReference: openedReference, sessionId: 'fixture-session' };
   function frame(args) {
     const controls = [];
     function control(role, label, handler, checked) {
@@ -109,21 +110,23 @@ async function docsFixture(t, { errorAfterClick = false, persistWrite = true, in
   }
   const perform = async (op, args) => {
     if (op === 'navigate') {
-      assert.equal(args.url, createPage && navigations === 0 ? 'https://docs.google.com/document/create' : docUrl);
+      assert.equal(args.url, createPage && navigations === 0 ? 'https://docs.google.com/document/create' : targetReference);
       if (createPage && navigations === 0) title = 'Untitled document';
       page = 'editor';
       fields = {};
       toggles = { 'Match using regular expressions': true, 'Ignore diacritics (ä = a)': true, 'Match case': false };
+      result.documentReference = targetReference;
       navigations += 1;
       return result;
     }
-    if (op === 'read-text') return frame(args);
+    if (op === 'read-text') return result.documentReference ? frame(args) : { state: 'error', reason: 'session_closed' };
     assert.equal(args.frameId, lastFrame);
     lastFrame = undefined;
     if (op === 'click') return clickHandlers[args.x]() || result;
     if (op === 'download-attachment') {
       assert.equal(page, 'download');
       assert.equal(args.x, 0);
+      if (blockedExport) return { state: 'error', reason: 'document_blocked' };
       page = 'editor';
       exports += 1;
       const bytes = Buffer.from(document);
@@ -159,6 +162,43 @@ test('one literal replacement verifies the whole document via two exports withou
   assert.equal(output.outcome, 'verified');
   assert.equal(output.originalCount, 0);
   assert.equal(output.replacementCount, 1);
+});
+
+test('replacement keeps the already verified file and tab open but navigates from a different tab', async (t) => {
+  const targetReference = docUrl + '?tab=t.0';
+  const spec = parseWorkflow('replace-document-text', JSON.stringify({ ...docSpec, url: targetReference }));
+  for (const [openedReference, expectedNavigations] of [[targetReference, 0], [docUrl + '?tab=t.other', 1]]) {
+    const fake = await docsFixture(t, { openedReference, targetReference });
+    // A replacement on the exact open editor must succeed without dispatching
+    // a reload, even if another top-level navigation would be refused.
+    const perform = (operation, args) => {
+      if (expectedNavigations === 0) assert.notEqual(operation, 'navigate');
+      return fake.perform(operation, args);
+    };
+    assert.equal((await executeWorkflow('replace-document-text', spec, perform)).outcome, 'verified');
+    assert.deepEqual(fake.state(), { document: 'second marker', writes: 1, navigations: expectedNavigations, exports: 2 });
+  }
+  const wrongTitle = await docsFixture(t, { openedReference: targetReference, title: 'Another file' });
+  await assert.rejects(executeWorkflow('replace-document-text', spec, wrongTitle.perform),
+    error => error.code === 'EDITORS_TARGET_UNVERIFIED' && error.outcome === 'not_dispatched');
+  assert.equal(wrongTitle.state().writes, 0);
+  assert.equal(wrongTitle.state().navigations, 0);
+});
+
+test('browser refusals keep their before-write stage and never launch a second route', async (t) => {
+  const spec = parseWorkflow('replace-document-text', JSON.stringify(docSpec));
+  const observed = [];
+  await assert.rejects(executeWorkflow('replace-document-text', spec, async operation => {
+    observed.push(operation);
+    return { state: 'error', reason: 'document_blocked' };
+  }), error => error.code === 'EDITORS_DOCUMENT_BLOCKED' && error.stage === 'document_observation'
+    && error.outcome === 'not_dispatched');
+  assert.deepEqual(observed, ['read-text']);
+  const fake = await docsFixture(t, { openedReference: docUrl, blockedExport: true });
+  await assert.rejects(executeWorkflow('replace-document-text', spec, fake.perform),
+    error => error.code === 'EDITORS_DOCUMENT_BLOCKED' && error.stage === 'baseline_export'
+      && error.outcome === 'not_dispatched');
+  assert.deepEqual(fake.state(), { document: 'first marker', writes: 0, navigations: 0, exports: 0 });
 });
 
 test('a lost Replace response can be verified but cannot trigger another Replace', async (t) => {
