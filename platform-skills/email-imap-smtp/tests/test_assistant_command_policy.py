@@ -14,8 +14,9 @@ from test_trelio_email import MODULE as M
 class AssistantCommandPolicy(unittest.TestCase):
     def test_reviewed_prefixes_select_real_leaf_operations(self):
         policy = json.loads((Path(M.__file__).parent / "trelio-assistant-execution.json").read_text(encoding="utf-8"))
-        self.assertEqual(set(policy), {"schemaVersion", "taskCommands"})
-        self.assertEqual(policy["schemaVersion"], 1)
+        self.assertEqual(set(policy), {"schemaVersion", "taskCommands", "deniedOptions", "readOnlyCommands"})
+        self.assertEqual(policy["schemaVersion"], 3)
+        self.assertEqual(policy["deniedOptions"], [])
         prefixes = policy["taskCommands"]
         self.assertEqual(len(prefixes), len({tuple(p) for p in prefixes}))
         for prefix in prefixes:
@@ -39,6 +40,21 @@ class AssistantCommandPolicy(unittest.TestCase):
             self.assertFalse(any(denied[:len(p)] == p for p in prefixes), denied)
         self.assertIn(["read-reference"], prefixes)
         self.assertIn(["reply"], prefixes)
+
+    def test_only_reviewed_commands_without_mail_or_file_writes_issue_read_evidence(self):
+        policy = json.loads((Path(M.__file__).parent / "trelio-assistant-execution.json").read_text(encoding="utf-8"))
+        reviewed = [tuple(prefix) for prefix in policy["readOnlyCommands"]]
+        self.assertEqual(len(reviewed), len(set(reviewed)))
+        self.assertTrue(set(reviewed) <= {tuple(prefix) for prefix in policy["taskCommands"]})
+        # IMAP handlers examine folders and use PEEK. Connection diagnostics
+        # only authenticate and issue NOOP. Config reads target the literal
+        # show leaves. Temporary attachment creation/deletion remains a file
+        # effect, so neither command can certify an interrupted pass as reads.
+        self.assertEqual(set(reviewed), {
+            ("guides",), ("doctor",), ("folders",), ("search",), ("read",),
+            ("read-reference",), ("attachments",),
+            ("policy", "show"), ("description", "show"), ("signature", "show"),
+        })
 
 
 if __name__ == "__main__":

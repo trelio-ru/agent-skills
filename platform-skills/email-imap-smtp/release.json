@@ -9,7 +9,7 @@
   "connection": null,
   "runtime": {
     "version": "2.11.1",
-    "minimumHostVersion": "3.34.0",
+    "minimumHostVersion": "3.34.7",
     "entrypoint": {
       "path": "trelio-email.py",
       "interpreter": "python"
