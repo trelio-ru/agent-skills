@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "google-editors-web",
-    "version": "0.1.2",
-    "summary": "Восстанавливать чтение вкладки после смены кадра в той же сессии без повтора навигации или ввода",
+    "version": "0.1.3",
+    "summary": "Проверять точный редактор при холодном старте после сохранённого входа без повторной навигации",
     "routingSummary": "Inspect Google Sheets ranges and find or replace Google Docs text using a managed browser without Google APIs."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.1.2",
+    "version": "0.1.3",
     "minimumHostVersion": "3.34.7",
     "entrypoint": { "path": "trelio-google-editors.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],

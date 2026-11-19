@@ -255,6 +255,14 @@ class Editor {
       const until = performance.now() + 25_000;
       do {
         started = await this.perform('wait', {});
+        if (knownEditor && started?.state === 'saved_unverified' && typeof started.sessionId === 'string') {
+          // Older hosts can return the live owner's general profile status in
+          // place of the initial navigation result. Check the original owner
+          // and exact target using one read. A stored snapshot without an owner
+          // is insufficient, and a browser refusal still reaches the caller.
+          this.pinSession(started);
+          return this.observe();
+        }
         if (!['preparing', 'saved_unverified'].includes(started?.state)) break;
         await delay(250);
       } while (performance.now() < until);

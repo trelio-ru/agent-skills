@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { EditorFailure, editorLink, executeWorkflow, fieldCheckPolicy, parseWorkflow, workflowCommands } from './editor-workflows.mjs';
 
 export const SKILL_ID = 'google-editors-web';
-export const SKILL_VERSION = '0.1.2';
+export const SKILL_VERSION = '0.1.3';
 // This host release introduces all three required browser APIs: attachment
 // redirects, exact document references and the guarded embedded picker.
 export const MINIMUM_HOST_VERSION = '3.34.7';

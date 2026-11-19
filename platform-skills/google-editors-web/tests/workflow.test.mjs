@@ -284,6 +284,33 @@ test('a stale response on a Replace click never sends the click again', async (t
   assert.equal(fake.state().navigations, 0);
 });
 
+
+test('a cold startup with an older host status must verify the same live browser and exact editor', async () => {
+  const spec = parseWorkflow('inspect-file', JSON.stringify({ url: docUrl, title: 'Fixture' }));
+  const ready = { state: 'ready', sessionId: 'cold-owner', kind: 'trelio.browser-text/v1', title: 'Fixture - Google Docs', documentReference: docUrl };
+  for (const [observation, refusal] of [
+    [ready, null],
+    [{ ...ready, sessionId: 'foreign-owner' }, 'EDITORS_SESSION_CHANGED'],
+    [{ ...ready, documentReference: docUrl.replace('1234', '4321') }, 'EDITORS_TARGET_UNVERIFIED'],
+    [{ state: 'error', reason: 'document_blocked', sessionId: 'cold-owner' }, 'EDITORS_DOCUMENT_BLOCKED'],
+  ]) {
+    const calls = [];
+    const read = executeWorkflow('inspect-file', spec, async (op, args) => {
+      calls.push(op);
+      if (op === 'navigate') {
+        assert.equal(args.url, docUrl);
+        return { state: 'preparing' };
+      }
+      assert.ok(calls.length <= 3, 'never wait again or dispatch another navigation');
+      if (op === 'wait') return { state: 'saved_unverified', sessionId: 'cold-owner' };
+      return observation;
+    });
+    if (refusal) await assert.rejects(read, error => error.code === refusal && error.outcome === 'not_dispatched');
+    else assert.equal((await read).url, docUrl);
+    assert.deepEqual(calls, ['navigate', 'wait', 'read-text']);
+  }
+});
+
 test('a preparing browser acknowledges a single navigation before the first inspection', async () => {
   const calls = [];
   const spec = parseWorkflow('inspect-file', JSON.stringify({ url: docUrl, title: 'Fixture' }));
