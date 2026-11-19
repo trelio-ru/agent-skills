@@ -182,13 +182,31 @@ class Editor {
       const code = value?.state === 'manual_input_required' ? 'EDITORS_MANUAL_INPUT_REQUIRED' : codes[value?.reason];
       throw new EditorFailure(code || 'EDITORS_BROWSER_UNAVAILABLE', this.stage);
     }
-    if (typeof value.sessionId !== 'string' || this.sessionId && value.sessionId !== this.sessionId) throw new EditorFailure('EDITORS_SESSION_CHANGED');
-    this.sessionId = value.sessionId;
+    this.pinSession(value);
     return value;
   }
 
+  pinSession(value) {
+    if (typeof value.sessionId !== 'string' || this.sessionId && value.sessionId !== this.sessionId) {
+      throw new EditorFailure('EDITORS_SESSION_CHANGED', this.stage);
+    }
+    this.sessionId = value.sessionId;
+  }
+
+  async readFrame(args = {}) {
+    const params = { includeControls: true, ...args };
+    const first = await this.perform('read-text', params);
+    if (first?.state !== 'error' || first.reason !== 'stale_frame') return first;
+    // Chromium retired only this observation. Sample the same session once
+    // more, with no navigation, old frame token or input to repeat.
+    this.pinSession(first);
+    const second = await this.perform('read-text', params);
+    if (second?.sessionId !== this.sessionId) throw new EditorFailure('EDITORS_SESSION_CHANGED', this.stage);
+    return second;
+  }
+
   async observe(args = {}, { allowedTitles = [this.spec.title], allowNewSheet = false } = {}) {
-    const frame = await this.call('read-text', { includeControls: true, ...args });
+    const frame = this.acceptReady(await this.readFrame(args));
     return this.verifyTarget(frame, allowedTitles, allowNewSheet);
   }
 
@@ -210,18 +228,17 @@ class Editor {
   }
 
   async reopen() {
-    await this.navigate(this.spec.url);
-    return this.observe();
+    return this.navigate(this.spec.url, { knownEditor: true });
   }
 
   async prepareReplacement() {
     this.stage = 'document_observation';
-    const frame = await this.perform('read-text', { includeControls: true });
+    const frame = await this.readFrame();
     // The exact live file/tab can go straight to the baseline export. Reloading
     // it adds a navigation before the one reviewed write and can discard the
     // editor. Reuse requires fresh host evidence, including the full selector.
     // A protected refusal must never turn into a navigation or an input.
-    if (frame?.state !== 'preparing' && !(frame?.state === 'error' && frame.reason === 'session_closed')) {
+    if (frame?.state !== 'preparing' && !(frame?.state === 'error' && frame.reason === 'session_closed' && !this.sessionId)) {
       const ready = this.acceptReady(frame);
       if (ready.kind !== 'trelio.browser-text/v1') throw new EditorFailure('EDITORS_UI_UNSUPPORTED', this.stage);
       if (ready.documentReference === this.spec.url) return this.verifyTarget(ready);
@@ -230,7 +247,7 @@ class Editor {
     return this.reopen();
   }
 
-  async navigate(url) {
+  async navigate(url, { knownEditor = false } = {}) {
     // A cold owner can acknowledge navigation before the browser boots.
     // Wait for this original dispatch; never re-issue it as a retry.
     let started = await this.perform('navigate', { url });
@@ -242,7 +259,13 @@ class Editor {
         await delay(250);
       } while (performance.now() < until);
     }
-    return this.acceptReady(started);
+    if (knownEditor && started?.state === 'error' && started.reason === 'stale_frame') {
+      // The exact navigation already ran. Only refresh its observation; never
+      // issue another navigation or change tabs. The fresh frame must identify
+      // the intended file and its selector before the workflow may proceed.
+      this.pinSession(started);
+    } else this.acceptReady(started);
+    return knownEditor ? this.observe() : started;
   }
 
   async control(labels, role, query = undefined, predicate = () => true) {

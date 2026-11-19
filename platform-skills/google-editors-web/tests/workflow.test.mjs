@@ -234,6 +234,56 @@ test('ambiguous matches, wrong document and an unchecked input are read-only ref
   }
 });
 
+
+test('a retired initial editor observation reads the same session without sending navigation again', async (t) => {
+  const fake = await docsFixture(t);
+  const calls = [];
+  let retired = false;
+  const value = await executeWorkflow('replace-document-text', parseWorkflow('replace-document-text', JSON.stringify(docSpec)), async (op, args) => {
+    calls.push(op);
+    const result = await fake.perform(op, args);
+    if (!retired && op === 'navigate') {
+      retired = true;
+      return { state: 'error', reason: 'stale_frame', sessionId: result.sessionId };
+    }
+    return result;
+  });
+  assert.equal(value.outcome, 'verified');
+  assert.deepEqual(calls.slice(0, 3), ['read-text', 'navigate', 'read-text']);
+  assert.deepEqual(fake.state(), { document: 'second marker', writes: 1, navigations: 1, exports: 2 });
+});
+
+test('a retired read checks the fresh file, session and browser refusal before any input', async () => {
+  const spec = parseWorkflow('replace-document-text', JSON.stringify(docSpec));
+  const stale = { state: 'error', reason: 'stale_frame', sessionId: 'fixture-session' };
+  const ready = { state: 'ready', kind: 'trelio.browser-text/v1', documentReference: docUrl, title: 'Fixture - Google Docs', sessionId: stale.sessionId };
+  for (const [next, code] of [
+    [stale, 'EDITORS_BROWSER_UNAVAILABLE'],
+    [{ ...ready, sessionId: 'different-session' }, 'EDITORS_SESSION_CHANGED'],
+    [{ ...ready, title: 'Wrong file - Google Docs' }, 'EDITORS_TARGET_UNVERIFIED'],
+    [{ ...stale, reason: 'document_blocked' }, 'EDITORS_DOCUMENT_BLOCKED'],
+    [{ ...stale, reason: 'session_closed' }, 'EDITORS_BROWSER_UNAVAILABLE'],
+  ]) {
+    const calls = [];
+    await assert.rejects(executeWorkflow('replace-document-text', spec, async op => {
+      calls.push(op);
+      return calls.length === 1 ? stale : next;
+    }), error => error.code === code && error.outcome === 'not_dispatched');
+    assert.deepEqual(calls, ['read-text', 'read-text']);
+  }
+});
+
+test('a stale response on a Replace click never sends the click again', async (t) => {
+  const fake = await docsFixture(t, { errorAfterClick: true, persistWrite: false, openedReference: docUrl });
+  const spec = parseWorkflow('replace-document-text', JSON.stringify(docSpec));
+  await assert.rejects(executeWorkflow('replace-document-text', spec, async (op, args) => {
+    const r = await fake.perform(op, args);
+    return op === 'click' && r.reason === 'browser_process_lost' ? { state: 'error', reason: 'stale_frame', sessionId: 'fixture-session' } : r;
+  }), error => error.code === 'EDITORS_ACTION_UNKNOWN' && error.outcome === 'unknown');
+  assert.equal(fake.state().writes, 1);
+  assert.equal(fake.state().navigations, 0);
+});
+
 test('a preparing browser acknowledges a single navigation before the first inspection', async () => {
   const calls = [];
   const spec = parseWorkflow('inspect-file', JSON.stringify({ url: docUrl, title: 'Fixture' }));
