@@ -225,6 +225,36 @@ test('authorization session can restore and hand off its existing owned window',
   assert.ok(host.calls.every(item => item.profileAuthentication && item.externalNavigation));
 });
 
+test('cold Gmail and Yandex setup wait for an explicit handoff of the same browser', async () => {
+  const manual = { state: 'manual_input_required', sessionId: 'worker' };
+  await Promise.all(['reader@gmail.com', 'reader@ya.ru'].map(async address => {
+    const host = fixture(null, [{ state: 'preparing' }, { state: 'preparing' }, manual, manual]);
+    assert.equal(await runWebmail({ mailbox: address, operation: 'setup' }, host), manual);
+    assert.deepEqual(host.calls.map(({ operation }) => operation), ['setup', 'status', 'status', 'show-login']);
+  }));
+});
+
+test('cold open preserves startup, close and display failures without starting another browser', async () => {
+  const preparing = { state: 'preparing' }, manual = { state: 'manual_input_required', sessionId: 'worker' };
+  const launchFailed = { state: 'error', reason: 'bootstrap_failed' };
+  const displayFailed = { state: 'error', reason: 'operation_failed' };
+  for (const [replies, expected, calls] of [
+    [[preparing, launchFailed], launchFailed, ['setup', 'status']],
+    [[preparing, status], status, ['setup', 'status']],
+    [[preparing, manual, displayFailed], displayFailed, ['setup', 'status', 'show-login']],
+  ]) {
+    const host = fixture(configured, replies);
+    assert.equal(await runWebmail({ mailbox, operation: 'open' }, host), expected);
+    assert.deepEqual(host.calls.map(({ operation }) => operation), calls);
+  }
+  const changed = fixture(configured, [preparing, manual, { ...manual, sessionId: 'replacement' }]);
+  assert.equal((await runWebmail({ mailbox, operation: 'open' }, changed)).code, 'EMAIL_WEBMAIL_SESSION_CHANGED');
+  const expired = fixture(configured, [preparing]);
+  expired.deadlineAt = Date.now();
+  assert.equal(await runWebmail({ mailbox, operation: 'open' }, expired), preparing);
+  assert.deepEqual(expired.calls.map(({ operation }) => operation), ['setup']);
+});
+
 test('read and view use the live mail interface without an account-label form', async () => {
   const page = text([]);
   const host = fixture(configured, [status, page, page]);

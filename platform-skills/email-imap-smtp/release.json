@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.9.1",
-    "summary": "Убрали списки разрешённых сайтов и ручную настройку SSO в браузерном резерве почты. Вход свободно проходит через связанные сайты, сессия сохраняется целиком в своём профиле; агент читает и работает с почтовым интерфейсом без настройки кнопки аккаунта.",
+    "version": "2.9.2",
+    "summary": "При подключении веб-почты Trelio дожидается запуска браузера и показывает окно входа, прежде чем попросить войти в почтовый ящик.",
     "routingSummary": "Read and send email over IMAP/SMTP, inspect attachments locally, and use an optional protected webmail session when the protocol connection is unavailable."
   },
   "connection": null,
   "runtime": {
-    "version": "2.11.0",
+    "version": "2.11.1",
     "minimumHostVersion": "3.34.0",
     "entrypoint": {
       "path": "trelio-email.py",

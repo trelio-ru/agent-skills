@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const operations = new Set(['status', 'setup', 'open', 'ready', 'view', 'read', 'follow', 'close', 'navigate', 'screenshot', 'click', 'type', 'key', 'scroll']);
 const maxConfigBytes = 16_384;
+const startupWaitMs = 15_000;
 // Python escapes Unicode in the private request pipe. Keep enough transport
 // space for the host's normal 32 KiB input command, not just small settings.
 const maxRequestBytes = 128 * 1024;
@@ -115,6 +116,30 @@ export async function runWebmail(request, host) {
     }
     return value;
   };
+  const openForSignIn = async () => {
+    let state = await command('setup', { url: settings.url });
+    if (state.state !== 'preparing') return state;
+    const startingSessionId = state.sessionId;
+
+    // A cold start acknowledges the worker claim before Chromium can take
+    // input. Poll its existing session, then show that window through the
+    // already-supported handoff command. That command cannot launch a new
+    // browser if the user closed the original one while we were waiting.
+    const until = Math.min(Date.now() + startupWaitMs, host.deadlineAt ?? Infinity);
+    while (state.state === 'preparing' && Date.now() + 250 < until) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      state = await command('status');
+      if (startingSessionId && state.sessionId && state.sessionId !== startingSessionId) {
+        return result('error', 'EMAIL_WEBMAIL_SESSION_CHANGED');
+      }
+    }
+    if (state.state !== 'manual_input_required') return state;
+    const shown = await command('show-login');
+    if (shown.state === 'manual_input_required' && shown.sessionId !== state.sessionId) {
+      return result('error', 'EMAIL_WEBMAIL_SESSION_CHANGED');
+    }
+    return shown;
+  };
   if (request.operation === 'setup') {
     const initial = settings;
     if (request.edit !== undefined && typeof request.edit !== 'boolean'
@@ -141,7 +166,7 @@ export async function runWebmail(request, host) {
       if (JSON.stringify(candidate) !== JSON.stringify(initial)) await persist(candidate);
       settings = candidate;
     }
-    return command('setup', { url: settings.url });
+    return openForSignIn();
   }
   if (!settings) return result('not_configured', 'EMAIL_WEBMAIL_SETUP_AVAILABLE');
   switch (request.operation) {
@@ -150,7 +175,7 @@ export async function runWebmail(request, host) {
     case 'open':
       // The existing windowed session hands control to the human in place.
       // Human auth, drafts and sending remain in the provider's own UI.
-      return command('setup', { url: settings.url });
+      return openForSignIn();
     case 'read':
       return command('read-text', controlsOptions(null, request.offset));
     case 'follow':
@@ -192,6 +217,7 @@ async function trustedHost(env) {
   const directory = path.join(workspace.resolveWorkspaceBridgeConfigDirectory(), 'visual-browser', binding.scope);
   const file = path.join(directory, 'webmail.json');
   return {
+    deadlineAt: binding.deadlineAt,
     visual: options => visual.runVisualSession({ ...options, env }),
     readSettings: async () => {
       await bootstrap.prepareVisualPrivateDirectory(directory);

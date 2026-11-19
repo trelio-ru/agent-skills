@@ -14,6 +14,13 @@ true` общего Visual Browser host >=3.34.0. У него нет списка
 Ручной вход выполняется обычным Chromium: extension не блокирует страницы,
 redirect, пустые ответы и iframe авторизации. Пользователь не перечисляет SSO.
 
+При холодном `setup` и `open` статус `preparing` означает запуск worker.
+Provider ограниченно проверяет его готовность и явно показывает то же окно
+через `show-login` перед передачей управления человеку. Если запуск ещё
+продолжается, агент проверяет `status` и вызывает `open` для открытого окна
+до просьбы войти. Это не требует новой версии host и не повторяет запуск при
+закрытии исходной сессии во время ожидания.
+
 Session-only cookies всех сайтов собственного профиля сохраняются в private
 host Cookie API overlay, включая сторонние и родительские домены и CHIPS.
 Постоянные cookies, localStorage, IndexedDB, WebStorage и остальные поддержанные
@@ -48,7 +55,8 @@ IMAP UID/ACK/MIME и не используется для пассивного s
 ## Проверки
 
 Provider tests исполняют настоящий sibling CLI, migration v1 → v2, known/custom
-routing, отсутствие SSO/account-label формы, cross-domain links, ordinary input
+routing, отсутствие SSO/account-label формы, ожидание и показ окна ручного
+входа, cross-domain links, ordinary input
 и сохранение старого окна при обновлении. Python проверяет private stdio,
 отсутствие password access, PNG больше обычного текстового бюджета, Unicode
 input и прежнюю read-only policy. Безопасный stderr warning не отменяет
