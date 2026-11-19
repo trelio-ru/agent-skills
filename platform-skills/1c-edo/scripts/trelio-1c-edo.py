@@ -48,7 +48,8 @@ from typing import Any, BinaryIO, Callable, Iterable, Iterator
 
 
 SKILL_ID = "1c-edo"
-RUNTIME_VERSION = "1.1.1"
+CREDENTIAL_PROVIDER_NAMESPACE = SKILL_ID
+RUNTIME_VERSION = "1.1.2"
 X_ODATA_ENV = "TRELIO_1C_EDO_X_ODATA"
 CONNECTION_CONFIG_ENV = "TRELIO_SKILL_CONNECTION_CONFIG_JSON"
 ACCESS_STATES = ("unknown", "no_access", "connected", "needs_reconnect")
@@ -512,8 +513,9 @@ def credentials_path(identity: Identity) -> Path:
 
 def _assert_not_symlink(path: Path) -> None:
     with contextlib.suppress(FileNotFoundError):
-        if stat.S_ISLNK(path.lstat().st_mode):
-            raise OneCEdoError("unsafe_local_storage", f"Локальный путь {path} не может быть symlink.")
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise OneCEdoError("unsafe_local_storage", "Перенаправление локального хранилища запрещено.")
 
 
 def _apply_windows_private_acl(path: Path, *, directory: bool) -> None:
@@ -540,28 +542,95 @@ def _apply_windows_private_acl(path: Path, *, directory: bool) -> None:
         )
 
 
-def ensure_private_directory(path: Path) -> None:
-    """Create/check namespace components without traversing a local symlink.
+def _assert_shared_integration_acl(path: Path) -> None:
+    # Existing integrations directories are shared by all providers. Check the
+    # owner and effective allow entries without rewriting others' permissions.
+    windows_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR")
+    if not windows_root or not Path(windows_root).is_absolute():
+        raise OneCEdoError("unsafe_local_storage", "Не найден системный Windows PowerShell.")
+    powershell = Path(windows_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    script = r"""
+$ErrorActionPreference = 'Stop'
+try {
+    [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+    $path = [Console]::In.ReadToEnd()
+    $attributes = [IO.File]::GetAttributes($path)
+    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        -not ($attributes -band [IO.FileAttributes]::Directory)) { exit 2 }
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    function Test-TrustedSid([Security.Principal.SecurityIdentifier]$principal) {
+        $principal.Value -eq $sid.Value -or $principal.IsWellKnown('LocalSystemSid') -or
+            $principal.IsWellKnown('BuiltinAdministratorsSid')
+    }
+    $acl = [IO.Directory]::GetAccessControl($path)
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+    if (-not (Test-TrustedSid $owner)) { exit 2 }
+    $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
+    if ($null -eq $descriptor.DiscretionaryAcl) { exit 2 }
+    $readOnly = [int]([Security.AccessControl.FileSystemRights]::ReadAndExecute -bor
+        [Security.AccessControl.FileSystemRights]::Synchronize)
+    foreach ($entry in $descriptor.DiscretionaryAcl) {
+        if ($entry.AceType -eq 'AccessDenied') { continue }
+        if ($entry.AceType -ne 'AccessAllowed') { exit 2 }
+        if ([int]$entry.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) { continue }
+        # Delete-child and ACL-changing rights are caught even when the
+        # private provider directory itself would deny access.
+        if (-not (Test-TrustedSid $entry.SecurityIdentifier) -and
+            ($entry.AccessMask -band (-bnot $readOnly))) { exit 2 }
+    }
+} catch { exit 2 }
+"""
+    # The helper needs Windows profile locations, not the provider process's
+    # protected X-OData binding or any other inherited credential.
+    native_env = {
+        name: os.environ[name]
+        for name in ("SystemRoot", "WINDIR", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP")
+        if name in os.environ
+    }
+    arguments = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]
+    try:
+        result = subprocess.run(
+            [str(powershell), *arguments],
+            input=os.fspath(path).encode("utf-8"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=native_env, shell=False, check=False, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise OneCEdoError("unsafe_local_storage", "Не удалось проверить общую папку integrations.") from error
+    if result.returncode != 0:
+        raise OneCEdoError("unsafe_local_storage", "Общая папка integrations не прошла проверку прав.")
 
-    We enforce the boundary from ``integrations`` downward. The user's config
-    home itself may legitimately be a managed filesystem mount, but no skill,
-    company, member or connection component may redirect storage elsewhere.
-    """
+
+def ensure_private_directory(path: Path) -> None:
+    """Prepare only this provider's private subtree under the shared layout."""
 
     integration_root = default_config_home() / "integrations"
+    provider_root = integration_root / CREDENTIAL_PROVIDER_NAMESPACE
+    # Never allow a caller to apply private permissions to the shared root or
+    # a neighbouring skill. The config home itself may be a managed mount.
+    try:
+        parts = path.relative_to(provider_root).parts
+    except ValueError as error:
+        raise OneCEdoError("unsafe_local_storage", "Путь вне хранилища навыка.") from error
+    if ".." in parts:
+        raise OneCEdoError("unsafe_local_storage", "Путь вне хранилища навыка.")
+    _assert_not_symlink(integration_root)
+    integration_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _assert_not_symlink(integration_root)
+    if os.name == "posix":
+        info = integration_root.lstat()
+        if info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise OneCEdoError("unsafe_local_storage", "Небезопасные права общей папки integrations.")
+    elif os.name == "nt":
+        _assert_shared_integration_acl(integration_root)
+
     current = integration_root
-    for component in path.relative_to(integration_root).parts:
+    for component in (CREDENTIAL_PROVIDER_NAMESPACE, *parts):
+        current /= component
         _assert_not_symlink(current)
-        current.mkdir(mode=0o700, parents=True, exist_ok=True)
+        current.mkdir(mode=0o700, exist_ok=True)
         if os.name == "posix":
             current.chmod(0o700)
         _apply_windows_private_acl(current, directory=True)
-        current = current / component
-    _assert_not_symlink(current)
-    current.mkdir(mode=0o700, parents=False, exist_ok=True)
-    if os.name == "posix":
-        current.chmod(0o700)
-    _apply_windows_private_acl(current, directory=True)
 
 
 def _read_private_json(path: Path) -> dict[str, Any] | None:

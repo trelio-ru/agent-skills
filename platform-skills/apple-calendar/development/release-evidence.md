@@ -1,4 +1,14 @@
-# Release review 1.0.4
+# Release review 1.0.5
+
+Published baseline: skill-apple-calendar-v1.0.4 at
+cce41b57a848b152fea2fad1b4d579454c2570e5. macOS previously refused a
+pre-existing 0755 shared Trelio root. The native POSIX regression checks
+existing readable parents, refusal of writable parents and the provider's
+private ACL equivalent (0700). The signed account path, storage format,
+permissions within the vault and host admission stay the same. Use the
+provider OS matrix, tagged package and guarded read-back.
+
+## Historical review 1.0.4
 
 Published baseline: skill-apple-calendar-v1.0.3 at
 b55a44308cb911a2290c0dadde556439bd7c0613. The integration receipt identifies

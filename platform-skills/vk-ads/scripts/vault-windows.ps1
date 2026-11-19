@@ -40,25 +40,52 @@ try {
     if ($rules.Count -ne 1 -or $rules[0].IdentityReference.Value -ne $sid.Value -or
         $rules[0].AccessControlType -ne 'Allow' -or $rules[0].FileSystemRights -ne 'FullControl') { throw 'acl' }
   }
-  function Create-Directory([string]$path) {
+  function Assert-SharedDirectory([string]$path) {
+    Assert-Path $path $true
+    $acl = [IO.Directory]::GetAccessControl($path)
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'owner' }
+    # Trelio and integrations are shared layout directories, not vaults.
+    # Accept ordinary inherited rights for the user, SYSTEM and local admins.
+    # Another principal must not be able to replace a vault ancestor or its
+    # child, even if the child's own DACL would deny that principal access.
+    $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
+    if ($null -eq $descriptor.DiscretionaryAcl) { throw 'acl' }
+    $readOnly = [int]([Security.AccessControl.FileSystemRights]::ReadAndExecute -bor
+      [Security.AccessControl.FileSystemRights]::Synchronize)
+    foreach ($ace in $descriptor.DiscretionaryAcl) {
+      if ($ace.AceType -eq 'AccessDenied') { continue }
+      if ($ace.AceType -ne 'AccessAllowed') { throw 'acl' }
+      if ([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) { continue }
+      $principal = $ace.SecurityIdentifier
+      if ($principal.Value -eq $sid.Value -or $principal.IsWellKnown('LocalSystemSid') -or
+          $principal.IsWellKnown('BuiltinAdministratorsSid')) { continue }
+      if ($ace.AccessMask -band (-bnot $readOnly)) { throw 'acl' }
+    }
+  }
+  function Create-Directory([string]$path, [bool]$shared = $false) {
     Assert-Path $path $false
-    if ([IO.Directory]::Exists($path)) { Assert-Private $path; return }
-    if ([IO.File]::Exists($path)) { throw 'directory' }
-    $parent = [IO.Path]::GetDirectoryName($path)
-    if (-not [IO.Directory]::Exists($parent)) { Create-Directory $parent }
-    $acl = [Security.AccessControl.DirectorySecurity]::new()
-    $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true, $false)
-    $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
-    $acl.AddAccessRule($rule)
-    # Create with the explicit DACL; private material never exists under an
-    # inherited broad ACL, including on an elevated Windows session.
-    [IO.Directory]::CreateDirectory($path, $acl) | Out-Null
-    Assert-Private $path
+    if (-not [IO.Directory]::Exists($path)) {
+      if ([IO.File]::Exists($path)) { throw 'directory' }
+      $parent = [IO.Path]::GetDirectoryName($path)
+      if (-not [IO.Directory]::Exists($parent)) { Create-Directory $parent }
+      $acl = [Security.AccessControl.DirectorySecurity]::new()
+      $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true, $false)
+      $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+      $acl.AddAccessRule($rule)
+      # Create with the explicit DACL; private material never exists under an
+      # inherited broad ACL, including on an elevated Windows session.
+      [IO.Directory]::CreateDirectory($path, $acl) | Out-Null
+    }
+    if ($shared) { Assert-SharedDirectory $path } else { Assert-Private $path }
   }
   if ($packet.mode -eq 'directory') { Create-Directory $packet.path; [Console]::Out.Write('ok') }
   elseif ($packet.mode -eq 'directories') {
     if ($packet.paths.Count -ne 5) { throw 'paths' }
-    foreach ($privatePath in $packet.paths) { Create-Directory $privatePath }
+    # Only the first two entries are shared. The provider directory and all
+    # account descendants still require the exact owner-only DACL.
+    for ($index = 0; $index -lt $packet.paths.Count; $index++) {
+      Create-Directory $packet.paths[$index] ($index -lt 2)
+    }
     [Console]::Out.Write('ok')
   }
   elseif ($packet.mode -eq 'check') { Assert-Private $packet.path; [Console]::Out.Write('ok') }

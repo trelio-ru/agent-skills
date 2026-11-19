@@ -27,13 +27,18 @@ function powershell() {
 async function windows(packet) {
   return privateProcess(powershell(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'vault-windows.ps1')], JSON.stringify(packet));
 }
-export async function privateFile(file, directory = false) {
+export async function privateFile(file, directory = false, { shared = false } = {}) {
   const stat = await fs.lstat(file); check(!stat.isSymbolicLink() && (directory ? stat.isDirectory() : stat.isFile()), 'unsafe_storage');
   if (process.platform === 'win32') await windows({ mode: 'check', path: file });
-  else check(stat.uid === process.getuid() && (stat.mode & 0o077) === 0, 'unsafe_permissions');
+  else {
+    // Shared containers may be readable/traversable. Only their owner may
+    // write, since a writable parent could replace the private vault.
+    const forbidden = directory && shared ? 0o022 : 0o077;
+    check(stat.uid === process.getuid() && (stat.mode & forbidden) === 0, 'unsafe_permissions');
+  }
   return stat;
 }
-export async function directory(file) {
+export async function directory(file, { shared = false } = {}) {
   if (process.platform === 'win32') { await windows({ mode: 'directory', path: file }); return; }
   // Check ancestors before mkdir: recursive mkdir alone follows a hostile link.
   let cursor = file; const missing = [];
@@ -43,7 +48,7 @@ export async function directory(file) {
     const parent = path.dirname(cursor); if (parent === cursor) break; cursor = parent;
   }
   for (const item of missing.reverse()) await fs.mkdir(item, { mode: 0o700 }).catch(error => { if (error.code !== 'EEXIST') throw error; });
-  await privateFile(file, true);
+  await privateFile(file, true, { shared });
 }
 async function atomic(file, text) {
   const temporary = `${file}.${crypto.randomUUID()}.tmp`;
@@ -63,18 +68,23 @@ export class Store {
     // never supplies it; all native guards still run, including every ancestor.
     const dirs = [this.root, path.join(this.root, 'integrations'), path.join(this.root, 'integrations', 'vk-ads'), path.dirname(this.dir), this.dir];
     if (process.platform === 'win32') {
-      // One native invocation checks/creates every level with the same owner,
-      // inheritance and reparse guards; no validation result is cached.
+      // Verify the two shared parents before preparing the owner-only
+      // provider subtree; no native validation result is cached.
       observe('directories-start'); await windows({ mode: 'directories', paths: dirs }); observe('directories-ready'); return;
     }
     for (let index = 0; index < dirs.length; index++) {
-      observe(`directory-${index}-start`); await directory(dirs[index]); observe(`directory-${index}-ready`);
+      observe(`directory-${index}-start`); await directory(dirs[index], { shared: index < 2 }); observe(`directory-${index}-ready`);
     }
   }
   async macKey() {
     if (this.key) return this.key;
     const source = await fs.readFile(path.join(here, 'vault-key.swift'));
-    const cache = path.join(this.root, 'native', 'vk-ads'); await directory(cache);
+    // The helper executable is private too. A readable common root must not
+    // allow another user to replace the helper through a writable cache parent.
+    const nativeRoot = path.join(this.root, 'native');
+    await directory(this.root, { shared: true });
+    await directory(nativeRoot, { shared: true });
+    const cache = path.join(nativeRoot, 'vk-ads'); await directory(cache);
     const binary = path.join(cache, `vault-${hash(source).slice(0, 24)}`);
     try { const stat = await privateFile(binary); check(stat.mode & 0o100, 'unsafe_permissions'); }
     catch (error) {

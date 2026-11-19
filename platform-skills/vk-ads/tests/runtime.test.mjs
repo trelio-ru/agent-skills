@@ -1107,3 +1107,117 @@ test('signed host queue protects the same account without changing provider rece
   assert.deepEqual(marker, {schemaVersion: 1, scope: 'account'});
   assert.ok(release.runtime.files.some(file => file.path === 'trelio-execution-resource.json' && file.mode === 420));
 });
+
+
+async function windowsSharedFixture(root, script) {
+  const executable = path.join(process.env.SystemRoot || process.env.SYSTEMROOT,
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return privateProcess(executable, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', `
+    $ErrorActionPreference = 'Stop'
+    [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+    $root = [Console]::In.ReadToEnd()
+    $integrations = [IO.Path]::Combine($root, 'integrations')
+    $users = [Security.Principal.SecurityIdentifier]::new([Security.Principal.WellKnownSidType]::BuiltinUsersSid, $null)
+    ${script}
+  `], root);
+}
+
+test('Windows reuses existing inherited Trelio folders and saves a VK Ads owner-only vault', {
+  skip: process.platform !== 'win32', timeout: 240000
+}, async t => {
+  const parent = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vk-ads-shared-')));
+  t.after(() => fs.rm(parent, { recursive: true, force: true }));
+  const root = path.join(parent, 'Trelio');
+  const account = owner();
+  const env = { TRELIO_CONFIG_HOME: root, TRELIO_SKILL_ID: 'vk-ads', TRELIO_SKILL_COMPANY_ID: account.company,
+    TRELIO_SKILL_MEMBER_ID: account.member,
+    TRELIO_SKILL_ACCOUNT_JSON: JSON.stringify({ id: account.account, providerRef: null, companyBinding: account.binding }) };
+  const store = new Store(root, account);
+
+  // Give the synthetic parent typical per-user Windows rules. Keep the two
+  // shared directories inherited, including on an elevated hosted runner.
+  await windowsSharedFixture(root, `
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $system = [Security.Principal.SecurityIdentifier]::new([Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+    $admins = [Security.Principal.SecurityIdentifier]::new([Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
+    $acl = [Security.AccessControl.DirectorySecurity]::new()
+    $acl.SetOwner($sid)
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($principal in @($sid,$system,$admins,$users)) {
+      $rights = if ($principal -eq $users) { 'ReadAndExecute' } else { 'FullControl' }
+      $acl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $principal, $rights, 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+    }
+    [IO.Directory]::SetAccessControl([IO.Path]::GetDirectoryName($root), $acl)
+    $null = [IO.Directory]::CreateDirectory([IO.Path]::Combine($root, 'workspace-bridge'))
+    $null = [IO.Directory]::CreateDirectory($integrations)
+    foreach ($path in @($root,$integrations)) {
+      $owner = [Security.AccessControl.DirectorySecurity]::new()
+      $owner.SetOwner($sid)
+      [IO.Directory]::SetAccessControl($path, $owner)
+      if ([IO.Directory]::GetAccessControl($path).AreAccessRulesProtected) { throw 'fixture_not_inherited' }
+    }
+  `);
+  const snapshot = () => windowsSharedFixture(root, `
+    foreach ($path in @($root,$integrations)) {
+      [Console]::Out.WriteLine([Convert]::ToBase64String(
+        [IO.Directory]::GetAccessControl($path).GetSecurityDescriptorBinaryForm()))
+    }
+  `);
+  const before = await snapshot();
+
+  assert.equal((await main(['doctor'], env)).availability, 'setup_required');
+  await store.lock(async () => {
+    const state = await store.read();
+    state.credentials = auth();
+    await store.write(state);
+    assert.deepEqual((await store.read()).credentials, auth());
+  });
+  assert.ok(before.equals(await snapshot()), 'shared ACLs changed');
+
+  await windowsSharedFixture(root, `
+    $acl = [IO.Directory]::GetAccessControl($integrations)
+    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($users,'DeleteSubdirectoriesAndFiles','Allow'))
+    [IO.Directory]::SetAccessControl($integrations, $acl)
+  `);
+  const blocked = new Store(root, owner());
+  await assert.rejects(blocked.init(), { code: 'native_storage_unavailable' });
+  await assert.rejects(fs.lstat(blocked.dir), { code: 'ENOENT' });
+});
+
+test('POSIX reuses readable shared folders while protecting the VK Ads vault', {
+  skip: process.platform === 'win32'
+}, async t => {
+  const parent = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-shared-')));
+  t.after(() => fs.rm(parent, { recursive: true, force: true }));
+  const root = path.join(parent, 'Trelio');
+  const integrations = path.join(root, 'integrations');
+  await fs.mkdir(integrations, { recursive: true });
+  await fs.chmod(root, 0o755);
+  await fs.chmod(integrations, 0o750);
+
+  const store = new Store(root, owner());
+  // Drive the real bootstrap and account lock with an empty vault. No
+  // Apple/VK connection or OS keychain entry is needed for this preflight.
+  await store.lock(async () => assert.equal((await store.read()).credentials, null));
+  assert.equal((await fs.stat(root)).mode & 0o777, 0o755);
+  assert.equal((await fs.stat(integrations)).mode & 0o777, 0o750);
+  assert.equal((await fs.stat(store.dir)).mode & 0o777, 0o700);
+
+  if (process.platform === 'darwin') {
+    const nativeRoot = path.join(root, 'native');
+    await fs.mkdir(nativeRoot);
+    await fs.chmod(nativeRoot, 0o775);
+    await assert.rejects(store.macKey(), { code: 'unsafe_permissions' });
+  }
+
+  await fs.chmod(store.dir, 0o750);
+  await assert.rejects(store.init(), { code: 'unsafe_permissions' });
+  for (const [shared, safeMode] of [[root, 0o755], [integrations, 0o750]]) {
+    await fs.chmod(shared, 0o775);
+    const untouched = new Store(root, owner());
+    await assert.rejects(untouched.init(), { code: 'unsafe_permissions' });
+    await assert.rejects(fs.lstat(untouched.dir), { code: 'ENOENT' });
+    await fs.chmod(shared, safeMode);
+  }
+});

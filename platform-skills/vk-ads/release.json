@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk-ads",
-    "version": "1.7.2",
-    "summary": "Общая очередь runtime 3.31.0 защищает состояние аккаунта при работе нескольких чатов без повторения операций.",
+    "version": "1.7.3",
+    "summary": "Исправлено подключение на Windows и macOS при уже существующих общих папках Trelio. Права на общие папки и параметры личного подключения сохраняются.",
     "routingSummary": "Manage VK Ads campaigns, groups, creatives and audiences; read performance and recent delivery statistics with scoped plans and verified results."
   },
   "connection": null,
   "runtime": {
-    "version": "1.7.2",
+    "version": "1.7.3",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "scripts/trelio-vk-ads.mjs",

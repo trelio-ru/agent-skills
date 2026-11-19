@@ -440,3 +440,41 @@ test('server scheduling diagnostics are nonsemantic but attendee response and un
   assert.notEqual(fingerprint(data),fingerprint(data.replace('PARTSTAT=NEEDS-ACTION','PARTSTAT=ACCEPTED')));
   assert.notEqual(fingerprint(data),fingerprint(data.replace('END:VEVENT','X-APPLE-SYNTHETIC:changed\r\nEND:VEVENT')));
 });
+
+
+test('POSIX reuses readable shared folders while protecting the Apple Calendar vault', {
+  skip: process.platform === 'win32'
+}, async t => {
+  const parent = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-shared-')));
+  t.after(() => fs.rm(parent, { recursive: true, force: true }));
+  const root = path.join(parent, 'Trelio');
+  const integrations = path.join(root, 'integrations');
+  await fs.mkdir(integrations, { recursive: true });
+  await fs.chmod(root, 0o755);
+  await fs.chmod(integrations, 0o750);
+
+  const store = new Store(root, owner());
+  // Drive the real bootstrap and account lock with an empty vault. No
+  // Apple/VK connection or OS keychain entry is needed for this preflight.
+  await store.lock(async () => assert.equal((await store.read()).credentials, null));
+  assert.equal((await fs.stat(root)).mode & 0o777, 0o755);
+  assert.equal((await fs.stat(integrations)).mode & 0o777, 0o750);
+  assert.equal((await fs.stat(store.dir)).mode & 0o777, 0o700);
+
+  if (process.platform === 'darwin') {
+    const nativeRoot = path.join(root, 'native');
+    await fs.mkdir(nativeRoot);
+    await fs.chmod(nativeRoot, 0o775);
+    await assert.rejects(store.macKey(), { code: 'unsafe_permissions' });
+  }
+
+  await fs.chmod(store.dir, 0o750);
+  await assert.rejects(store.init(), { code: 'unsafe_permissions' });
+  for (const [shared, safeMode] of [[root, 0o755], [integrations, 0o750]]) {
+    await fs.chmod(shared, 0o775);
+    const untouched = new Store(root, owner());
+    await assert.rejects(untouched.init(), { code: 'unsafe_permissions' });
+    await assert.rejects(fs.lstat(untouched.dir), { code: 'ENOENT' });
+    await fs.chmod(shared, safeMode);
+  }
+});

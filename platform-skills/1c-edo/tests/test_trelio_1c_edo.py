@@ -122,8 +122,8 @@ class OneCEdoRuntimeTest(unittest.TestCase):
         self.assertNotIn("runtimeExecution.command` **without", source)
 
         release = json.loads(RELEASE.read_text(encoding="utf-8"))
-        self.assertEqual(release["release"]["version"], "1.1.2")
-        self.assertEqual(release["runtime"]["version"], "1.1.1")
+        self.assertEqual(release["release"]["version"], "1.1.3")
+        self.assertEqual(release["runtime"]["version"], "1.1.2")
         # Read commands also persist personal access status. Scheduling belongs
         # to the signed host policy, while this provider retains its namespace.
         self.assertEqual(release["runtime"]["minimumHostVersion"], "3.31.0")
@@ -140,7 +140,7 @@ class OneCEdoRuntimeTest(unittest.TestCase):
         return identity, config, credentials
 
     def test_browser_connect_release_and_cli_contract(self) -> None:
-        self.assertEqual(MODULE.RUNTIME_VERSION, "1.1.1")
+        self.assertEqual(MODULE.RUNTIME_VERSION, "1.1.2")
 
         default_args = MODULE.build_parser().parse_args(["connect"])
         terminal_args = MODULE.build_parser().parse_args(
@@ -1898,6 +1898,60 @@ class OneCEdoRuntimeTest(unittest.TestCase):
         self.assertTrue(result["credentialsRemoved"])
         self.assertFalse(MODULE.credentials_path(identity).exists())
         self.assertEqual(MODULE.load_access_state(identity, config)["status"], "unknown")
+
+
+class SharedIntegrationDirectoryTests(unittest.TestCase):
+    def test_local_save_preserves_shared_permissions_and_refuses_unsafe_parent(self):
+        import stat
+        import subprocess
+        import tempfile
+        from unittest import mock
+
+        provider_runtime = MODULE
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve() / "Trelio"
+            root.mkdir()
+            shared = root / "integrations"
+            if os.name == "nt":
+                # Inherit ordinary read access from an isolated fixture root.
+                # The runtime must leave that shared ACL alone on a real save.
+                provider_runtime._apply_windows_private_acl(root, directory=True)
+                icacls = Path(os.environ["SystemRoot"]) / "System32" / "icacls.exe"
+                def acl(*arguments):
+                    return subprocess.run([str(icacls), *map(str, arguments)], check=True,
+                                          capture_output=True, timeout=20).stdout
+                acl(root, "/grant", "*S-1-5-32-545:(OI)(CI)(RX)")
+            shared.mkdir()
+            if os.name == "posix":
+                shared.chmod(0o755)
+            previous = acl(shared) if os.name == "nt" else stat.S_IMODE(shared.stat().st_mode)
+            sibling = shared / "another-skill"
+            sibling.mkdir()
+            sentinel = sibling / "sentinel.txt"
+            sentinel.write_text("fixture", encoding="utf-8")
+
+            provider = shared / provider_runtime.CREDENTIAL_PROVIDER_NAMESPACE
+            target = provider / "test-connection" / "config" / "access.json"
+            with mock.patch.dict(os.environ, {"TRELIO_CONFIG_HOME": str(root)}):
+                provider_runtime._write_private_json(target, {"state": "fixture"})
+                self.assertEqual(provider_runtime._read_private_json(target), {"state": "fixture"})
+                current = acl(shared) if os.name == "nt" else stat.S_IMODE(shared.stat().st_mode)
+                self.assertTrue(current == previous, "shared permissions were rewritten")
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "fixture")
+                with self.assertRaises(provider_runtime.OneCEdoError):
+                    provider_runtime.ensure_private_directory(provider / ".." / "another-skill")
+                if os.name == "nt":
+                    # A private child alone cannot prevent deletion granted
+                    # on the parent. The local save must stop before mkdir.
+                    acl(shared, "/grant", "*S-1-5-32-545:(DC)")
+                else:
+                    self.assertEqual(stat.S_IMODE(provider.stat().st_mode), 0o700)
+                    self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+                    shared.chmod(0o775)
+                blocked = provider / "blocked" / "access.json"
+                with self.assertRaises(provider_runtime.OneCEdoError):
+                    provider_runtime._write_private_json(blocked, {"state": "fixture"})
+                self.assertFalse(blocked.parent.exists())
 
 
 if __name__ == "__main__":

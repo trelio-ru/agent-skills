@@ -120,7 +120,11 @@ JSON, файловые атрибуты и ACL обрабатываются пр
 Private pipes явно используют UTF-8 без BOM; native fixture включает Unicode
 в path оператора и не зависит от интерактивной Windows code page.
 
-POSIX: dirs700/files600, owner и symlink guards. Linux возвращает
+В Windows и macOS Trelio и integrations — общие каталоги. Существующие
+права на них сохраняются. Требуются текущий владелец, отсутствие ссылок
+и прав на изменение у посторонних. В Windows штатные права SYSTEM и
+администраторов допустимы. На macOS чтение и обход общих каталогов допустимы.
+POSIX внутри папки навыка: dirs700/files600, owner и symlink guards. Linux возвращает
 secure_storage_unsupported, plaintext fallback отсутствует. Защита дисковых
 файлов не является sandbox от malware того же OS user/администратора.
 Публичный package не содержит application identity, credentials/real fixtures,
