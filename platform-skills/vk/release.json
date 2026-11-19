@@ -17,7 +17,7 @@
   },
   "runtime": {
     "version": "0.2.1",
-    "minimumHostVersion": "3.34.20",
+    "minimumHostVersion": "3.34.21",
     "entrypoint": { "path": "trelio-vk.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
     "browserSession": { "apiVersion": 1, "sessionClass": "protected-snapshot", "manualAssist": true },

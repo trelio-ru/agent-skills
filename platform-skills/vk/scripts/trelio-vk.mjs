@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const MINIMUM_HOST_VERSION = '3.34.20';
+const MINIMUM_HOST_VERSION = '3.34.21';
 const ATTACHMENT_FILE_API = 'trelio.visual-attachment-file/v1';
 // VK publishes document originals on this CDN. Grant it only to the
 // coordinate-selected browser download, never to navigation or auth.
