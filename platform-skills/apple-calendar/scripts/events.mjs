@@ -1,7 +1,7 @@
 import ICAL from '../.build/ical.mjs';
 import { Temporal } from '../.build/temporal.mjs';
 import crypto from 'node:crypto';
-import { check, Fault, object, text, timezone, interval, stable } from './core.mjs';
+import { check, Fault, object, text, timezone, interval, stable, VERSION } from './core.mjs';
 
 const zoneCache = new Map();
 function ensureTimezones(calendar) {
@@ -238,7 +238,7 @@ export function createEvent(changes, defaultZone, organizer) {
   check(changes.title && changes.start && changes.end, 'event_fields_required');
   const calendar = new ICAL.Component('vcalendar');
   calendar.addPropertyWithValue('version', '2.0');
-  calendar.addPropertyWithValue('prodid', '-//Trelio//Apple Calendar 1.0.3//EN');
+  calendar.addPropertyWithValue('prodid', `-//Trelio//Apple Calendar ${VERSION}//EN`);
   const event = new ICAL.Component('vevent');
   event.addPropertyWithValue('uid', crypto.randomUUID());
   calendar.addSubcomponent(event);

@@ -1,4 +1,32 @@
-# Release review 1.0.3
+# Release review 1.0.4
+
+Published baseline: skill-apple-calendar-v1.0.3 at
+b55a44308cb911a2290c0dadde556439bd7c0613. The integration receipt identifies
+the exact candidate checked against that tag.
+
+Windows 11 reproduced the baseline failure using the tagged native helper.
+An existing synthetic Trelio directory with inherited permissions returns
+exit 2 before creating the vault. The same helper succeeds with a clean root.
+
+The new helper accepts inherited ACLs only for the two shared layout parents.
+It verifies their current-user ownership, rejects reparse points and denies
+write, delete and ACL-changing grants to principals outside the user and
+Windows administrators/SYSTEM. It leaves existing shared ACLs untouched.
+The provider directory, accounts, lock and encrypted state use the existing
+owner-only checks, exact storage paths and DPAPI format. Host ABI/admission,
+account and company bindings, provider consent, pending journals and replay
+rules are unchanged. The supported host minimum stays 3.31.0.
+
+The Windows regression uses existing inherited shared directories and the
+real vault, doctor and host-rendered loopback form with a synthetic CalDAV
+client. It checks encrypted save/read-back, unchanged shared ACLs, and refusal
+with a widened provider DACL or unrelated delete-child rights on a shared
+parent. Keep the existing cold, Restricted-parent and junction regressions.
+Run the native provider gates on Windows, macOS and Linux and the signed
+tagged-package read-back. The changed setup behavior can be verified on
+Windows without using a real Apple Account.
+
+## Historical review 1.0.3
 
 Published baseline: skill-apple-calendar-v1.0.2 at
 052edcf15902d4e455cd1e1237ae1e26e622d6e0. The integration receipt records the

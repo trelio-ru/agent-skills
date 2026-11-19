@@ -183,6 +183,108 @@ function visit(url, method='GET', body='', supplied={}) {
     request.on('error',reject);request.end(body);
   });
 }
+async function windowsSharedFixture(root, script) {
+  const executable = path.join(process.env.SystemRoot || process.env.SYSTEMROOT,
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return privateProcess(executable, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', `
+    $ErrorActionPreference = 'Stop'
+    [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+    $root = [Console]::In.ReadToEnd()
+    $integrations = [IO.Path]::Combine($root, 'integrations')
+    $users = [Security.Principal.SecurityIdentifier]::new([Security.Principal.WellKnownSidType]::BuiltinUsersSid, $null)
+    ${script}
+  `], root);
+}
+
+test('Windows reuses existing inherited Trelio folders and opens setup with an owner-only vault', {
+  skip: process.platform !== 'win32', timeout: 240000
+}, async t => {
+  const parent = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'apple-calendar-shared-')));
+  t.after(() => fs.rm(parent, { recursive: true, force: true }));
+  const root = path.join(parent, 'Trelio');
+  const account = owner();
+  const env = { TRELIO_CONFIG_HOME: root, TRELIO_SKILL_ID: 'apple-calendar', TRELIO_SKILL_COMPANY_ID: account.company,
+    TRELIO_SKILL_MEMBER_ID: account.member,
+    TRELIO_SKILL_ACCOUNT_JSON: JSON.stringify({ id: account.account, providerRef: null, companyBinding: account.binding }) };
+  const store = new Store(root, account);
+
+  // Give the synthetic parent typical per-user Windows rules. Keep the two
+  // shared directories inherited, including on an elevated hosted runner.
+  await windowsSharedFixture(root, `
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $system = [Security.Principal.SecurityIdentifier]::new([Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+    $admins = [Security.Principal.SecurityIdentifier]::new([Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
+    $acl = [Security.AccessControl.DirectorySecurity]::new()
+    $acl.SetOwner($sid)
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($principal in @($sid,$system,$admins,$users)) {
+      $rights = if ($principal -eq $users) { 'ReadAndExecute' } else { 'FullControl' }
+      $acl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $principal, $rights, 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+    }
+    [IO.Directory]::SetAccessControl([IO.Path]::GetDirectoryName($root), $acl)
+    $null = [IO.Directory]::CreateDirectory([IO.Path]::Combine($root, 'workspace-bridge'))
+    $null = [IO.Directory]::CreateDirectory($integrations)
+    foreach ($path in @($root,$integrations)) {
+      $owner = [Security.AccessControl.DirectorySecurity]::new()
+      $owner.SetOwner($sid)
+      [IO.Directory]::SetAccessControl($path, $owner)
+      if ([IO.Directory]::GetAccessControl($path).AreAccessRulesProtected) { throw 'fixture_not_inherited' }
+    }
+  `);
+  const snapshot = () => windowsSharedFixture(root, `
+    foreach ($path in @($root,$integrations)) {
+      [Console]::Out.WriteLine([Convert]::ToBase64String(
+        [IO.Directory]::GetAccessControl($path).GetSecurityDescriptorBinaryForm()))
+    }
+  `);
+  const before = await snapshot();
+  assert.equal((await execute(['doctor'], { env })).availability, 'setup_required');
+  const result = await store.lock(() => configure(store, {
+    formModule: contractModule, detectTimezone: () => 'America/New_York',
+    makeClient: () => ({ calendars: async () => [calendar] }),
+    open: async url => {
+      const page = await visit(url);
+      assert.equal(page.status, 200);
+      const nonce = page.body.match(/name="nonce" value="([^"]+)"/)[1];
+      const body = new URLSearchParams({ nonce, decision: 'save', ...auth });
+      assert.equal((await visit(url, 'POST', body.toString())).status, 200);
+    }
+  }));
+  assert.equal(result.configured, true);
+  const readback = await execute(['doctor'], { env, operationOptions: { makeClient: saved => {
+    assert.deepEqual(saved, auth);
+    return { calendars: async () => [calendar] };
+  } } });
+  assert.equal(readback.availability, 'ready');
+  assert.ok(before.equals(await snapshot()), 'shared ACLs changed');
+
+  // Read access is only acceptable on a common parent. Provider directories
+  // stay private. Restore the fixture ACL before testing the separate guard
+  // for a shared parent with rights to delete the protected subtree.
+  await windowsSharedFixture(root, `
+    $skill = [IO.Path]::Combine($integrations, 'apple-calendar')
+    $wider = [IO.Directory]::GetAccessControl($skill)
+    $wider.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($users,'ReadAndExecute','Allow'))
+    [IO.Directory]::SetAccessControl($skill, $wider)
+  `);
+  await assert.rejects(execute(['doctor'], { env }), { code: 'native_storage_unavailable' });
+  await windowsSharedFixture(root, `
+    $skill = [IO.Path]::Combine($integrations, 'apple-calendar')
+    $acl = [IO.Directory]::GetAccessControl($skill)
+    $acl.PurgeAccessRules($users)
+    [IO.Directory]::SetAccessControl($skill, $acl)
+  `);
+  const unauthorized = new Store(root, owner());
+  await windowsSharedFixture(root, `
+    $acl = [IO.Directory]::GetAccessControl($integrations)
+    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($users,'DeleteSubdirectoriesAndFiles','Allow'))
+    [IO.Directory]::SetAccessControl($integrations, $acl)
+  `);
+  await assert.rejects(unauthorized.init(), { code: 'native_storage_unavailable' });
+  await assert.rejects(fs.lstat(unauthorized.dir), { code: 'ENOENT' });
+});
+
 test('protected shared form: rejects invalid credentials and saves after a fresh human submit', async()=> {
   const store=memory();let writes=0;const save=store.write;store.write=async value=>{writes++;await save(value);};
   let attempts=0;

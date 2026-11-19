@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "apple-calendar",
-    "version": "1.0.3",
-    "summary": "В форме подключения остались только Apple Account и пароль приложения. Подключаются все доступные календари iCloud, часовой пояс берётся с компьютера. Фоновые запросы браузера больше не прерывают настройку.",
+    "version": "1.0.4",
+    "summary": "Исправлено открытие формы подключения на Windows, когда папка Trelio уже существует с обычными унаследованными правами. Данные Apple Calendar по-прежнему хранятся в отдельной защищённой папке.",
     "routingSummary": "Read and manage iCloud calendars through CalDAV, including availability, recurring events, reminders, invitations and RSVP on macOS and Windows."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.3",
+    "version": "1.0.4",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "scripts/trelio-apple-calendar.mjs",

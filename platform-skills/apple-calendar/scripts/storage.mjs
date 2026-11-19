@@ -66,8 +66,8 @@ export class Store {
     // never supplies it; all native guards still run, including every ancestor.
     const dirs = [this.root, path.join(this.root, 'integrations'), path.join(this.root, 'integrations', 'apple-calendar'), path.dirname(this.dir), this.dir];
     if (process.platform === 'win32') {
-      // One native invocation checks/creates every level with the same owner,
-      // inheritance and reparse guards; no validation result is cached.
+      // One native invocation checks both shared parents before creating or
+      // checking the owner-only provider subtree. No result is cached.
       observe('directories-start'); await windows({ mode: 'directories', paths: dirs }); observe('directories-ready'); return;
     }
     for (let index = 0; index < dirs.length; index++) {
