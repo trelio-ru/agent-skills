@@ -7,7 +7,7 @@ import { connectionDiagnosticsFields } from './connection-diagnostics.mjs';
 export const LEASE_MS = 30 * 60 * 1000;
 export const SKILL = 'whatsapp-web';
 // Active workers must implement the current command and native ownership contract.
-export const RUNTIME_VERSION = '2.3.0';
+export const RUNTIME_VERSION = '2.3.1';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // HTTP failure evidence is deliberately smaller than a browser response: a
 // status and a canonical HTTPS origin cannot contain OAuth paths, queries,
@@ -47,12 +47,19 @@ export const digest = value => crypto.createHash('sha256').update(value).digest(
 
 // Identity comes from the verified host, never from user-editable CLI flags.
 // Version and task/Run IDs deliberately do not partition personal credentials.
-export function identityFromEnv(env = process.env) {
+export function identityFromEnv(env = process.env, { legacyImport = false } = {}) {
   requireThat(env.TRELIO_SKILL_ID === SKILL && UUID.test(env.TRELIO_SKILL_COMPANY_ID || '') &&
     UUID.test(env.TRELIO_SKILL_MEMBER_ID || ''), 'host_identity_required');
-  requireThat(UUID.test(env.TRELIO_SKILL_CONNECTION_ID || ''), 'host_connection_required');
+  const account = readAccountBinding(env);
+  const connectionId = env.TRELIO_SKILL_CONNECTION_ID;
+  // The host omits the old connection for companies that never used it.
+  // Only a verified local account can supply storage identity for work in that
+  // case. The importer has its own early return and never invents a locator.
+  requireThat(connectionId === undefined ? legacyImport || account : UUID.test(connectionId),
+    'host_connection_required');
   return { skill: SKILL, company: env.TRELIO_SKILL_COMPANY_ID.toLowerCase(),
-    member: env.TRELIO_SKILL_MEMBER_ID.toLowerCase(), connection: env.TRELIO_SKILL_CONNECTION_ID.toLowerCase(), ...(env.TRELIO_SKILL_ACCOUNT_JSON ? { account: readAccountBinding(env) } : {}) };
+    member: env.TRELIO_SKILL_MEMBER_ID.toLowerCase(), connection: connectionId?.toLowerCase() ?? null,
+    ...(account ? { account } : {}) };
 }
 // Personal storage identity is independent from the live company used by ACL,
 // caller binding and operation authorization. Preserve the original AAD
@@ -82,8 +89,13 @@ export function identityKey(identity) { return digest(JSON.stringify(accountStor
 // credentials remain at their existing protected location; the host imports a
 // value-free reference and records completion atomically, including empty results.
 export async function importExistingAccounts(env = process.env) {
-  const identity = identityFromEnv(env), root = configRoot(env);
+  const identity = identityFromEnv(env, { legacyImport: true });
   requireThat(!identity.account, 'account_import_context_invalid');
+  // No legacy ID means there is no storage path to probe. Return before
+  // consulting the config directory, even if the host already knows accounts
+  // from other companies. Its normal catalogue will list those separately.
+  if (identity.connection === null) return { schemaVersion: 1, accounts: [] };
+  const root = configRoot(env);
   let exists = false;
   try { const stat = await fs.lstat(storageDirectory(root, identity));
     requireThat(stat.isDirectory() && !stat.isSymbolicLink(), 'unsafe_storage'); exists = true; }

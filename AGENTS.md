@@ -157,6 +157,9 @@ Telegram legacy import и выбранный личный account допуска
 company connection по тому же контракту; проверяй настоящий isolated CLI до/после выбора.
 Для WhatsApp discovery, recency, date-only поиска, coverage и browser fallback
 читай [контракт WhatsApp](docs/whatsapp-web-agent-skill.md#поиск-последней-переписки).
+WhatsApp без legacy connection возвращает пустой импорт до файловой системы.
+После host selection аккаунт запускается с прежним UUID/providerRef и live
+company/member binding. Проверяй importer и выбранный аккаунт через настоящий CLI.
 Диагностика WhatsApp сохраняет только numeric disconnect и закрытые network enums;
 terminal wait и doctor после cleanup сохраняют причину без raw SDK error/packets.
 Протокольный `mark-read` использует тот же [контракт WhatsApp](docs/whatsapp-web-agent-skill.md#чтение-и-изменения):

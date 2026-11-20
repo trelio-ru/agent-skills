@@ -128,8 +128,13 @@ async function runPhysical(args, statusTimeoutMs = 30000) {
   // need no private source checkout to discover command arguments.
   if (command === 'help') return { instructions: await fs.readFile(path.join(SOURCE, '../references/commands.md'), 'utf8') };
   const identity = identityFromEnv(), root = configRoot();
+  const config = process.env.TRELIO_SKILL_CONNECTION_CONFIG_JSON;
   let connection;
-  try { connection = JSON.parse(process.env.TRELIO_SKILL_CONNECTION_CONFIG_JSON || ''); } catch { throw new RuntimeError('host_connection_config_required'); }
+  // For a host-selected local account with no legacy connection, the host
+  // omits both legacy env variables. Explicit config still goes through the
+  // old schema, and callers with a legacy connection must still provide it.
+  try { connection = identity.connection === null && config === undefined ? {} : JSON.parse(config); }
+  catch { throw new RuntimeError('host_connection_config_required'); }
   // Current manifests have no configurable sending permission. Accept the
   // deprecated boolean only for old normalized host snapshots; it has no
   // runtime authority, including when its saved value is true.

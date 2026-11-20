@@ -9,6 +9,15 @@ cookies или auth keys между ними либо из пользовате�
 
 ## Хранение и срок
 
+При первом `account list` в компании без legacy connection импорт возвращает
+пустой список старых подключений без доступа к файловой системе. Затем host
+показывает имеющиеся личные аккаунты. Выбранный host-ом аккаунт работает и без
+старого connection/config env. Его UUID либо проверенный `providerRef` задаёт
+прежний storage, а текущие company/member и `companyBinding` управляют
+сессией. Чужие старые каталоги не сканируются. Неверный ID, неверная привязка,
+явно переданный неверный config и ошибка чтения существующего каталога остаются
+закрытыми отказами.
+
 `session.json` – AES-256-GCM envelope с 96-bit random nonce, 128-bit tag и AAD для
 exact skill/company/member/connection. Внутри находятся Signal credentials,
 keys, ограниченная история, контакты, policy и журнал исходящих requests.
