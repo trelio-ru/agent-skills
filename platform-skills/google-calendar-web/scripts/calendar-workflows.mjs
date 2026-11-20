@@ -137,6 +137,15 @@ export const fieldCheckPolicy = Object.freeze({ origins: ['https://calendar.goog
   labels: [...new Set(['title', 'startDate', 'endDate', 'startTime', 'endTime', 'primaryZone', 'zoneStart', 'repeatField', 'statusField', 'calendar', 'description', 'location', 'guests'].flatMap(key => labels[key]))] });
 const uiLabel = value => normalize(value).replace(/\b(?:arrow_drop_down|add)\b/gu, '').trim();
 const equals = (a, b) => normalize(a).toLocaleLowerCase() === normalize(b).toLocaleLowerCase();
+const editorPage = /Страница редактирования мероприятия|Event editing page/u;
+const googleAccountLink = control => control.role === 'link' && /^(?:Аккаунт Google:|Google Account:)/u.test(control.label);
+
+function humanGateCode(result) {
+  // The host also hands off native dialogs such as beforeunload through
+  // manual_input_required. Only an explicit auth reason identifies login.
+  if (['authentication_required', 'authentication_setup_required'].includes(result?.reason)) return 'CALENDAR_AUTH_REQUIRED';
+  if (result?.state === 'manual_input_required' || result?.reason === 'manual_control_active') return 'CALENDAR_BROWSER_REFUSED';
+}
 
 /** This object owns a single invocation, not the account/session. The generic
  * host still enforces origin, auth, frame, process, lease and private storage.
@@ -157,9 +166,8 @@ export class CalendarUI {
       while (result?.state === 'preparing' && this.now() < until);
       if (['ready', 'saved_unverified'].includes(result?.state) && operation === 'navigate') return this.request('read-text');
     }
-    if (result?.state !== 'ready') throw new WorkflowError(result?.state === 'manual_input_required'
-      || ['authentication_required', 'authentication_setup_required', 'manual_control_active'].includes(result?.reason)
-      ? 'CALENDAR_AUTH_REQUIRED' : 'CALENDAR_UI_UNAVAILABLE', { stage: this.stage, reason: result?.reason });
+    if (result?.state !== 'ready') throw new WorkflowError(humanGateCode(result) || 'CALENDAR_UI_UNAVAILABLE',
+      { stage: this.stage, reason: result?.reason });
     if (result.kind !== 'trelio.browser-text/v1' || !Array.isArray(result.controls)
       || typeof result.text !== 'string' || !Object.hasOwn(result, 'nextControlsOffset')) throw new WorkflowError('CALENDAR_SEMANTICS_REQUIRED');
     return result;
@@ -247,12 +255,15 @@ export class CalendarUI {
       await this.sleep(200); status = await this.call('status', {});
     }
     if (['closed', 'preparing'].includes(status?.state)) refuse('CALENDAR_UI_UNAVAILABLE');
-    if (status?.state === 'manual_input_required') refuse('CALENDAR_AUTH_REQUIRED');
+    const gate = humanGateCode(status);
+    if (gate) throw new WorkflowError(gate, { stage: this.stage, reason: status.reason });
     let frame = status?.state === 'ready' ? await this.observe()
       : await this.request('navigate', { url: 'https://calendar.google.com/calendar/r' });
-    if (/Страница редактирования мероприятия|Event editing page/u.test(frame.text)
+    if (editorPage.test(frame.text)
       || await this.find(labels.save, ['button'], { optional: true })) refuse('CALENDAR_DRAFT_REQUIRES_AGENT');
-    if (!/Календарь|Calendar/u.test(frame.title) || /Выберите аккаунт|Choose an account|Войти в аккаунт|Sign in/u.test(frame.text)) refuse('CALENDAR_AUTH_REQUIRED');
+    if (!frame.controls.some(googleAccountLink)
+      && /Выберите аккаунт|Choose an account|Войти в аккаунт|Sign in/u.test(frame.text)) refuse('CALENDAR_AUTH_REQUIRED');
+    if (!/Календарь|Calendar/u.test(frame.title)) refuse('CALENDAR_UI_UNSUPPORTED');
     this.locale = /Календарь/u.test(frame.title) ? 'ru' : 'en';
     if (/Корзина|Trash|настройки|Settings/iu.test(frame.title)) {
       const prior = accountLabel(frame);
@@ -309,7 +320,7 @@ export function parseDayText(source, { calendar, date: day, timeZone }) {
 }
 
 function accountLabel(frame) {
-  const account = frame.controls.filter(control => control.role === 'link' && /^(?:Аккаунт Google:|Google Account:)/u.test(control.label));
+  const account = frame.controls.filter(googleAccountLink);
   if (account.length !== 1) refuse('CALENDAR_ACCOUNT_REQUIRES_AGENT');
   return account[0].label;
 }
@@ -449,27 +460,42 @@ async function commit(ui, names) {
   ui.stage = 'request'; ui.commitStarted = true;
   return ui.input('click', found.frame, { x: found.control.x, y: found.control.y });
 }
-async function verifiedEvent(ui, spec) {
+async function gridShowsSave(ui, frame, spec, previous) {
+  const showsDay = event => frame.title.includes(dateLabel(event.date, ui.locale));
+  const daySpec = showsDay(spec) ? spec : previous && showsDay(previous) ? previous : null;
+  if (!daySpec) return false;
+  const current = await ui.allText();
+  if (current.frame.title !== frame.title || editorPage.test(current.text)) return false;
+  const day = parseDayText(current.text, daySpec);
+  const found = day.events.some(event => sameTarget(event, daySpec));
+  // A move across days can return to the original day. Only complete
+  // coverage of that day can show that the original slot has disappeared.
+  // Either signal merely allows navigation; the fresh target read still
+  // has to prove one exact tuple and open its card.
+  return daySpec === spec ? found : day.coverage.complete && !found;
+}
+
+async function verifiedEvent(ui, spec, previous) {
   ui.stage = 'verification';
   // Google can acknowledge the click before its asynchronous Save finishes.
   // Leaving a still-open editor can trigger Chromium's beforeunload handoff.
-  // Wait for the Calendar grid in the same account using observations only.
-  // Its return allows the day to be reloaded. Persistence still requires
-  // independent read-back from the reloaded day and the exact card.
+  // The grid can already be visible under an editor whose disabled Save
+  // button is omitted by the host. Wait until the grid reflects the change
+  // before leaving the document. Persistence still requires a fresh read.
   const until = Math.min(ui.deadline, ui.now() + 8_000);
   const saveLabel = labels.save[ui.locale === 'ru' ? 0 : 1];
   const isButton = (control, names) => control.role === 'button'
     && names.some(name => equals(uiLabel(control.label), name));
   for (let attempt = 0; attempt < 32 && ui.now() < until; attempt++) {
     const frame = await ui.observe();
-    if (!frame.scanLimited && !/Страница редактирования мероприятия|Event editing page/u.test(frame.text)
+    if (!frame.scanLimited && !editorPage.test(frame.text)
       && frame.controls.some(control => isButton(control, labels.create))
       && frame.controls.some(control => isButton(control, labels.settings))) {
       if (accountLabel(frame) !== ui.account) refuse('CALENDAR_ACCOUNT_MISMATCH');
       // A quick editor may overlay the grid. Check for Save even when the
       // first observation could not include every semantic control.
       const buttons = await ui.controls(saveLabel);
-      if (!buttons.some(({ control }) => isButton(control, labels.save))) {
+      if (!buttons.some(({ control }) => isButton(control, labels.save)) && await gridShowsSave(ui, frame, spec, previous)) {
         await openEvent(ui, spec);
         return timedTarget(spec);
       }
@@ -624,7 +650,7 @@ export async function executeWorkflow(operation, spec, call, options) {
       await verifyEventZone(ui, spec.target.timeZone);
       const moved = { ...spec.target, date: spec.date, startTime: spec.startTime, endTime: spec.endTime };
       await setTimes(ui, moved); await commit(ui, labels.save);
-      result = { event: await verifiedEvent(ui, moved), action: 'moved', verification: 'reloaded_day_and_exact_card' };
+      result = { event: await verifiedEvent(ui, moved, spec.target), action: 'moved', verification: 'reloaded_day_and_exact_card' };
     } else if (operation === 'delete-event') {
       await openEvent(ui, spec.target); await openOrdinaryEditor(ui); await ui.click(labels.cancelEdit);
       await openEvent(ui, spec.target); await commit(ui, labels.remove);

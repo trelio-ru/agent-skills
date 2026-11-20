@@ -6,7 +6,11 @@ import { CalendarUI, WorkflowError, calculateFreeSlots, executeWorkflow, localIn
 
 const target = { calendar: 'Demo [east]', date: '2030-05-12', timeZone: 'Europe/Moscow',
   title: 'Synthetic, review', startTime: '12:00', endTime: '12:05' };
-const row = value => `С ${value.startTime} до ${value.endTime}, ${value.title}, Календарь: ${value.calendar}, Место не указано, 12 мая 2030`;
+const nextDay = '2030-05-13';
+const dayLabel = value => new Intl.DateTimeFormat('ru-RU', {
+  day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
+}).format(new Date(value + 'T12:00:00Z')).replace(/ г\.$/u, '');
+const row = value => `С ${value.startTime} до ${value.endTime}, ${value.title}, Календарь: ${value.calendar}, Место не указано, ${dayLabel(value.date)}`;
 test('workflow specs validate exact targets and DST before any host or UI access', () => {
   assert.equal(new Date(localInstant('2026-11-11', '12:00', 'Europe/Moscow')).toISOString(), '2026-11-11T09:00:00.000Z');
   assert.throws(() => localInstant('2026-03-08', '02:30', 'America/New_York'), /CALENDAR_TIME_NONEXISTENT/);
@@ -84,9 +88,9 @@ test('semantic action resolution uses new geometry and refuses duplicate labels 
  */
 function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = false, fieldMismatch = false,
   existing = false, hidePersisted = false, visibleAccount = 'Synthetic account',
-  saveDelayReads = 0, saveOverlaysGrid = false } = {}) {
+  saveDelayReads = 0, saveOverlaysGrid = false, saveButtonDisabled = false, postSaveBlock } = {}) {
   let page = 'day', focus, saved = existing, deleted = false, selected;
-  let savedEvent = target, pendingSave, pendingReads = 0, verificationNavigations = 0;
+  let day = target.date, savedEvent = target, pendingSave, pendingReads = 0, verificationNavigations = 0;
   let saveCalls = 0, deleteCalls = 0, lastControls = [];
   const values = { 'Основной часовой пояс': 'Europe/Moscow', 'Начало мероприятия': 'Europe/Moscow',
     'Периодичность': recurring ? 'Каждый день' : 'Не повторяется', 'Календарь': target.calendar, 'Статус': 'Занят/занята', 'Гости': '' };
@@ -94,13 +98,14 @@ function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = f
   const account = c('link', 'Аккаунт Google: '+visibleAccount);
   const gridButtons = [c('button', 'Настройки'), c('button', 'Создать')];
   const controls = () => [account, c('checkbox', target.calendar, { checked: true }), ...({
-    day: [...gridButtons, ...(saved ? [c('button', target.title)] : [])],
+    day: [...gridButtons, ...(saved && savedEvent.date === day ? [c('button', target.title)] : [])],
     settingsMenu: [c('menuitem', 'Настройки'), c('menuitem', 'Корзина')],
     settings: [c('combobox', 'Основной часовой пояс')],
     createMenu: [c('menuitem', 'Мероприятие')],
     editor: [...(pendingSave && saveOverlaysGrid ? gridButtons : []),
       c('textbox', 'Название'), c('checkbox', 'Весь день', { checked: false }), c('combobox', 'Периодичность'),
-      c('combobox', 'Календарь'), c('combobox', 'Статус'), c('button', 'Часовой пояс'), c('button', 'Сохранить'),
+      c('combobox', 'Календарь'), c('combobox', 'Статус'), c('button', 'Часовой пояс'),
+      ...(pendingSave && saveButtonDisabled ? [] : [c('button', 'Сохранить')]),
       c('button', 'Отменить изменения'), c('combobox', 'Гости'), c('button', 'Добавить видеоконференцию Google Meet'), ...['Дата начала', 'Дата окончания', 'Время начала', 'Время окончания'].map(label => c('textbox', label))],
     calendarOptions: [c('option', target.calendar)], statusOptions: [c('option', 'Свободен/свободна')],
     zone: [c('combobox', 'Начало мероприятия')],
@@ -110,12 +115,12 @@ function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = f
   function observation(args = {}) {
     const all = controls().map((control, index) => ({ ...control, x: 20 + index * 30, y: 60 }));
     lastControls = all;
-    const rendered = page === 'day' ? saved && !(hidePersisted && saveCalls) ? `1 мероприятие, ${target.calendar}\n${row(savedEvent)}` : `Мероприятий нет, ${target.calendar}`
+    const rendered = page === 'day' ? saved && savedEvent.date === day && !(hidePersisted && verificationNavigations) ? `1 мероприятие, ${target.calendar}\n${row(savedEvent)}` : `Мероприятий нет, ${target.calendar}`
       : page === 'editor' && !(pendingSave && saveOverlaysGrid) ? 'Страница редактирования мероприятия'
-      : page === 'card' ? `${target.title}\n${target.calendar}\n12 мая\nСвободен/свободна`
+      : page === 'card' ? `${target.title}\n${target.calendar}\n${dayLabel(savedEvent.date)}\nСвободен/свободна`
       : page === 'trash' ? `${target.title}\n${target.startTime}` : '';
     return frame(all.filter(control => !args.controlQuery || control.label.toLowerCase().includes(args.controlQuery.toLowerCase())), rendered,
-      { ...(page === 'settings' ? { title: 'Google Календарь - Общие настройки' } : {}),
+      { title: page === 'settings' ? 'Google Календарь - Общие настройки' : `Google Календарь - ${dayLabel(day)}`,
         ...(args.checks ? { fieldChecks: args.checks.map(check => ({ id: check.id,
           state: fieldMismatch && check.label === 'Дата окончания' ? 'different'
             : check.values.some(expected => check.match === 'contains' ? values[check.label]?.includes(expected) : values[check.label] === expected) ? 'matches' : 'different' })) } : {}) });
@@ -131,8 +136,11 @@ function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = f
         // A reload while Calendar still owns a dirty editor can trigger a
         // beforeunload prompt, which the hidden host returns as a manual gate.
         if (pendingSave) return { state: 'manual_input_required', reason: 'manual_control_active' };
+        const route = args.url.match(/\/day\/(\d+)\/(\d+)\/(\d+)$/u);
+        if (route) day = [route[1], route[2].padStart(2, '0'), route[3].padStart(2, '0')].join('-');
         page = 'day';
       }
+      if (operation === 'read-text' && saveCalls && postSaveBlock) return postSaveBlock;
       if (operation === 'read-text' && pendingSave && ++pendingReads > saveDelayReads) finishSave();
       if (operation === 'type-text') values[focus] = args.text;
       if (operation === 'key' && args.key === 'Escape' && page === 'zone') page = 'editor';
@@ -154,7 +162,9 @@ function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = f
         else if (label === 'Отменить изменения') page = 'day';
         else if (label === 'Сохранить') {
           saveCalls++;
-          pendingSave = { ...target, startTime: values['Время начала'], endTime: values['Время окончания'] };
+          const date = [target.date, nextDay].find(value => dayLabel(value) === values['Дата начала']);
+          assert.ok(date, 'the fixture only accepts its two configured dates');
+          pendingSave = { ...target, date, startTime: values['Время начала'], endTime: values['Время окончания'] };
           if (!saveDelayReads) finishSave();
           if (loseSave) throw Error('PRIVATE_LOST_SAVE_REPLY');
         } else if (label === 'Удалить мероприятие') {
@@ -188,6 +198,32 @@ test('create and move wait for a slow Save before reloading the persisted event'
     assert.equal(result.event.startTime, spec.startTime);
     assert.equal(ui.saves, 1);
     assert.equal(ui.verificationNavigations, 1);
+  }
+});
+test('a pending Save can expose grid controls while the disabled Save button is absent', async () => {
+  const moved = { target, date: nextDay, startTime: '13:00', endTime: '13:05' };
+  for (const [operation, spec, existing] of [['create-event', target, false], ['move-event', moved, true]]) {
+    const ui = syntheticCalendar({ existing, saveDelayReads: 6, saveOverlaysGrid: true, saveButtonDisabled: true });
+    const result = await executeWorkflow(operation, spec, ui.call, { sleep: async () => {} });
+    assert.equal(result.event.date, spec.date);
+    assert.equal(ui.saves, 1);
+    assert.equal(ui.verificationNavigations, 1);
+  }
+});
+test('manual browser handoff preserves its reason before a read and after Save', async () => {
+  for (const [reason, code] of [['manual_control_active', 'CALENDAR_BROWSER_REFUSED'],
+    ['authentication_required', 'CALENDAR_AUTH_REQUIRED']]) {
+    const gate = { state: 'manual_input_required', reason };
+    const read = async operation => { assert.equal(operation, 'status'); return gate; };
+    await assert.rejects(executeWorkflow('list-calendars', {}, read), {
+      code, stage: 'preflight', outcome: 'not_dispatched', reason,
+    });
+    const ui = syntheticCalendar({ postSaveBlock: gate });
+    await assert.rejects(executeWorkflow('create-event', target, ui.call, { sleep: async () => {} }), {
+      code: 'CALENDAR_ACTION_UNKNOWN', stage: 'verification', outcome: 'unknown', reason,
+    });
+    assert.equal(ui.saves, 1);
+    assert.equal(ui.verificationNavigations, 0);
   }
 });
 test('a Save that leaves the editor open stays unknown without navigation or another input', async () => {
@@ -250,6 +286,7 @@ test('a positive Save without persisted read-back remains unknown and is not sen
   await assert.rejects(executeWorkflow('create-event', target, ui.call.bind(ui), { sleep: async () => {} }), error =>
     error.code === 'CALENDAR_ACTION_UNKNOWN' && error.outcome === 'unknown');
   assert.equal(ui.saves, 1); assert.equal(ui.saved, true);
+  assert.equal(ui.verificationNavigations, 1, 'the in-page update alone cannot confirm a write');
 });
 test('delayed panels are observed again without input replay; an existing quick draft is preserved', async () => {
   let reads = 0, clicks = 0;

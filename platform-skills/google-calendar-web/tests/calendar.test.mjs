@@ -147,6 +147,26 @@ test('read diagnostics distinguish access and provider failures without leaking 
   assert.equal(missing.diagnostic.outcome, 'not_dispatched');
 });
 
+test('the recipe CLI preserves a manual browser gate without reporting an account login', async t => {
+  const fixture = await hostFixture(t);
+  for (const [state, reason, code] of [
+    ['manual_input_required', 'manual_control_active', 'CALENDAR_BROWSER_REFUSED'],
+    ['error', 'manual_control_active', 'CALENDAR_BROWSER_REFUSED'],
+    ['manual_input_required', 'authentication_setup_required', 'CALENDAR_AUTH_REQUIRED'],
+  ]) {
+    const start = fixture.calls.length;
+    const result = await runCalendar(['list-calendars'], { ...fixture.env, RESULT: JSON.stringify({
+      kind: 'trelio.visual-browser/v1', state, reason, text: 'PRIVATE_PROVIDER_BODY',
+    }) });
+    assert.equal(result.code, code);
+    assert.equal(result.browserReason, reason);
+    assert.equal(result.diagnostic.outcome, 'not_dispatched');
+    assert.equal(result.diagnostic.recovery.retry, 'forbidden');
+    assert.deepEqual(fixture.calls.slice(start).map(call => call.operation), ['status']);
+    assert.ok(!JSON.stringify(result).includes('PRIVATE_'));
+  }
+});
+
 test('the deterministic materialized package starts without browser access and keeps the host dependency explicit', async t => {
   const source = fileURLToPath(new URL('../', import.meta.url));
   const built = buildRuntimePackage(source);
