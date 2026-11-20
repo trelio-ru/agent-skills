@@ -32,6 +32,9 @@
   открывает свежую однозначную ссылку, в том числе на другом домене веб-почты.
   `webmail navigate --url HTTPS_URL --local-account UUID` открывает нужный
   раздел. Переходы по ссылкам писем определяет поручение пользователя.
+  Если `view` возвращает `preparing`, техническую ошибку или
+  `manual_control_active`, используй исходный статус и его причину.
+  `manual_control_active` сам по себе не подтверждает запрос входа.
 - Для работы с интерфейсом доступны `webmail screenshot`, `webmail click
   --frame-id FRAME --x X --y Y`, `webmail type --frame-id FRAME --text TEXT`,
   `webmail key --frame-id FRAME --key KEY`, `webmail scroll --frame-id FRAME

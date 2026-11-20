@@ -400,17 +400,27 @@ async function addSheet(editor) {
     // Google's control creates and selects one sheet. Verify both the new
     // tab identity and its rendered name while keeping the original file ID.
     try { await editor.click(add); } catch { /* Only read-back is allowed. */ }
-    const after = await editor.observe({ controlQuery: query }, { allowNewSheet: true });
-    const target = new URL(after.documentReference);
-    const names = after.controls.filter(item => item.role === 'button' && defaultName.test(item.label) && !original.has(item.label));
-    if (after.scanLimited || after.nextControlsOffset !== null || !target.hash || target.hash === new URL(spec.url).hash || names.length !== 1) {
-      throw new EditorFailure('EDITORS_TARGET_UNVERIFIED');
-    }
-    editor.spec = { ...spec, url: target.href };
-    await editor.waitForSave();
-    const verified = await editor.reopen();
-    await editor.control([names[0].label], 'button', names[0].label);
-    return { outcome: 'verified', sheet: names[0].label, url: verified.documentReference };
+    const originalGid = new URL(spec.url).hash;
+    const until = performance.now() + 8_000;
+    do {
+      const after = await editor.observe({ controlQuery: query }, { allowNewSheet: true });
+      const target = new URL(after.documentReference);
+      const names = after.controls.filter(item => item.role === 'button' && defaultName.test(item.label) && !original.has(item.label));
+      if (after.scanLimited || after.nextControlsOffset !== null || names.length > 1) {
+        throw new EditorFailure('EDITORS_TARGET_UNVERIFIED');
+      }
+      // The tab and URL can render separately after the one click. Keep
+      // sampling this file until both identify the same new tab.
+      if (target.hash && target.hash !== originalGid && names.length === 1) {
+        editor.spec = { ...spec, url: target.href };
+        await editor.waitForSave();
+        const verified = await editor.reopen();
+        await editor.control([names[0].label], 'button', names[0].label);
+        return { outcome: 'verified', sheet: names[0].label, url: verified.documentReference };
+      }
+      await delay(250);
+    } while (performance.now() < until);
+    throw new EditorFailure('EDITORS_TARGET_UNVERIFIED');
   } catch {
     throw new EditorFailure('EDITORS_ACTION_UNKNOWN', 'readback', 'unknown');
   }
@@ -528,9 +538,16 @@ async function replaceDocument(editor, spec) {
     try { await editor.click({ frame: result.frame, item: buttons[0] }); }
     catch { /* The only operation left is the read-back. */ }
     await editor.closeFindDialog();
-    const after = (await exportDocumentText(editor)).replaceAll('\r\n', '\n');
-    if (after !== expected) throw new EditorFailure('EDITORS_READBACK_MISMATCH');
-    return { outcome: 'verified', replacementCount: 1, originalCount: 0, verification: 'fresh_text_export' };
+    await editor.waitForSave();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const after = (await exportDocumentText(editor)).replaceAll('\r\n', '\n');
+      if (after === expected) return { outcome: 'verified', replacementCount: 1, originalCount: 0, verification: 'fresh_text_export' };
+      // An exact copy of the baseline can be a lagging export. A third
+      // version is evidence of a different edit and must never be ignored.
+      if (after !== before || attempt === 2) break;
+      await delay(250 * (attempt + 1));
+    }
+    throw new EditorFailure('EDITORS_READBACK_MISMATCH');
   } catch {
     throw new EditorFailure('EDITORS_ACTION_UNKNOWN', 'readback', 'unknown');
   }

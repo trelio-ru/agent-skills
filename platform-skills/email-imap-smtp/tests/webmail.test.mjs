@@ -263,6 +263,21 @@ test('read and view use the live mail interface without an account-label form', 
   assert.deepEqual(host.calls.at(-1).args, {includeControls:true, offset:12});
 });
 
+test('view preserves startup and manual gates instead of suggesting login or navigating', async () => {
+  for (const [state, reason] of [['preparing', 'none'], ['error', 'bootstrap_failed'],
+    ['manual_input_required', 'manual_control_active']]) {
+    for (const hasStoredSession of [false, true]) {
+      const observed = { state, reason, hasStoredSession };
+      const host = fixture(configured, [observed]);
+      assert.equal(await runWebmail({ mailbox, operation: 'view' }, host), observed);
+      assert.deepEqual(host.calls.map(value => value.operation), ['status']);
+    }
+  }
+  const fresh = fixture(configured, [{ state: 'not_configured', hasStoredSession: false }]);
+  assert.equal((await runWebmail({ mailbox, operation: 'view' }, fresh)).code, 'EMAIL_WEBMAIL_SIGN_IN_REQUIRED');
+  assert.deepEqual(fresh.calls.map(value => value.operation), ['status']);
+});
+
 test('follow accepts a fresh cross-domain interface link', async () => {
   const link = { role:'link', label:'Inbox', url:'https://another-mail-host.test/inbox' };
   const page = text([]), host = fixture(configured, [text([link]), page]);

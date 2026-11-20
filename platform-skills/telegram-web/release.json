@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-web",
-    "version": "2.5.2",
-    "summary": "Изоляция браузерных сессий чатов с общим сохранённым входом через runtime 3.31.0",
+    "version": "2.5.3",
+    "summary": "Telegram Web ждёт появления приложения или окна авторизации. Экран загрузки больше не вызывает просьбу войти.",
     "routingSummary": "Read and manage Telegram Web chats, messages and files."
   },
   "connection": {
@@ -20,7 +20,7 @@
     ]
   },
   "runtime": {
-    "version": "2.5.2",
+    "version": "2.5.3",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "trelio-telegram-web.mjs",

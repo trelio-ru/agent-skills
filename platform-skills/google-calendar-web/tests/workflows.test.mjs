@@ -88,9 +88,11 @@ test('semantic action resolution uses new geometry and refuses duplicate labels 
  */
 function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = false, fieldMismatch = false,
   existing = false, hidePersisted = false, visibleAccount = 'Synthetic account',
-  saveDelayReads = 0, saveOverlaysGrid = false, saveButtonDisabled = false, postSaveBlock } = {}) {
+  saveDelayReads = 0, saveOverlaysGrid = false, saveButtonDisabled = false, postSaveBlock,
+  initialEvent = target, extraEvents = [], deleteDelayReads = 0 } = {}) {
   let page = 'day', focus, saved = existing, deleted = false, selected;
-  let day = target.date, savedEvent = target, pendingSave, pendingReads = 0, verificationNavigations = 0;
+  let day = target.date, savedEvent = initialEvent, pendingSave, pendingReads = 0, verificationNavigations = 0;
+  let pendingDelete = false, deleteReads = 0;
   let saveCalls = 0, deleteCalls = 0, lastControls = [];
   const values = { 'Основной часовой пояс': 'Europe/Moscow', 'Начало мероприятия': 'Europe/Moscow',
     'Периодичность': recurring ? 'Каждый день' : 'Не повторяется', 'Календарь': target.calendar, 'Статус': 'Занят/занята', 'Гости': '' };
@@ -115,9 +117,14 @@ function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = f
   function observation(args = {}) {
     const all = controls().map((control, index) => ({ ...control, x: 20 + index * 30, y: 60 }));
     lastControls = all;
-    const rendered = page === 'day' ? saved && savedEvent.date === day && !(hidePersisted && verificationNavigations) ? `1 мероприятие, ${target.calendar}\n${row(savedEvent)}` : `Мероприятий нет, ${target.calendar}`
+    // Rendering exposes offscreen rows to text, but only the current
+    // viewport's event button is clickable through semantic controls.
+    const events = [...(saved && !(hidePersisted && verificationNavigations) ? [savedEvent] : []), ...extraEvents]
+      .filter(event => event.date === day);
+    const count = events.length === 1 ? '1 мероприятие' : `${events.length} мероприятия`;
+    const rendered = page === 'day' ? events.length ? [`${count}, ${target.calendar}`, ...events.map(row)].join('\n') : `Мероприятий нет, ${target.calendar}`
       : page === 'editor' && !(pendingSave && saveOverlaysGrid) ? 'Страница редактирования мероприятия'
-      : page === 'card' ? `${target.title}\n${target.calendar}\n${dayLabel(savedEvent.date)}\nСвободен/свободна`
+      : page === 'card' ? `${savedEvent.title}\n${dayLabel(savedEvent.date)}\n${savedEvent.startTime} – ${savedEvent.endTime}\n${savedEvent.calendar}\nСвободен/свободна`
       : page === 'trash' ? `${target.title}\n${target.startTime}` : '';
     return frame(all.filter(control => !args.controlQuery || control.label.toLowerCase().includes(args.controlQuery.toLowerCase())), rendered,
       { title: page === 'settings' ? 'Google Календарь - Общие настройки' : `Google Календарь - ${dayLabel(day)}`,
@@ -128,6 +135,9 @@ function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = f
   function finishSave() {
     savedEvent = pendingSave; pendingSave = undefined; saved = true; page = 'day';
   }
+  function finishDelete() {
+    pendingDelete = false; saved = false; deleted = true; page = 'day';
+  }
   return { get saves() { return saveCalls; }, get deletes() { return deleteCalls; }, get saved() { return saved; },
     get verificationNavigations() { return verificationNavigations; },
     async call(operation, args = {}) {
@@ -135,13 +145,14 @@ function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = f
         if (saveCalls) verificationNavigations++;
         // A reload while Calendar still owns a dirty editor can trigger a
         // beforeunload prompt, which the hidden host returns as a manual gate.
-        if (pendingSave) return { state: 'manual_input_required', reason: 'manual_control_active' };
+        if (pendingSave || pendingDelete) return { state: 'manual_input_required', reason: 'manual_control_active' };
         const route = args.url.match(/\/day\/(\d+)\/(\d+)\/(\d+)$/u);
         if (route) day = [route[1], route[2].padStart(2, '0'), route[3].padStart(2, '0')].join('-');
         page = 'day';
       }
       if (operation === 'read-text' && saveCalls && postSaveBlock) return postSaveBlock;
       if (operation === 'read-text' && pendingSave && ++pendingReads > saveDelayReads) finishSave();
+      if (operation === 'read-text' && pendingDelete && ++deleteReads >= deleteDelayReads) finishDelete();
       if (operation === 'type-text') values[focus] = args.text;
       if (operation === 'key' && args.key === 'Escape' && page === 'zone') page = 'editor';
       if (operation === 'click') {
@@ -158,7 +169,12 @@ function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = f
         else if (control.role === 'option') { values[selected] = label; page = 'editor'; }
         else if (label === 'Часовой пояс') page = 'zone';
         else if (label === target.title) page = 'card';
-        else if (label === 'Изменить мероприятие') page = 'editor';
+        else if (label === 'Изменить мероприятие') {
+          page = 'editor';
+          Object.assign(values, { 'Название': savedEvent.title, 'Календарь': savedEvent.calendar,
+            'Дата начала': dayLabel(savedEvent.date), 'Дата окончания': dayLabel(savedEvent.date),
+            'Время начала': savedEvent.startTime, 'Время окончания': savedEvent.endTime });
+        }
         else if (label === 'Отменить изменения') page = 'day';
         else if (label === 'Сохранить') {
           saveCalls++;
@@ -168,13 +184,70 @@ function syntheticCalendar({ loseSave = false, loseDelete = false, recurring = f
           if (!saveDelayReads) finishSave();
           if (loseSave) throw Error('PRIVATE_LOST_SAVE_REPLY');
         } else if (label === 'Удалить мероприятие') {
-          deleteCalls++; saved = false; deleted = true; page = 'day';
+          deleteCalls++;
+          if (deleteDelayReads) pendingDelete = true;
+          else finishDelete();
           if (loseDelete) throw Error('PRIVATE_LOST_DELETE_REPLY');
         }
       }
       return observation(args);
     } };
 }
+
+test('a visible same-title sibling at another time never reaches the editor or a write', async () => {
+  const sibling = { ...target, startTime: '09:00', endTime: '09:05' };
+  for (const [operation, spec] of [
+    ['delete-event', { target }],
+    ['move-event', { target, date: target.date, startTime: '13:00', endTime: '13:05' }],
+  ]) {
+    const ui = syntheticCalendar({ existing: true, initialEvent: sibling, extraEvents: [target] });
+    await assert.rejects(executeWorkflow(operation, spec, ui.call, { sleep: async () => {} }), {
+      code: 'CALENDAR_CARD_MISMATCH', outcome: 'not_dispatched',
+    });
+    assert.equal(ui.saves + ui.deletes, 0);
+    assert.equal(ui.saved, true);
+  }
+});
+
+test('move and delete check original editor fields even when the popup matches', async () => {
+  for (const [operation, spec] of [
+    ['delete-event', { target }],
+    ['move-event', { target, date: target.date, startTime: '13:00', endTime: '13:05' }],
+  ]) {
+    const ui = syntheticCalendar({ existing: true, fieldMismatch: true });
+    await assert.rejects(executeWorkflow(operation, spec, ui.call, { sleep: async () => {} }), {
+      code: 'CALENDAR_FORM_UNVERIFIED', outcome: 'not_dispatched',
+    });
+    assert.equal(ui.saves + ui.deletes, 0);
+  }
+});
+
+test('delete waits on the original day before navigating to verify the day and Trash', async () => {
+  const ui = syntheticCalendar({ existing: true, deleteDelayReads: 5 });
+  const afterDelete = [];
+  const result = await executeWorkflow('delete-event', { target }, (operation, args) => {
+    if (ui.deletes) afterDelete.push(operation);
+    return ui.call(operation, args);
+  }, { sleep: async () => {} });
+  assert.equal(result.action, 'deleted_to_trash');
+  assert.equal(ui.deletes, 1);
+  assert.ok(afterDelete.indexOf('navigate') >= 5);
+  assert.ok(afterDelete.slice(0, afterDelete.indexOf('navigate')).every(operation => operation === 'read-text'));
+});
+
+test('a still-pending deletion stops without leaving the page or repeating the click', async () => {
+  const ui = syntheticCalendar({ existing: true, deleteDelayReads: Infinity });
+  const afterDelete = [];
+  let now = 0;
+  await assert.rejects(executeWorkflow('delete-event', { target }, (operation, args) => {
+    if (ui.deletes) afterDelete.push(operation);
+    return ui.call(operation, args);
+  }, { now: () => now, sleep: async milliseconds => { now += milliseconds; } }), {
+    code: 'CALENDAR_ACTION_UNKNOWN', stage: 'verification', outcome: 'unknown',
+  });
+  assert.equal(ui.deletes, 1);
+  assert.ok(afterDelete.length > 0 && afterDelete.every(operation => operation === 'read-text'));
+});
 
 test('real recipe commits once and reloads the exact event; a lost Save reply stays unknown without replay', async () => {
   const spec = { ...target, availability: 'free', notifications: [], guests: [] };

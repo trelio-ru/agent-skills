@@ -8,6 +8,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 import {
   ADAPTER_VERSION,
@@ -593,8 +594,8 @@ test("Telegram Web release manifest and instructions publish the global search c
     "utf8",
   );
 
-  assert.equal(release.release.version, "2.5.2");
-  assert.equal(release.runtime.version, "2.5.2");
+  assert.equal(release.release.version, "2.5.3");
+  assert.equal(release.runtime.version, "2.5.3");
   assert.equal(release.runtime.minimumHostVersion, "3.31.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -753,9 +754,37 @@ test("Telegram Web fails closed when the SPA stays blank after one controlled re
 
   await assert.rejects(
     () => openHome(page, { timeoutMs: 60_000 }),
-    /Telegram Web home rendered no visible interactive UI/u,
+    { code: "TELEGRAM_WEB_SESSION_UNVERIFIED", message: /Telegram Web home rendered no visible interactive UI/u },
   );
   assert.equal(reloads, 1);
+});
+
+test("Telegram Web waits for its app or sign-in surface even if the loading page has a button", async () => {
+  const visible = { getBoundingClientRect: () => ({ width: 50, height: 20 }) };
+  for (const destination of ["app", "auth", "unknown"]) {
+    let surface = "loading", reloads = 0;
+    const evaluate = (predicate, ...args) => {
+      const document = {
+        querySelectorAll: selector =>
+          (selector.includes(", button,") || surface === "auth" && selector.startsWith("#auth-pages")
+            || surface === "app" && selector.startsWith(".chatlist-chat")) ? [visible] : [],
+      };
+      const window = { getComputedStyle: () => ({ display: "block", visibility: "visible" }) };
+      // Evaluate exactly the provider's browser function in a synthetic DOM
+      // instead of stubbing the readiness answer that the regression concerns.
+      return runInNewContext(`(${predicate})(...args)`, { document, window, args });
+    };
+    const page = {
+      goto: async () => {},
+      reload: async () => { reloads++; surface = destination; },
+      waitForFunction: async (predicate, arg) => { if (!evaluate(predicate, arg)) throw Error("loading"); },
+      evaluate: async predicate => evaluate(predicate),
+    };
+    const result = openHome(page, { timeoutMs: 60_000 });
+    if (destination === "app") assert.deepEqual(await result, { uiReady: true });
+    else await assert.rejects(result, destination === "auth" ? /login is required/u : /no visible interactive UI/u);
+    assert.equal(reloads, 1);
+  }
 });
 
 test("Telegram Web action selection requires one exact normalized dialog title", () => {

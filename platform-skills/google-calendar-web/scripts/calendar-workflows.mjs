@@ -373,23 +373,53 @@ async function readDay(ui, spec) {
 const timedTarget = event => Object.fromEntries(['calendar', 'date', 'timeZone', 'title', 'startTime', 'endTime'].map(key => [key, event[key]]));
 const sameTarget = (a, b) => ['calendar', 'date', 'title', 'startTime', 'endTime'].every(key => normalize(a[key]) === normalize(b[key]));
 
+function cardHasSchedule(lines, spec, locale) {
+  const date = dateLabel(spec.date, locale).replace(/,? \d{4}$/u, '');
+  const hasDate = new RegExp(`(?:^|[\\s,])${escape(date)}(?:$|[\\s,.·])`, 'iu');
+  const schedule = /^(.*?[\s·])(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:[–—−-]|до|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)$/iu;
+  return lines.some((line, index) => {
+    if (line !== normalize(spec.title)) return false;
+    // The popup prints the date and time range immediately after its title.
+    // Require that group, not an incidental time in the grid or description.
+    for (let end = index + 2; end <= Math.min(index + 4, lines.length); end++) {
+      const match = schedule.exec(lines.slice(index + 1, end).join(' '));
+      if (!match || !hasDate.test(match[1])) continue;
+      const [, , first, last] = match;
+      const suffix = /(?:am|pm)$/iu.exec(last)?.[0] || '';
+      const start = parseClock(/[ap]m$/iu.test(first.trim()) ? first : first + suffix);
+      if (start === spec.startTime && parseClock(last) === spec.endTime) return true;
+    }
+    return false;
+  });
+}
+
 async function openEvent(ui, spec) {
   // Read-back must independently locate the exact tuple, not just a title.
   // Duplicate candidates or incomplete coverage require an agent decision.
   const day = await readDay(ui, spec);
   if (!day.coverage.complete) refuse('CALENDAR_COVERAGE_INCOMPLETE');
   if (day.events.filter(event => sameTarget(event, spec)).length !== 1) refuse('CALENDAR_TARGET_AMBIGUOUS');
+  const exactLabel = control => control.role === 'button'
+    && parseDayText(control.label, spec).events.some(event => sameTarget(event, spec));
+  const query = spec.title.slice(0, 80);
+  const titleLabel = control => control.role === 'button' && normalize(control.label).includes(normalize(query));
+  const select = controls => {
+    const exact = controls.filter(exactLabel);
+    return exact.length ? exact : controls.filter(titleLabel);
+  };
   for (let scan = 0; scan < 26; scan++) {
-    const candidates = (await ui.controls(spec.title.slice(0, 80))).filter(({ control }) => control.role === 'button' && control.label.includes(spec.title.slice(0, 80)));
+    const candidates = select((await ui.controls(query)).map(({ control }) => control));
     if (candidates.length > 1) refuse('CALENDAR_TARGET_AMBIGUOUS');
     if (candidates.length === 1) {
-      const current = await ui.observe({ controlQuery: spec.title.slice(0, 80) });
-      const match = current.controls.filter(control => control.role === 'button' && control.label.includes(spec.title.slice(0, 80)));
-      if (match.length !== 1 || current.nextControlsOffset !== null) refuse('CALENDAR_TARGET_AMBIGUOUS');
+      const current = await ui.observe({ controlQuery: query });
+      const match = select(current.controls);
+      if (match.length !== 1 || match[0].label !== candidates[0].label
+        || current.scanLimited || current.nextControlsOffset !== null) refuse('CALENDAR_TARGET_AMBIGUOUS');
       await ui.input('click', current, { x: match[0].x, y: match[0].y });
       const card = await ui.allText();
-      if (!card.text.includes(spec.title) || !card.text.includes(spec.calendar)
-        || !card.text.includes(dateLabel(spec.date, ui.locale).replace(/,? \d{4}$/u, ''))) refuse('CALENDAR_CARD_MISMATCH');
+      const lines = card.text.split('\n').map(normalize).filter(Boolean);
+      if (!lines.includes(normalize(spec.title)) || !lines.includes(normalize(spec.calendar))
+        || (!exactLabel(match[0]) && !cardHasSchedule(lines, spec, ui.locale))) refuse('CALENDAR_CARD_MISMATCH');
       return card;
     }
     const frame = await ui.observe();
@@ -400,11 +430,17 @@ async function openEvent(ui, spec) {
   }
   refuse('CALENDAR_TARGET_NOT_VISIBLE');
 }
-async function openOrdinaryEditor(ui) {
+async function openOrdinaryEditor(ui, spec) {
   await ui.click(labels.edit, ['button']);
   const allDay = await ui.find(labels.allDay, ['checkbox']);
   if (allDay.control.checked !== false) refuse('CALENDAR_ALLDAY_REQUIRES_AGENT');
   await ui.verify(labels.repeatField, labels.repeat);
+  // A title-only grid button can hide another calendar or time. Confirm
+  // original accepted values inside the editor before any business input.
+  await ui.verify(labels.title, [normalize(spec.title)]);
+  await ui.verify(labels.calendar, [spec.calendar]);
+  await verifyEventZone(ui, spec.timeZone);
+  await verifyTimes(ui, spec);
 }
 async function choose(ui, names, desired, { optional = false, verbatim = false } = {}) {
   const found = await ui.find(names, ['combobox', 'select'], { optional, verbatim });
@@ -448,6 +484,9 @@ async function setTimes(ui, spec) {
   await ui.fill(labels.endTime, spec.endTime);
   // Date/time widgets can accept typing yet reject or normalize it on blur.
   // Check all four accepted values before any Save, without exposing values.
+  await verifyTimes(ui, spec);
+}
+async function verifyTimes(ui, spec) {
   await ui.verify(labels.startDate, dateAlternatives(spec.date, ui.locale));
   await ui.verify(labels.endDate, dateAlternatives(spec.date, ui.locale));
   await ui.verify(labels.startTime, timeAlternatives(spec.startTime));
@@ -460,22 +499,21 @@ async function commit(ui, names) {
   ui.stage = 'request'; ui.commitStarted = true;
   return ui.input('click', found.frame, { x: found.control.x, y: found.control.y });
 }
-async function gridShowsSave(ui, frame, spec, previous) {
+async function gridShowsChange(ui, frame, spec, previous) {
   const showsDay = event => frame.title.includes(dateLabel(event.date, ui.locale));
-  const daySpec = showsDay(spec) ? spec : previous && showsDay(previous) ? previous : null;
+  const daySpec = spec && showsDay(spec) ? spec : previous && showsDay(previous) ? previous : null;
   if (!daySpec) return false;
   const current = await ui.allText();
   if (current.frame.title !== frame.title || editorPage.test(current.text)) return false;
   const day = parseDayText(current.text, daySpec);
   const found = day.events.some(event => sameTarget(event, daySpec));
-  // A move across days can return to the original day. Only complete
-  // coverage of that day can show that the original slot has disappeared.
-  // Either signal merely allows navigation; the fresh target read still
-  // has to prove one exact tuple and open its card.
+  // Delete and moves returning to the old day require complete coverage to
+  // prove absence. The in-page change permits navigation only. Persistence
+  // still has to pass independent day and card or Trash read-back.
   return daySpec === spec ? found : day.coverage.complete && !found;
 }
 
-async function verifiedEvent(ui, spec, previous) {
+async function waitForGridChange(ui, spec, previous) {
   ui.stage = 'verification';
   // Google can acknowledge the click before its asynchronous Save finishes.
   // Leaving a still-open editor can trigger Chromium's beforeunload handoff.
@@ -495,16 +533,19 @@ async function verifiedEvent(ui, spec, previous) {
       // A quick editor may overlay the grid. Check for Save even when the
       // first observation could not include every semantic control.
       const buttons = await ui.controls(saveLabel);
-      if (!buttons.some(({ control }) => isButton(control, labels.save)) && await gridShowsSave(ui, frame, spec, previous)) {
-        await openEvent(ui, spec);
-        return timedTarget(spec);
-      }
+      if (!buttons.some(({ control }) => isButton(control, labels.save)) && await gridShowsChange(ui, frame, spec, previous)) return;
     }
     await ui.sleep(250);
   }
   // Keep the original editor and unknown-write fence if readiness never
   // arrives. The caller must not navigate or repeat the original action.
   refuse('CALENDAR_RESULT_UNVERIFIED');
+}
+
+async function verifiedEvent(ui, spec, previous) {
+  await waitForGridChange(ui, spec, previous);
+  await openEvent(ui, spec);
+  return timedTarget(spec);
 }
 
 /** Merge occupied intervals, keeping safe candidate slots explicit when a
@@ -646,15 +687,14 @@ export async function executeWorkflow(operation, spec, call, options) {
       await commit(ui, labels.save);
       result = { event: await verifiedEvent(ui, spec), action: 'created', verification: 'reloaded_day_and_exact_card' };
     } else if (operation === 'move-event') {
-      await openEvent(ui, spec.target); await openOrdinaryEditor(ui);
-      await verifyEventZone(ui, spec.target.timeZone);
+      await openEvent(ui, spec.target); await openOrdinaryEditor(ui, spec.target);
       const moved = { ...spec.target, date: spec.date, startTime: spec.startTime, endTime: spec.endTime };
       await setTimes(ui, moved); await commit(ui, labels.save);
       result = { event: await verifiedEvent(ui, moved, spec.target), action: 'moved', verification: 'reloaded_day_and_exact_card' };
     } else if (operation === 'delete-event') {
-      await openEvent(ui, spec.target); await openOrdinaryEditor(ui); await ui.click(labels.cancelEdit);
+      await openEvent(ui, spec.target); await openOrdinaryEditor(ui, spec.target); await ui.click(labels.cancelEdit);
       await openEvent(ui, spec.target); await commit(ui, labels.remove);
-      ui.stage = 'verification';
+      await waitForGridChange(ui, null, spec.target);
       const day = await readDay(ui, spec.target);
       if (!day.coverage.complete || day.events.some(event => sameTarget(event, spec.target))) refuse('CALENDAR_RESULT_UNVERIFIED');
       await ui.click(labels.settings); await ui.click(labels.trash); await ui.click([spec.target.calendar], ['link'], { verbatim: true });

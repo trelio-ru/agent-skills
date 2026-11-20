@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "email-imap-smtp",
-    "version": "2.9.2",
-    "summary": "При подключении веб-почты Trelio дожидается запуска браузера и показывает окно входа, прежде чем попросить войти в почтовый ящик.",
+    "version": "2.9.3",
+    "summary": "Веб-почта различает запуск браузера, ручной режим, техническую ошибку и необходимость входа.",
     "routingSummary": "Read and send email over IMAP/SMTP, inspect attachments locally, and use an optional protected webmail session when the protocol connection is unavailable."
   },
   "connection": null,
   "runtime": {
-    "version": "2.11.1",
+    "version": "2.11.2",
     "minimumHostVersion": "3.34.7",
     "entrypoint": {
       "path": "trelio-email.py",

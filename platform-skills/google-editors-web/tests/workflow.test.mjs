@@ -34,7 +34,7 @@ test('validate the exact editor URL and command before touching the host', async
 
 async function docsFixture(t, { errorAfterClick = false, persistWrite = true, initial = 'first marker', title = 'Fixture', fieldMismatch = false,
   unexpectedEdit = '', createPage = false, copyWithSharing = false, openedReference = null, targetReference = docUrl,
-  blockedExport = false } = {}) {
+  blockedExport = false, staleFirstReadback = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'editors-doc-fixture-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filePath = join(directory, 'fixture.txt');
@@ -129,7 +129,7 @@ async function docsFixture(t, { errorAfterClick = false, persistWrite = true, in
       if (blockedExport) return { state: 'error', reason: 'document_blocked' };
       page = 'editor';
       exports += 1;
-      const bytes = Buffer.from(document);
+      const bytes = Buffer.from(staleFirstReadback && exports === 2 && writes ? initial : document);
       await writeFile(filePath, bytes);
       return { ...result, kind: 'trelio.browser-file/v1', mimeType: 'text/plain', filePath,
         sizeBytes: bytes.length, expiresAt: Date.now() + 60_000, sha256: createHash('sha256').update(bytes).digest('hex') };
@@ -162,6 +162,13 @@ test('one literal replacement verifies the whole document via two exports withou
   assert.equal(output.outcome, 'verified');
   assert.equal(output.originalCount, 0);
   assert.equal(output.replacementCount, 1);
+});
+
+test('a stale baseline export is read again in the same editor without replacing twice', async t => {
+  const fake = await docsFixture(t, { staleFirstReadback: true, openedReference: docUrl });
+  const spec = parseWorkflow('replace-document-text', JSON.stringify(docSpec));
+  assert.equal((await executeWorkflow('replace-document-text', spec, fake.perform)).outcome, 'verified');
+  assert.deepEqual(fake.state(), { document: 'second marker', writes: 1, navigations: 0, exports: 3 });
 });
 
 test('replacement keeps the already verified file and tab open but navigates from a different tab', async (t) => {
@@ -209,7 +216,7 @@ test('a lost Replace response can be verified but cannot trigger another Replace
     else await assert.rejects(attempt, error => error.code === 'EDITORS_ACTION_UNKNOWN' && error.outcome === 'unknown');
     assert.equal(fake.state().writes, 1);
     assert.equal(fake.state().navigations, 1);
-    assert.equal(fake.state().exports, 2);
+    assert.equal(fake.state().exports, persistWrite ? 2 : 4);
   }
 });
 
@@ -218,6 +225,7 @@ test('a concurrent unrelated edit does not verify merely because the replacement
   await assert.rejects(executeWorkflow('replace-document-text', parseWorkflow('replace-document-text', JSON.stringify(docSpec)), fake.perform),
     error => error.code === 'EDITORS_ACTION_UNKNOWN' && error.outcome === 'unknown');
   assert.equal(fake.state().writes, 1);
+  assert.equal(fake.state().exports, 2, 'never resample a version other than the baseline or intended result');
 });
 
 test('ambiguous matches, wrong document and an unchecked input are read-only refusals', async (t) => {
@@ -398,7 +406,7 @@ test('range reading verifies the selected sheet and consumes one host receipt', 
 test('adding a sheet verifies its new gid and never repeats the creation click', async () => {
   const newUrl = sheetUrl.replace('#gid=0', '#gid=5');
   const calls = [];
-  let address = sheetUrl, frameId = 0, created = false;
+  let address = sheetUrl, frameId = 0, created = false, tabReads = 0;
   const perform = async (op, args) => {
     const base = { state: 'ready', kind: 'trelio.browser-text/v1', sessionId: 'fixture-session',
       title: 'Fixture - Google Sheets', scanLimited: false, nextControlsOffset: null };
@@ -411,11 +419,12 @@ test('adding a sheet verifies its new gid and never repeats the creation click',
       assert.equal(args.frameId, String(frameId));
       assert.equal(args.x, 0);
       calls.push('add');
-      address = newUrl;
       created = true;
       return { ...base, state: 'error', reason: 'browser_process_lost' };
     }
-    const labels = ['Add sheet', 'Sheet1', 'Document status: Saved to Drive', ...(created ? ['Sheet2'] : [])];
+    // First the new tab renders while the URL still points to the old gid.
+    if (created && ++tabReads > 2) address = newUrl;
+    const labels = ['Add sheet', 'Sheet1', 'Document status: Saved to Drive', ...(created && tabReads > 1 ? ['Sheet2'] : [])];
     return { ...base, documentReference: address, frameId: String(++frameId),
       controls: labels.map((label, x) => ({ label, role: 'button', x, y: 1 })).filter(item =>
         !args.controlQuery || item.label.toLowerCase().includes(args.controlQuery.toLowerCase())) };

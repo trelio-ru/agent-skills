@@ -61,6 +61,9 @@ description: Search, read, download from, and safely mutate exact Telegram Web K
    После `window_closed`, `hold_expired` или закрытия page/context сразу
    выполни один fresh `probe` в новом process. Только probe подтверждает
    сессию; не повторяй login, пока probe явно не сообщил, что вход нужен.
+   Экран загрузки или `TELEGRAM_WEB_SESSION_UNVERIFIED` означает, что
+   состояние сессии не удалось определить. Запрос входа опирается на
+   видимый экран авторизации Telegram Web.
 
 Runtime использует общий host browser-session layer с классом
 `messenger-profile`: Playwright, absolute lease, process cleanup и profile lock

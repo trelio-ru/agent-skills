@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "google-calendar-web",
-    "version": "0.1.4",
-    "summary": "Проверка сохранения ждёт обновления расписания после создания или переноса события. Ручной режим браузера больше не выдаётся за запрос входа.",
+    "version": "0.1.5",
+    "summary": "При переносе и удалении проверяется точное время события. Проверка удаления ждёт обновления расписания.",
     "routingSummary": "Read Google Calendar schedules and manage events through the managed browser without the Google Calendar API."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.1.4",
+    "version": "0.1.5",
     "minimumHostVersion": "3.32.0",
     "entrypoint": {
       "path": "trelio-google-calendar.mjs",

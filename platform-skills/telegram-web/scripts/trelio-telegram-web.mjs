@@ -1285,47 +1285,41 @@ const createReadState = () => ({
   note: "Opening a Telegram Web dialog may mark its visible messages as read.",
 });
 
+function inspectTelegramSession(readyOnly = false) {
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width >= 1
+      && rect.height >= 1
+      && style.display !== "none"
+      && style.visibility !== "hidden";
+  };
+  const authVisible = Array.from(document.querySelectorAll("#auth-pages, .auth-pages"))
+    .some(visible);
+  const appVisible = Array.from(document.querySelectorAll(
+    '.chatlist-chat[data-peer-id], .input-search input, input.input-search-input, .chat-input .input-message-input[contenteditable="true"]',
+  )).some(visible);
+  return readyOnly ? authVisible || appVisible : { authVisible, appVisible };
+}
+
 const assertLoggedIn = async (page) => {
   assertDocumentAvailable(page);
-  const state = await page.evaluate(() => {
-    const visible = (element) => {
-      const rect = element.getBoundingClientRect();
-      const style = window.getComputedStyle(element);
-      return rect.width >= 1
-        && rect.height >= 1
-        && style.display !== "none"
-        && style.visibility !== "hidden";
-    };
-    const authVisible = Array.from(document.querySelectorAll("#auth-pages, .auth-pages"))
-      .some(visible);
-    const appVisible = Array.from(document.querySelectorAll(
-      '.chatlist-chat[data-peer-id], .input-search input, input.input-search-input, .chat-input .input-message-input[contenteditable="true"]',
-    )).some(visible);
-    return { authVisible, appVisible };
-  });
-  if (!state.appVisible || state.authVisible) {
+  const state = await page.evaluate(inspectTelegramSession);
+  if (state.authVisible) {
     throw new Error("Telegram Web login is required. Run login and let the user finish it in the visible window.");
+  }
+  if (!state.appVisible) {
+    throw new TelegramWebRuntimeError("TELEGRAM_WEB_SESSION_UNVERIFIED",
+      "Telegram Web session could not be identified from the visible page.");
   }
 };
 
 const waitForVisibleTelegramUi = async (page, timeoutMs) => {
   const boundedTimeoutMs = Math.min(timeoutMs, TELEGRAM_UI_READY_TIMEOUT_MS);
-  return page.waitForFunction(() => {
-    const visible = (element) => {
-      const rect = element.getBoundingClientRect();
-      const style = window.getComputedStyle(element);
-      return rect.width >= 1
-        && rect.height >= 1
-        && style.display !== "none"
-        && style.visibility !== "hidden";
-    };
-    // Telegram Web is a client-rendered application. `domcontentloaded` may fire while
-    // the persistent profile still shows an empty shell, so browser commands
-    // must wait for a visible interactive surface before probing selectors.
-    return Array.from(document.querySelectorAll(
-      '#auth-pages, .chatlist-chat[data-peer-id], .input-search input, input.input-search-input, textarea, [contenteditable="true"], button, [role="button"]',
-    )).some(visible);
-  }, null, { timeout: boundedTimeoutMs }).then(() => true).catch(() => false);
+  // A generic button or text field can belong to a loading/error screen.
+  // Wait for one of the same specific surfaces used by the final check.
+  return page.waitForFunction(inspectTelegramSession, true, { timeout: boundedTimeoutMs })
+    .then(() => true).catch(() => false);
 };
 
 const openHome = async (page, options, allowLogin = false) => {
@@ -1341,7 +1335,8 @@ const openHome = async (page, options, allowLogin = false) => {
     uiReady = await waitForVisibleTelegramUi(page, options.timeoutMs);
   }
   if (!uiReady && !allowLogin) {
-    throw new Error(
+    throw new TelegramWebRuntimeError(
+      "TELEGRAM_WEB_SESSION_UNVERIFIED",
       "Telegram Web home rendered no visible interactive UI after one controlled reload. The runtime failed closed.",
     );
   }

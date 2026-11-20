@@ -186,6 +186,10 @@ export async function runWebmail(request, host) {
       return command(request.operation === 'type' ? 'type-text' : request.operation, request.input);
     case 'view': {
       const status = await command('status');
+      // A missing stopped snapshot says nothing about an active worker,
+      // manual browser gate or startup error. Preserve its observed status
+      // and never navigate while one of those states still owns the browser.
+      if (!['ready', 'saved_unverified', 'not_configured', 'closed'].includes(status.state)) return status;
       if (!status.hasStoredSession && status.state !== 'ready') return result('not_configured', 'EMAIL_WEBMAIL_SIGN_IN_REQUIRED');
       return command('navigate', { url: settings.url });
     }
