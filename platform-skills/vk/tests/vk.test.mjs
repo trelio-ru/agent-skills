@@ -127,8 +127,13 @@ test('signed host dispatch fixes VK scope, text mode, attachments and search pac
   const setup = await runVk(['setup'], env);
   assert.equal(setup.observationMode, 'text');
   assert.equal(setup.attachmentDownloads, true);
-  assert.deepEqual(setup.attachmentFilePolicy, { origins: ['https://psv4.userapi.com'] });
-  assert.ok(!setup.origins.includes('https://psv4.userapi.com'));
+  assert.deepEqual(setup.attachmentFilePolicy, { origins: [
+    'https://psv4.userapi.com',
+    'https://psv4.vkuserphoto.ru',
+  ] });
+  for (const origin of setup.attachmentFilePolicy.origins) {
+    assert.ok(!setup.origins.includes(origin));
+  }
   assert.equal(setup.fileUploads, true);
   assert.deepEqual(setup.domains, ['vk.ru', 'vk.com']);
   assert.deepEqual(setup.origins, [
@@ -224,7 +229,8 @@ test('file delivery requires the relevant additive host API before dispatch', as
 
 test('VK hostname scope rejects lookalikes, credentials, ports and unsafe schemes before host import', async () => {
   const env = { TRELIO_SKILL_ID: 'vk', TRELIO_VISUAL_SESSION_MODULE_URL: 'file:///must-not-load.mjs' };
-  for (const url of ['https://other.test/', 'https://psv4.userapi.com/', 'https://vk.ru.other.test/', 'https://other-vk.ru/',
+  for (const url of ['https://other.test/', 'https://psv4.userapi.com/', 'https://psv4.vkuserphoto.ru/',
+    'https://psv4.vkuserphoto.ru.other.test/', 'https://vk.ru.other.test/', 'https://other-vk.ru/',
     'https://pay.vk.com.other.test/', 'https://other-vk.com/', 'https://vk.me.other.test/',
     'https://other.vk.me/', 'https://www.vk.ru.other.test/',
     'https://vk.ru:444/', 'https://user:password@vk.ru/', 'http://vk.ru/', 'file:///private',

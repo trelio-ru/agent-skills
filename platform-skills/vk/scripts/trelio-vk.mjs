@@ -6,9 +6,14 @@ import path from 'node:path';
 
 const MINIMUM_HOST_VERSION = '3.34.21';
 const ATTACHMENT_FILE_API = 'trelio.visual-attachment-file/v1';
-// VK publishes document originals on this CDN. Grant it only to the
-// coordinate-selected browser download, never to navigation or auth.
-const ATTACHMENT_FILE_ORIGINS = Object.freeze(['https://psv4.userapi.com']);
+// VK serves document originals from psv4.userapi.com and also redirects call
+// transcripts to psv4.vkuserphoto.ru. Grant only those exact HTTPS origins to
+// the coordinate-selected browser download. Navigation and authentication
+// keep their own scope.
+const ATTACHMENT_FILE_ORIGINS = Object.freeze([
+  'https://psv4.userapi.com',
+  'https://psv4.vkuserphoto.ru',
+]);
 // The user chooses the VK workflow. A section moving onto a VK subdomain must
 // not become a provider-authored product ban. Keep the network boundary at the
 // actual VK hostnames, with label-aware matching, HTTPS and no userinfo/ports.
