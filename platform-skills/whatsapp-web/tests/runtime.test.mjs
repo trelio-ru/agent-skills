@@ -190,6 +190,97 @@ test('reads retain unread and partial coverage; equal display names never resolv
   await assert.rejects(client.execute({command:'read',chat:'Тест'}),/chat_ambiguous/);
   assert.equal((await client.execute({command:'read',chat})).messages.length,1);
 });
+
+test('mark-read submits a single chat app-state patch for an approved personal or group boundary', async t => {
+  for (const id of [chat, '22222222222@lid', '111-222@g.us']) await t.test(id, async () => {
+    const { client, calls, saved } = fixture();
+    const group = id.endsWith('@g.us');
+    const participant = '33333333333:2@s.whatsapp.net';
+    const key = { remoteJid: id, id: 'LAST', fromMe: false, ...(group ? { participant } : {}) };
+    client.data.chats[id] = { id, name: 'Тест', unreadCount: 4, lastMessageRecvTimestamp: '10' };
+    const other = '99999999@s.whatsapp.net';
+    client.data.chats[other] = { id: other, unreadCount: 2 };
+    client.ingest([{ key, messageTimestamp: '10', message: { conversation: 'Синтетическое сообщение' } }]);
+    const packet = { command: 'mark-read', chat: id, requestId: crypto.randomUUID() };
+    const patches = [];
+    client.socket.readMessages = async () => assert.fail('chat state updates must not send message receipts');
+    client.socket.chatModify = async (settings, target) => {
+      assert.equal(JSON.parse(saved.at(-1)).attempts[packet.requestId].state, 'attempted');
+      const patch = sdk.chatModificationToAppPatch(settings, target);
+      patches.push(patch);
+      // The real SDK may emit a local zero as its own event after submission.
+      client.upsert(client.data.chats, [{ id: target, unreadCount: 0 }]);
+    };
+    const preview = await client.execute({ ...packet, dryRun: true });
+    assert.deepEqual(preview.payload.settings, {
+      markRead: true, lastMessages: [{ key, messageTimestamp: 10 }],
+    });
+    assert.equal((await client.execute({ command: 'read', chat: id })).messages.length, 1);
+    assert.equal(client.data.chats[id].unreadCount, 4);
+    assert.equal(patches.length, 0);
+    const confirmed = { ...packet, confirm: true, approvalHash: preview.approvalHash };
+    const outcome = await client.execute(confirmed);
+    assert.equal(patches.length, 1);
+    assert.deepEqual(patches[0].index, ['markChatAsRead', id]);
+    const action = patches[0].syncAction.markChatAsReadAction;
+    assert.equal(action.read, true);
+    assert.equal(action.messageRange.lastMessageTimestamp, 10);
+    assert.equal(action.messageRange.messages[0].key.remoteJid, id);
+    if (group) {
+      assert.equal(action.messageRange.messages[0].key.participant, '33333333333@s.whatsapp.net');
+      assert.equal(client.exactMessage(id, 'LAST').key.participant, participant);
+    }
+    assert.deepEqual(outcome.readThrough, { messageId: 'LAST', timestamp: 10 });
+    assert.equal(outcome.state, 'submitted');
+    assert.equal(outcome.verified, false);
+    assert.equal(client.data.chats[other].unreadCount, 2);
+    assert.deepEqual(calls, []);
+    const restored = new WhatsAppClient({ sdk, pino, saved: saved.at(-1),
+      permit: async () => {}, persist: async () => assert.fail('reading the journal must not write') });
+    assert.deepEqual(await restored.execute({ command: 'result', requestId: packet.requestId }), {
+      requestId: packet.requestId, chatId: id, state: 'submitted', readThrough: outcome.readThrough, verified: false,
+    });
+    await assert.rejects(client.execute(confirmed), /exact_approval_required/);
+    assert.equal(patches.length, 1);
+  });
+});
+
+test('mark-read requires a current group key and approval and refuses replay after an ambiguous write', async () => {
+  const { client, saved } = fixture('read-only');
+  const group = '111-222@g.us';
+  const participant = '33333333333@s.whatsapp.net';
+  const ingest = (id, timestamp, sender) => client.ingest([{ key: { remoteJid: group, id, fromMe: false, participant: sender },
+    messageTimestamp: timestamp, message: { conversation: 'Синтетическое сообщение' } }]);
+  client.data.chats[group] = { id: group, name: 'Группа', unreadCount: 3, conversationTimestamp: 11 };
+  const packet = { command: 'mark-read', chat: group, requestId: crypto.randomUUID() };
+  const preview = () => client.execute({ ...packet, dryRun: true });
+  const confirm = hash => client.execute({ ...packet, confirm: true, approvalHash: hash });
+  let writes = 0;
+  client.socket.chatModify = async () => { writes++; throw new Error('simulated lost app-state update result'); };
+  await assert.rejects(preview(), /read_only_policy/);
+  await assert.rejects(confirm('unused'), /read_only_policy/);
+  assert.throws(() => validateRequest({ ...packet, chat: 'Группа' }), /exact_chat_id_required/);
+  assert.throws(() => validateRequest({ ...packet, limit: 1 }), /unsupported_option/);
+  client.data.policy = 'confirm';
+  ingest('OLDER', 10, participant);
+  await assert.rejects(preview(), /chat_history_required_for_mark_read/);
+  ingest('CURRENT', 11);
+  await assert.rejects(preview(), /chat_history_required_for_mark_read/);
+  ingest('CURRENT', 11, participant);
+  const old = await preview();
+  ingest('NEW', 12, participant);
+  await assert.rejects(confirm(old.approvalHash), /exact_approval_required/);
+  assert.equal(writes, 0);
+  const fresh = await preview();
+  await assert.rejects(confirm(fresh.approvalHash), /mutation_result_ambiguous/);
+  const stored = JSON.parse(saved.at(-1)).attempts[packet.requestId];
+  assert.equal(stored.state, 'ambiguous');
+  assert.deepEqual(stored.readThrough, { messageId: 'NEW', timestamp: 12 });
+  const retry = await preview();
+  await assert.rejects(confirm(retry.approvalHash), /request_already_attempted/);
+  assert.equal((await client.execute({ command: 'result', requestId: packet.requestId })).state, 'ambiguous');
+  assert.equal(writes, 1);
+});
 test('recent dialogs find a differently named contractor beyond the former first page without changing unread',async()=>{
   const {client,calls,saved}=fixture('read-only');
   for(let i=0;i<40;i++){

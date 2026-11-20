@@ -8,7 +8,7 @@ import { ConnectionDiagnostics } from './connection-diagnostics.mjs';
 import { createProtocolNetwork } from './protocol-network.mjs';
 
 const MAX_MESSAGES = 10000, MAX_CHATS = 5000;
-const MUTATIONS = new Set(['send', 'reply', 'react', 'edit', 'delete', 'forward', 'create-group', 'member-add', 'member-remove', 'member-promote', 'member-demote', 'chat-update', 'chat-settings', 'block', 'group-invite-revoke', 'group-join']);
+const MUTATIONS = new Set(['send', 'reply', 'react', 'edit', 'delete', 'forward', 'create-group', 'member-add', 'member-remove', 'member-promote', 'member-demote', 'chat-update', 'chat-settings', 'mark-read', 'block', 'group-invite-revoke', 'group-join']);
 export const COMMANDS = ['me', 'resolve', 'dialogs', 'contacts', 'read', 'unread', 'search', 'history-fetch', 'history-status', 'receipts', 'members', 'blocklist', 'group-invite', 'group-invite-info', 'download', 'result', 'policy', ...MUTATIONS];
 export const isChatId = value => typeof value === 'string' && /^\d+(?:-\d+)?@(s\.whatsapp\.net|lid|g\.us)$/.test(value);
 const normalized = value => String(value || '').normalize('NFKC').trim().toLocaleLowerCase('ru');
@@ -91,6 +91,13 @@ export function validateRequest(packet) {
     'dryRun', 'confirm', 'approvalHash', 'requestId', 'output', 'file', 'mimeType', 'fileName', 'target', 'participants', 'title', 'description',
     'phone', 'mediaType', 'archive', 'pin', 'muteUntil', 'blocked', 'invite', 'cursor', 'since', 'until', 'contact', 'order']);
   requireThat(Object.keys(packet).every(key => allowed.has(key)), 'unsupported_option');
+  if (packet.command === 'mark-read') {
+    // A chat-level change takes one exact JID and the normal approval fields.
+    // In particular, a read limit or before cursor cannot narrow this action.
+    const fields = ['command', 'sessionId', 'chat', 'requestId', 'dryRun', 'confirm', 'approvalHash'];
+    requireThat(Object.keys(packet).every(key => fields.includes(key)), 'unsupported_option');
+    requireThat(isChatId(packet.chat), 'exact_chat_id_required');
+  }
   for (const name of ['chat', 'query', 'before', 'messageId', 'text', 'mode', 'approvalHash', 'requestId', 'output', 'file', 'mimeType', 'fileName', 'target', 'title', 'description'])
     if (packet[name] !== undefined) requireThat(typeof packet[name] === 'string' && packet[name].length <= (name === 'text' ? 20000 : 2048) && !packet[name].includes('\0'), 'invalid_input');
   for (const name of ['dryRun', 'confirm']) if (packet[name] !== undefined) requireThat(typeof packet[name] === 'boolean', 'invalid_input');
@@ -391,6 +398,24 @@ export class WhatsAppClient {
     requireThat(matches.length === 1, 'message_not_unique_or_not_synced'); return matches[0];
   }
   messages(chat) { return Object.values(this.data.messages).filter(raw => !chat || raw.key.remoteJid === chat).sort((a,b) => stamp(a.messageTimestamp) - stamp(b.messageTimestamp)); }
+  markReadBoundary(chat) {
+    const current = this.data.chats[chat];
+    const last = this.messages(chat).at(-1);
+    const timestamp = knownStamp(last?.messageTimestamp);
+    const activity = Math.max(knownStamp(current?.conversationTimestamp) || 0, knownStamp(current?.lastMessageRecvTimestamp) || 0);
+    // The chat metadata can advance before the corresponding message arrives.
+    // A stale message, an empty range or an incomplete group key cannot stand
+    // in for the current boundary in the app-state update.
+    requireThat(current && timestamp && last.key.id && typeof last.key.fromMe === 'boolean' && timestamp >= activity,
+      'chat_history_required_for_mark_read');
+    const { id, fromMe, participant } = last.key;
+    if (chat.endsWith('@g.us') && !fromMe) {
+      requireThat(typeof participant === 'string' && participant.length > 0, 'chat_history_required_for_mark_read');
+    }
+    // Baileys normalizes participant in place. Pass a new key and expose only
+    // the fields its app-state patch needs, keeping the cached SDK key intact.
+    return { key: { remoteJid: chat, id, fromMe, ...(participant ? { participant } : {}) }, messageTimestamp: timestamp };
+  }
   cachedMessages(chat) {
     const history = Object.values(this.data.historyRequests).flatMap(row => row.messages || []);
     // Recent live state wins over older on-demand snapshots of the same exact
@@ -599,6 +624,10 @@ export class WhatsAppClient {
     requireThat(!BROWSER_COMMANDS.includes(packet.command), 'browser_session_required');
     if (packet.command === 'result') {
       const attempt = this.data.attempts[packet.requestId]; requireThat(attempt,'request_not_found');
+      if (attempt.readThrough) {
+        return { requestId: packet.requestId, state: attempt.state, chatId: attempt.chatId,
+          readThrough: attempt.readThrough, verified: false };
+      }
       return { requestId:packet.requestId,state:attempt.state,chatId:attempt.chatId||null,messageId:attempt.messageId||null,
         ...await this.waitForConfirmation(packet.requestId) };
     }
@@ -653,6 +682,7 @@ export class WhatsAppClient {
       return this.listPage(rows, packet, 'messages', row => chronologicalKey(row.timestamp, JSON.stringify([row.chatId,row.id]), packet.order));
     }
     if (command === 'create-group') return this.mutate(packet, null);
+    if (command === 'mark-read') return this.mutate(packet, packet.chat);
     const chat = this.exactChat(packet.chat);
     if (command === 'history-fetch') return this.fetchHistory(chat, packet.before, limit);
     if (command === 'receipts') return this.receipts(chat, packet.messageId, packet);
@@ -705,6 +735,15 @@ export class WhatsAppClient {
     const media = await prepareMedia(packet), file = media?.bytes, fileHash = media?.hash;
     try {
     const settings = {};
+    let readThrough;
+    if (command === 'mark-read') {
+      const boundary = this.markReadBoundary(chat);
+      // Settings enter the approval hash before the durable claim. A changed
+      // latest message invalidates the preview instead of marking a wider range.
+      settings.markRead = true;
+      settings.lastMessages = [boundary];
+      readThrough = { messageId: boundary.key.id, timestamp: boundary.messageTimestamp };
+    }
     if (command === 'chat-settings') {
       const fields = ['archive','pin','muteUntil'].filter(name => packet[name] !== undefined);
       requireThat(fields.length === 1, 'one_chat_setting_required');
@@ -753,7 +792,7 @@ export class WhatsAppClient {
       recipientIds = [...new Set(meta.participants.map(row => this.sdk.jidNormalizedUser(row.id)).filter(id => isChatId(id) && !id.endsWith('@g.us') && !self.includes(id)))];
     }
     const claim={hash,state:'attempted',at:Date.now(),chatId:forwardTo||chat||inviteGroup?.chatId||null,messageId:outgoingId,
-      ...(recipientIds ? { recipientIds } : {})};
+      ...(recipientIds ? { recipientIds } : {}), ...(readThrough ? { readThrough } : {})};
     this.data.attempts[packet.requestId]=claim; await this.save();
     await this.permit();
     try {
@@ -767,14 +806,17 @@ export class WhatsAppClient {
       else if (command==='create-group') { result=await this.socket.groupCreate(packet.title,packet.participants); this.upsert(this.data.chats,[{id:result.id,name:result.subject}]); }
       else if (['member-add','member-remove','member-promote','member-demote'].includes(command)) result=await this.socket.groupParticipantsUpdate(chat,packet.participants,command.slice('member-'.length));
       else if (command==='chat-update') result=packet.title?await this.socket.groupUpdateSubject(chat,packet.title):await this.socket.groupUpdateDescription(chat,packet.description);
-      else if (command==='chat-settings') result=await this.socket.chatModify(settings,chat);
+      else if (command==='chat-settings' || command==='mark-read') result=await this.socket.chatModify(settings,chat);
       else if (command==='block') result=await this.socket.updateBlockStatus(chat,packet.blocked?'block':'unblock');
       else if (command==='group-invite-revoke') result=await this.socket.groupRevokeInvite(chat);
       else if (command==='group-join') result=await this.socket.groupAcceptInvite(invite);
       else throw new RuntimeError('unsupported_mutation');
       if (result?.key && result.message) this.ingest([result]);
       const messageId=result?.key?.id||null;
-      const outcome={requestId:packet.requestId,chatId:forwardTo||chat||inviteGroup?.chatId||result?.id||null,messageId,state:'submitted',verified:false};
+      // chatModify can emit its own local chat update. It confirms submission,
+      // but that echo cannot prove what the phone or other clients display.
+      const outcome={requestId:packet.requestId,chatId:forwardTo||chat||inviteGroup?.chatId||result?.id||null,
+        ...(readThrough ? { readThrough } : { messageId }),state:'submitted',verified:false};
       if (command==='group-join') {
         requireThat(result === inviteGroup.chatId, 'joined_group_mismatch');
         const current = this.groupView(await this.socket.groupMetadata(result)); this.upsert(this.data.chats,[{id:result,name:current.title}]);

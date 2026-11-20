@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "whatsapp-web",
-    "version": "2.2.7",
-    "summary": "Общие native-подключения с отдельными владельцами чатов и очередью операций runtime 3.31.0",
-    "routingSummary": "Read and manage WhatsApp chats, messages, media and groups."
+    "version": "2.3.0",
+    "summary": "В протокольном режиме можно по явной просьбе пометить выбранный личный или групповой чат прочитанным. Обычное чтение сохраняет непрочитанные сообщения.",
+    "routingSummary": "Read WhatsApp without clearing unread counts, explicitly mark one chat as read, and manage messages, media and groups."
   },
   "connection": {
     "schemaVersion": 1,
@@ -18,7 +18,7 @@
     ]
   },
   "runtime": {
-    "version": "2.2.7",
+    "version": "2.3.0",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "scripts/trelio-whatsapp.mjs",

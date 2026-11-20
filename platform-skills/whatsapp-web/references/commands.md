@@ -34,6 +34,7 @@ JSON передаётся через `request --session ID --input ABSOLUTE_FILE
 | member-add / member-remove / member-promote / member-demote | chat группы, participants=[exact individual IDs] |
 | chat-update | chat группы, ровно одно из title / description |
 | chat-settings | chat, ровно одно archive=boolean / pin=boolean / muteUntil=Unix milliseconds либо null для отмены mute |
+| mark-read | точный chat ID из dialogs, один известный личный чат или группа, только в протокольном режиме |
 | block | chat человека, blocked=boolean |
 | group-invite-revoke | chat группы; возвращает новую ссылку |
 | group-join | invite=код либо ссылка; preview проверяет группу |
@@ -85,8 +86,20 @@ launch, connect и guards, без путей, содержимого стран�
 4 – прочитано, 5 – воспроизведено. `verified=true` в ответе отправки означает
 только приём сервером. Подтверждение ожидается до трёх секунд, без повторной
 отправки; timeout сохраняет неизвестный результат. Отказ не считается успехом,
-даже если SDK успел вернуть `state=submitted`. Даже успешная отправка здесь не
-разрешает read receipt; unread-state runtime не меняет.
+даже если SDK успел вернуть `state=submitted`. Отправка и обычное чтение
+сохраняют счётчик непрочитанного.
+
+`mark-read` синхронизирует состояние только указанного чата через WhatsApp
+app state. Команда не вызывает `readMessages` и доступна только по прямой
+просьбе пометить этот чат прочитанным. `read-only` блокирует preview и
+исполнение. Preview фиксирует последнее известное сообщение. Если синхронизация
+не дала достоверной границы, команда возвращает `chat_history_required_for_mark_read`;
+если после preview пришло новое сообщение, прежний hash больше не подходит.
+Ответ и `result` показывают `readThrough.messageId` и `readThrough.timestamp`
+в Unix seconds. `submitted` означает, что WhatsApp принял изменение;
+`verified:false` означает, что навык не наблюдал его на телефоне. При обрыве
+проверь `result` с тем же requestId и состояние чата на телефоне. Не повторяй
+изменение с новым UUID и не переключайся на браузер при неизвестном результате.
 
 `receipts` отдельно возвращает наблюдения по участникам группы, время доставки
 и прочтения, известный состав на момент отправки и counts. Отсутствующий receipt

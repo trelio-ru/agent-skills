@@ -159,6 +159,9 @@ company connection по тому же контракту; проверяй на�
 читай [контракт WhatsApp](docs/whatsapp-web-agent-skill.md#поиск-последней-переписки).
 Диагностика WhatsApp сохраняет только numeric disconnect и закрытые network enums;
 terminal wait и doctor после cleanup сохраняют причину без raw SDK error/packets.
+Протокольный `mark-read` использует тот же [контракт WhatsApp](docs/whatsapp-web-agent-skill.md#чтение-и-изменения):
+один точный чат, граница в preview, durable claim и отдельная проверка счётчика
+на телефоне. Пассивное чтение сохраняет unread, `read-only` блокирует изменение.
 Protocol DNS recovery – только exact публичный endpoint, bounded DoH и обычный TLS;
 system settings, other hosts, auth/mutation retries не расширяются.
 Для VK Рекламы читай полный [workflow](platform-skills/vk-ads/references/workflow.md)
