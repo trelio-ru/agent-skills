@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "unidraw",
+    "version": "0.1.0",
+    "summary": "Редактируемые схемы и майндмапы UniDraw из структуры, пакетные правки и проверка сохранённой доски.",
+    "routingSummary": "Create, inspect, and edit native Unidraw boards and diagrams with a managed browser."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Для первой настройки войдите в UniDraw в отдельном браузерном профиле навыка.",
+      "Этот профиль хранится локально на устройстве. Навык использует его для работы с вашими досками."
+    ],
+    "configFields": [],
+    "secretFields": []
+  },
+  "runtime": {
+    "version": "0.1.0",
+    "minimumHostVersion": "3.31.0",
+    "entrypoint": { "path": "trelio-unidraw.mjs", "interpreter": "node" },
+    "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
+    "browserSession": { "apiVersion": 1, "sessionClass": "messenger-profile", "manualAssist": true, "leaseMs": 600000 },
+    "files": [
+      { "source": "scripts/trelio-secret-setup.json", "path": "trelio-secret-setup.json", "mode": 420 },
+      { "source": "scripts/trelio-unidraw.mjs", "path": "trelio-unidraw.mjs", "mode": 493 },
+      { "source": "scripts/model.mjs", "path": "model.mjs", "mode": 420 },
+      { "source": "scripts/browser.mjs", "path": "browser.mjs", "mode": 420 }
+    ]
+  }
+}

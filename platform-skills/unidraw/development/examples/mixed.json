@@ -1,0 +1,18 @@
+{
+  "title": "UniDraw QA — Нативные элементы доски",
+  "layout": "free",
+  "nodes": [
+    {"id":"frame","label":"Решение по пилоту","kind":"frame","position":{"x":100,"y":50},"width":950,"height":490},
+    {"id":"intro","label":"Проверка комплекта перед расширением пилота","kind":"text","fontSize":24,"position":{"x":155,"y":95},"width":670,"height":35,"frame":"frame"},
+    {"id":"a","label":"Пилот собран","kind":"terminal","position":{"x":150,"y":205},"width":180,"height":72,"frame":"frame"},
+    {"id":"b","label":"Есть риски?","kind":"decision","position":{"x":430,"y":180},"width":185,"height":120,"frame":"frame"},
+    {"id":"c","label":"Запустить волну","position":{"x":745,"y":205},"width":225,"height":72,"accent":1,"frame":"frame"},
+    {"id":"note","label":"Ограничить пилот текущей группой и назначить владельца риска","kind":"sticker","position":{"x":732,"y":338},"width":235,"height":147,"accent":4,"frame":"frame"},
+    {"id":"mark","kind":"freedraw","position":{"x":190,"y":405},"points":[[0,8],[35,14],[62,0],[84,3],[125,12]],"accent":1,"frame":"frame"}
+  ],
+  "edges":[
+    {"from":"a","to":"b"},
+    {"from":"b","to":"c","label":"Нет"},
+    {"from":"b","to":"note","label":"Да","feedback":true}
+  ]
+}
