@@ -30,7 +30,7 @@ async function boardGuard(browser, board) {
 
 // Import from the dashboard creates a new board. It must never run against
 // the editor, where a similarly named menu may change an existing board.
-export async function importBackups(browser, files) {
+export async function importBackups(browser, files, { selectProject, onWrite } = {}) {
   if (!Array.isArray(files) || !files.length || files.length > 3) stop('INVALID_BACKUP_COUNT');
   if ((await browser.url()).replace(/\/$/,'') !== DASHBOARD) stop('WRONG_IMPORT_LOCATION');
   const { ui } = browser;
@@ -39,10 +39,12 @@ export async function importBackups(browser, files) {
     await ui.getByRole('button',exact('Импортировать')).click(WAIT);
     await ui.getByRole('menuitem',exact('Файл доски')).click(WAIT);
   }
+  if (selectProject) await selectProject(ui);
   const picker = dialog.getByRole('button',exact('Выберите .unidraw файлы или перетяните их сюда'));
   await browser.chooseFiles(() => picker.click(WAIT), files);
   const submit = dialog.getByRole('button',exact('Импортировать'));
   if (!await submit.isEnabled()) stop('BACKUP_REJECTED');
+  if (onWrite) await onWrite();
   await submit.click(WAIT);
   // These two results are legitimate across Chrome builds: navigation to
   // the new board, or the corresponding exact title in the dashboard list.

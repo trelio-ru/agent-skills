@@ -9,6 +9,7 @@ import {
   boardText, canonicalBoardUrl, compileBoard, plainText, projectScene, readScene,
 } from '../scripts/model.mjs';
 import { findUniqueShape, verifyImport } from '../scripts/browser.mjs';
+import { branchClipboard, projectPoint, verifyBranchPaste, verifyReconnection, verifyUnaffected } from '../scripts/editing.mjs';
 import { parseCommand, prepareSpec, runUniDraw } from '../scripts/trelio-unidraw.mjs';
 import { buildRuntimePackage } from '../../tools/build-runtime-package.mjs';
 
@@ -113,6 +114,78 @@ test('managed account setup packages only the existing manual login',()=>{
   });
   assert.deepEqual(parseCommand(['setup']),{operation:'setup'});
   assert.throws(()=>parseCommand(['setup','--local-account','fixture']),{code:'INVALID_COMMAND'});
+});
+
+test('a board patch can reference a pasted node in the same batch and refuses a forward reference',async()=>{
+  const plan=await fixture('mindmap');
+  const insertion={type:'insert-branch',anchorId:'old-anchor',dx:350,dy:0,plan};
+  const reconnection={type:'reconnect-line',edgeId:'old-edge',end:'end',expectedTargetId:'old-anchor',
+    targetId:{branch:0,node:plan.root}};
+  const input={board:url,requestId:'test-batch-branch-2345',expectedRevision:'a'.repeat(64),operations:[insertion,reconnection]};
+  const prepared=prepareSpec('apply-board-changes',input);
+  assert.equal(prepared.operations[0].compiled.scene.elements.length,47);
+  assert.deepEqual(prepared.operations[1].targetId,{branch:0,node:plan.root});
+  assert.throws(()=>prepareSpec('apply-board-changes',{...input,operations:[reconnection,insertion]}),
+    {code:'INVALID_BOARD_CHANGE'});
+  assert.throws(()=>prepareSpec('apply-board-changes',{...input,expectedRevision:'junk'}),
+    {code:'INVALID_BOARD_REVISION'});
+});
+
+test('native clipboard keeps only its UTF-8 board envelope and markup-safe compiled objects',async()=>{
+  const {scene}=compileBoard(await fixture('mindmap'));
+  const html=branchClipboard(url,scene);
+  const payload=html.match(/^<span data-unidraw="&lt;--\(unidraw-data-v1\)([A-Za-z0-9+/=]+)\(\/unidraw-data-v1\)--&gt;"><\/span>$/)?.[1];
+  assert.ok(payload);
+  const decoded=JSON.parse(Buffer.from(Buffer.from(payload,'base64').map(byte=>(byte-59+256)&255)).toString('utf8'));
+  assert.deepEqual(decoded,{type:'unidraw/clipboard',boardId:'fixture-0001',elements:scene.elements});
+  assert.throws(()=>branchClipboard('https://wrong.example/app/board/fixture-0001',scene),{code:'INVALID_BOARD_URL'});
+});
+
+test('paste verifies new links, location, and unchanged pre-existing IDs even with a repeated label',async()=>{
+  const plan={title:'Группа',layout:'free',nodes:[
+    {id:'one',label:'Повтор',group:'branch',position:{x:0,y:0},width:120,height:60},
+    {id:'two',label:'Контроль',group:'branch',position:{x:210,y:0},width:120,height:60},
+  ],edges:[{from:'one',to:'two',group:'branch'}]};
+  const {scene:planned}=compileBoard(plan);
+  const {scene:before}=compileBoard({...plan,nodes:[plan.nodes[0]],edges:[]});
+  const {scene:observed}=compileBoard({...plan,nodes:plan.nodes.map(n=>({...n,position:{x:n.position.x+500,y:700}}))});
+  const after={...before,elements:[...before.elements,...observed.elements]};
+  assert.equal(verifyBranchPaste(before,after,planned,{x:665,y:730}).added,3);
+  assert.throws(()=>verifyBranchPaste(before,after,planned,{x:680,y:730}),{code:'BRANCH_PLACEMENT_NOT_VERIFIED'});
+  const conflict=structuredClone(after);
+  conflict.elements[0].style.fc='#000001';
+  assert.throws(()=>verifyBranchPaste(before,conflict,planned,{x:665,y:730}),{code:'NEIGHBOUR_CHANGED'});
+});
+
+test('rewiring keeps the arrow ID, untouched endpoint, appearance, and neighbouring objects',async()=>{
+  const compiled=compileBoard(await fixture('flowchart'));
+  const before=compiled.scene;
+  const edge=before.elements.find(item=>item.type==='line');
+  const target=compiled.nodes.hold;
+  const spec={edgeId:edge.id,end:'end',targetId:target};
+  const after=structuredClone(before);
+  const moved=after.elements.find(item=>item.id===edge.id);
+  moved.tipPoints.end.boundToId=target;
+  assert.deepEqual(verifyReconnection(before,after,spec),{id:edge.id,from:edge.tipPoints.start.boundToId,to:target});
+  moved.tipPoints.start.boundToId=target;
+  assert.throws(()=>verifyReconnection(before,after,spec),{code:'RECONNECTION_NOT_VERIFIED'});
+  assert.deepEqual(projectPoint({left:10,top:20,width:800,height:500,scale:.8},{x:600,y:100},{x:700,y:50}),[490,230]);
+});
+
+test('saved board comparison only ignores derived endpoint and auto-font values',async()=>{
+  const before=compileBoard(await fixture('mixed')).scene;
+  const after=structuredClone(before);
+  const line=after.elements.find(item=>item.type==='line');
+  const sticker=after.elements.find(item=>item.type==='sticker');
+  assert.equal(sticker.style.tfsa,true);
+  sticker.style.tfs=26;
+  line.tipPoints.end.absolutePosition.x+=90;
+  verifyUnaffected(before,after);
+  line.tipPoints.end.position.x=.23;
+  assert.throws(()=>verifyUnaffected(before,after),{code:'NEIGHBOUR_CHANGED'});
+  line.tipPoints.end.position.x=before.elements.find(item=>item.id===line.id).tipPoints.end.position.x;
+  sticker.style.tfsa=false;
+  assert.throws(()=>verifyUnaffected(before,after),{code:'NEIGHBOUR_CHANGED'});
 });
 
 test('unknown and completed receipts never dispatch the same provider write again',async()=>{

@@ -8,10 +8,15 @@ import {
   assertBoardTitleAvailable, attachAsset, exportBoard, findImportedBoard, importBackups, moveElement,
   renameFigure, verifyImport,
 } from './browser.mjs';
-import { canonicalBoardUrl, compileBoard, projectScene, UniDrawError } from './model.mjs';
+import {
+  changeGrouping, connectElements, duplicateSelection, editableState, insertBranch, moveSelection, reconnectLine,
+  removeElement, renameById, resizeElement, setFill, setLayer, validElementId,
+} from './editing.mjs';
+import { chooseProject, copyBoard, createFromTemplate, gallery } from './boards.mjs';
+import { canonicalBoardUrl, compileBoard, inspectScene, readScene, UniDrawError } from './model.mjs';
 
 const SKILL = 'unidraw';
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const ORIGIN = 'https://unidraw.io';
 const DASHBOARD = ORIGIN+'/app';
 const MAX_SPEC_BYTES = 192 * 1024;
@@ -21,8 +26,8 @@ const IMAGE_EXT = new Set(['.svg','.png','.jpg','.jpeg','.gif','.webp']);
 const FILE_EXT = new Set(['.txt','.csv','.pdf','.xlsx','.docx','.pptx','.zip']);
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const REQUEST = /^[a-zA-Z0-9_-]{16,96}$/;
-const SPEC_OPS = new Set(['create-board','inspect-board','apply-board-changes','verify-operation']);
-const OPERATIONS = new Set([...SPEC_OPS,'commands','doctor','setup','ready']);
+const SPEC_OPS = new Set(['create-board','inspect-board','apply-board-changes','verify-operation','copy-board','create-template-board']);
+const OPERATIONS = new Set([...SPEC_OPS,'list-templates','commands','doctor','setup','ready']);
 const error = code => { throw new UniDrawError(code); };
 const hash = value => createHash('sha256').update(value).digest('hex');
 
@@ -94,7 +99,11 @@ export function createPlaywrightDriver(page,scratch) {
     ui:page, url:async()=>page.url(), title:()=>page.title(),
     navigate:url=>page.goto(url,{waitUntil:'domcontentloaded',timeout:20_000}),
     reload:()=>page.reload({waitUntil:'domcontentloaded',timeout:20_000}),
-    clickPoint:([x,y],n=1)=>page.mouse.click(x,y,{clickCount:n}),
+    async clickPoint([x,y], n = 1, modifier) {
+      if (modifier) await page.keyboard.down(modifier);
+      try { await page.mouse.click(x, y, { clickCount: n }); }
+      finally { if (modifier) await page.keyboard.up(modifier); }
+    },
     contextPoint:([x,y])=>page.mouse.click(x,y,{button:'right'}),
     press:key=>page.keyboard.press(key),
     async drag([x,y],[toX,toY]) {
@@ -102,6 +111,61 @@ export function createPlaywrightDriver(page,scratch) {
       await page.mouse.down();
       try { await page.mouse.move(toX,toY,{steps:14}); }
       finally { await page.mouse.up(); }
+    },
+    async pasteBranch([x, y], html) {
+      await page.mouse.click(x, y);
+      // Use the editor's ordinary paste handler. Generate the data transfer
+      // inside this page so the user's system clipboard is never accessed.
+      await page.evaluate(value => {
+        const transfer = new DataTransfer();
+        transfer.setData('text/html', value);
+        const target = document.activeElement || document.body;
+        target.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true, cancelable: true, composed: true, clipboardData: transfer,
+        }));
+      }, html);
+    },
+    async captureNativeClipboard(click, format) {
+      // Divert exactly the editor's copy action in the isolated page.
+      // No permission to read the clipboard and no access to existing bytes.
+      const key = '__trelioUnidrawNativeCopy';
+      await page.evaluate(({ name, format }) => {
+        const clipboard = navigator.clipboard;
+        if (!clipboard || Object.hasOwn(window, name)) throw Error('clipboard capture unavailable');
+        const method = format === 'html' ? 'write' : 'writeText';
+        const original = Object.getOwnPropertyDescriptor(clipboard, method);
+        const record = { original, value: null, count: 0 };
+        Object.defineProperty(window, name, { value: record, configurable: true });
+        Object.defineProperty(clipboard, method, { configurable: true, value: async data => {
+          let text = data;
+          if (format === 'html') {
+            const item = Array.isArray(data) && data.find(entry => entry.types.includes('text/html'));
+            const blob = item ? await item.getType('text/html') : null;
+            text = blob && blob.size <= 900_000 ? await blob.text() : null;
+          }
+          record.count++;
+          if (record.count === 1 && typeof text === 'string' &&
+              text.length < (format === 'html' ? 900_000 : 320)) record.value = text;
+        } });
+      }, { name: key, format });
+      try {
+        await click();
+        try { await page.waitForFunction(name => window[name]?.count > 0, key, { timeout: 1800 }); }
+        catch { return null; }
+        return await page.evaluate(name => {
+          const record = window[name];
+          return record.count === 1 ? record.value : null;
+        }, key);
+      } finally {
+        await page.evaluate(({ name, format }) => {
+          const record = window[name];
+          if (!record) return;
+          const method = format === 'html' ? 'write' : 'writeText';
+          if (record.original) Object.defineProperty(navigator.clipboard, method, record.original);
+          else delete navigator.clipboard[method];
+          delete window[name];
+        }, { name: key, format });
+      }
     },
     async chooseFiles(click,paths) {
       const [chooser] = await Promise.all([page.waitForEvent('filechooser',{timeout:12_000}),click()]);
@@ -130,21 +194,76 @@ function allowedName(title) {
   return title;
 }
 
+const EDITS = new Map([
+  ['insert-branch', insertBranch], ['reconnect-line', reconnectLine], ['connect-elements', connectElements],
+  ['set-fill', setFill], ['resize-element', resizeElement], ['remove-element', removeElement],
+  ['group-elements', changeGrouping], ['ungroup-elements', changeGrouping], ['duplicate-elements', duplicateSelection],
+  ['set-layer', setLayer],
+]);
+const SHAPES = new Set(['shape','text','sticker','line','freedraw','frame','file','image']);
+const COLOR = /^#[0-9a-f]{6}$/i;
+const labelText = value => typeof value === 'string' && value.length <= 360 &&
+  value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
+const displacement = (dx, dy, minimum = 8) => Number.isInteger(dx) && Number.isInteger(dy) &&
+  Math.max(Math.abs(dx), Math.abs(dy)) <= 4000 && Math.max(Math.abs(dx), Math.abs(dy)) >= minimum;
+const dimension = value => typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 2400;
+const revision = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+
 function patchOperations(value) {
   if (!Array.isArray(value) || value.length<1 || value.length>12) error('INVALID_BOARD_CHANGE');
+  const prepared = [];
+  const validRef = ref => validElementId(ref) || Boolean(ref && typeof ref === 'object' &&
+    Number.isInteger(ref.branch) && ref.branch >= 0 && ref.branch < prepared.length &&
+    validElementId(ref.node) && Object.hasOwn(prepared[ref.branch].compiled?.nodes ?? {}, ref.node));
   for (const op of value) {
-    if (!op || !['rename','move-group','move-element','attach-file'].includes(op.type)) error('INVALID_BOARD_CHANGE');
+    if (!op || typeof op !== 'object') error('INVALID_BOARD_CHANGE');
+    let compiled;
     if (op.type==='rename') {
-      if (typeof op.expectedLabel!=='string' || !op.expectedLabel || op.expectedLabel.length>360 ||
-          typeof op.label!=='string' || !op.label.trim() || op.label.trim()!==op.label || op.label.length>360 ||
-          op.label===op.expectedLabel || /[\u0000-\u001f\u007f]/.test(op.label)) error('INVALID_BOARD_CHANGE');
-    } else if (typeof op.anchorLabel!=='string' || !op.anchorLabel || op.anchorLabel.length>360 ||
-      !Number.isInteger(op.dx) || !Number.isInteger(op.dy) || Math.max(Math.abs(op.dx),Math.abs(op.dy))>4000 ||
-      Math.max(Math.abs(op.dx),Math.abs(op.dy))<8) error('INVALID_BOARD_CHANGE');
+      if (!labelText(op.expectedLabel) || !labelText(op.label) || !op.label || op.label === op.expectedLabel ||
+          (op.id === undefined ? !op.expectedLabel : !validRef(op.id))) error('INVALID_BOARD_CHANGE');
+    } else if (op.type === 'insert-branch') {
+      if (!validRef(op.anchorId) || !displacement(op.dx, op.dy)) error('INVALID_BOARD_CHANGE');
+      compiled = compileBoard(op.plan);
+    } else if (op.type === 'reconnect-line') {
+      if (!validElementId(op.edgeId) || !validRef(op.targetId) || !['start','end'].includes(op.end) ||
+          (op.expectedTargetId !== null && !validRef(op.expectedTargetId))) error('INVALID_BOARD_CHANGE');
+    } else if (op.type === 'connect-elements') {
+      if (!validRef(op.sourceId) || !validRef(op.targetId) ||
+          (op.sourceSide !== undefined && !['left','right','top','bottom'].includes(op.sourceSide))) error('INVALID_BOARD_CHANGE');
+    } else if (op.type === 'set-fill') {
+      if (!validRef(op.id) || typeof op.expectedColor !== 'string' || typeof op.color !== 'string' ||
+          !(COLOR.test(op.expectedColor) || op.expectedColor === 'transparent') || !COLOR.test(op.color) ||
+          op.expectedColor.toLowerCase() === op.color.toLowerCase()) error('INVALID_BOARD_CHANGE');
+    } else if (op.type === 'resize-element') {
+      if (!validRef(op.id) || ![op.expectedWidth,op.expectedHeight,op.width,op.height].every(dimension) ||
+          op.width<30 || op.height<24 || Math.max(Math.abs(op.width-op.expectedWidth),Math.abs(op.height-op.expectedHeight))<6) {
+        error('INVALID_BOARD_CHANGE');
+      }
+    } else if (op.type === 'remove-element') {
+      if (!validRef(op.id) || !SHAPES.has(op.expectedType) || !labelText(op.expectedLabel)) error('INVALID_BOARD_CHANGE');
+    } else if (op.type === 'set-layer') {
+      if (!validRef(op.id) || !Number.isSafeInteger(op.expectedIndex) || !['front','back'].includes(op.placement)) {
+        error('INVALID_BOARD_CHANGE');
+      }
+    } else if (['move-group','move-element'].includes(op.type) && op.anchorId !== undefined) {
+      if (!validRef(op.anchorId) || !displacement(op.dx, op.dy) ||
+          (op.type === 'move-group' && (!Array.isArray(op.ids) || op.ids.length < 2 || op.ids.length > 160 ||
+            !op.ids.every(validElementId) || new Set(op.ids).size !== op.ids.length)) ||
+          (op.type === 'move-element' && op.ids !== undefined)) error('INVALID_BOARD_CHANGE');
+    } else if (['group-elements','ungroup-elements','duplicate-elements'].includes(op.type)) {
+      const minimum = op.type === 'duplicate-elements' ? 1 : 2;
+      if (!Array.isArray(op.ids) || op.ids.length < minimum || op.ids.length > 160 ||
+          !op.ids.every(validElementId) || new Set(op.ids).size !== op.ids.length ||
+          (op.type !== 'group-elements' && (!validElementId(op.anchorId) || !op.ids.includes(op.anchorId)))) {
+        error('INVALID_BOARD_CHANGE');
+      }
+    } else if (!['move-group','move-element','attach-file'].includes(op.type) || !labelText(op.anchorLabel) ||
+        !op.anchorLabel || !displacement(op.dx, op.dy)) error('INVALID_BOARD_CHANGE');
     if(op.type==='attach-file' && (typeof op.file!=='string'||!isAbsolute(op.file)||
       ![IMAGE_EXT,FILE_EXT].some(set=>set.has(extname(op.file).toLowerCase())))) error('INVALID_LOCAL_INPUT');
+    prepared.push(compiled ? { ...op, compiled } : op);
   }
-  return value;
+  return prepared;
 }
 
 async function stageAsset(file,scratch,index) {
@@ -157,8 +276,8 @@ async function stageAsset(file,scratch,index) {
   return {path,name,bytes:bytes.length,kind:IMAGE_EXT.has(extname(name).toLowerCase())?'image':'file'};
 }
 
-const sceneFingerprint = scene => hash(JSON.stringify(projectScene(scene)
-  .map(e=>[e.id,e.type,e.label,e.position.x,e.position.y,e.size.width,e.size.height,e.groups,e.from??null,e.to??null])
+const sceneFingerprint = scene => hash(JSON.stringify(readScene(scene).elements
+  .map(e=>[e.id,editableState(e)])
   .sort((a,b)=>a[0].localeCompare(b[0]))));
 
 export function prepareSpec(operation,spec) {
@@ -175,12 +294,27 @@ export function prepareSpec(operation,spec) {
   }
   if (!REQUEST.test(spec.requestId??'')) error('REQUEST_ID_REQUIRED');
   const digest=hash(JSON.stringify(spec));
+  if (operation === 'create-template-board') {
+    if (!labelText(spec.template) || !spec.template ||
+        (spec.templateKey !== undefined && (typeof spec.templateKey !== 'string' || !/^[a-f0-9]{24}$/.test(spec.templateKey)))) {
+      error('INVALID_TEMPLATE_REQUEST');
+    }
+    return { requestId: spec.requestId, digest, template: spec.template, templateKey: spec.templateKey };
+  }
+  if (['create-board','copy-board'].includes(operation) && spec.project !== undefined &&
+      (!labelText(spec.project) || !spec.project)) error('INVALID_PROJECT_NAME');
+  if (operation === 'copy-board') {
+    return { requestId: spec.requestId, digest, board: canonicalBoardUrl(spec.board),
+      title: allowedName(spec.title), project: spec.project };
+  }
   if (operation==='create-board') {
     const compiled=compileBoard(spec.plan);
     allowedName(compiled.title);
-    return {requestId:spec.requestId,digest,compiled};
+    return {requestId:spec.requestId,digest,compiled,project:spec.project};
   }
-  return {requestId:spec.requestId,digest,board:canonicalBoardUrl(spec.board),operations:patchOperations(spec.operations)};
+  if (spec.expectedRevision !== undefined && !revision(spec.expectedRevision)) error('INVALID_BOARD_REVISION');
+  return {requestId:spec.requestId,digest,board:canonicalBoardUrl(spec.board),operations:patchOperations(spec.operations),
+    expectedRevision:spec.expectedRevision};
 }
 
 async function verifyReady(page) {
@@ -190,15 +324,34 @@ async function verifyReady(page) {
     .waitFor({state:'visible',timeout:4500}).then(()=>true,()=>false);
 }
 
-async function executeOnBoard(browser,operation,prepared,scratch,onProgress) {
+function resolveBranchRefs(change, completed) {
+  const resolved = { ...change };
+  for (const field of ['id','sourceId','targetId','anchorId','expectedTargetId']) {
+    const ref = change[field];
+    if (!ref || typeof ref !== 'object') continue;
+    const node = completed[ref.branch]?.nodes?.find(item => item.key === ref.node);
+    if (!node) error('BRANCH_REFERENCE_NOT_VERIFIED');
+    resolved[field] = node.id;
+  }
+  return resolved;
+}
+
+export async function executeOnBoard(browser,operation,prepared,scratch,onProgress) {
+  if (operation === 'list-templates') {
+    return { templates: (await gallery(browser)).map(({ name, key }) => ({ name, key })) };
+  }
+  if (operation === 'create-template-board') return createFromTemplate(browser, prepared, onProgress);
+  if (operation === 'copy-board') return copyBoard(browser, prepared, onProgress);
   if (operation==='create-board') {
     const {compiled} = prepared;
     const file=join(scratch,compiled.title+'.unidraw');
     await writeFile(file,JSON.stringify(compiled.scene),{mode:0o600,flag:'wx'});
     await assertBoardTitleAvailable(browser,compiled.title);
     if (!await verifyReady(browser.ui)) error('LOGIN_OR_DASHBOARD_REQUIRED');
-    await onProgress({stage:'import'});
-    await importBackups(browser,[file]);
+    await importBackups(browser,[file],{
+      selectProject: ui => chooseProject(ui, prepared.project),
+      onWrite: () => onProgress({stage:'import'}),
+    });
     const board=await findImportedBoard(browser,compiled.title);
     await onProgress({stage:'read_back',board});
     if (await browser.url()!==board) await browser.navigate(board);
@@ -209,9 +362,11 @@ async function executeOnBoard(browser,operation,prepared,scratch,onProgress) {
   const {board} = prepared;
   await browser.navigate(board);
   if (operation==='inspect-board') {
-    const elements=projectScene(await exportBoard(browser,board));
+    const scene = await exportBoard(browser,board);
+    const elements=inspectScene(scene);
     const found=elements.filter(e=>e.label.toLowerCase().includes(prepared.query.toLowerCase()));
-    return {board,total:found.length,offset:prepared.offset,elements:found.slice(prepared.offset,prepared.offset+prepared.limit),
+    return {board,revision:sceneFingerprint(scene),total:found.length,offset:prepared.offset,
+      elements:found.slice(prepared.offset,prepared.offset+prepared.limit),
       nextOffset:prepared.offset+prepared.limit<found.length?prepared.offset+prepared.limit:null};
   }
   const changes=[];
@@ -221,12 +376,23 @@ async function executeOnBoard(browser,operation,prepared,scratch,onProgress) {
   for(const [index,change] of prepared.operations.entries()) if(change.type==='attach-file') {
     assets.set(change,await stageAsset(change.file,scratch,index));
   }
-  for (const change of prepared.operations) {
-    await onProgress({stage:'apply',board});
-    switch(change.type) {
-      case 'rename': changes.push(await renameFigure(browser,board,change)); break;
-      case 'attach-file': changes.push(await attachAsset(browser,board,{...change,...assets.get(change)})); break;
-      default: changes.push(await moveElement(browser,board,change,change.type==='move-group'));
+  if (prepared.expectedRevision && sceneFingerprint(await exportBoard(browser, board)) !== prepared.expectedRevision) {
+    error('BOARD_REVISION_CHANGED');
+  }
+  for (const input of prepared.operations) {
+    const change = resolveBranchRefs(input, changes);
+    const onWrite = () => onProgress({stage:'apply',board,changes});
+    const edit = EDITS.get(change.type) ?? (change.type === 'rename' && change.id ? renameById :
+      (['move-element','move-group'].includes(change.type) && change.anchorId ? moveSelection : null));
+    if (edit) {
+      changes.push(await edit(browser, board, change, onWrite));
+    } else {
+      await onWrite();
+      switch(change.type) {
+        case 'rename': changes.push(await renameFigure(browser,board,change)); break;
+        case 'attach-file': changes.push(await attachAsset(browser,board,{...change,...assets.get(input)})); break;
+        default: changes.push(await moveElement(browser,board,change,change.type==='move-group'));
+      }
     }
     await onProgress({stage:'read_back',board,changes});
   }
@@ -337,7 +503,8 @@ export async function runUniDraw(argv,env=process.env) {
   }
 }
 
-if (process.argv[1]&&await realpath(process.argv[1])===fileURLToPath(import.meta.url)) {
+if (typeof process !== 'undefined' && process.argv[1] &&
+    await realpath(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const result=await runUniDraw(process.argv.slice(2));
   process.stdout.write(JSON.stringify(result)+'\n');
   if(result.state==='error') process.exitCode=1;

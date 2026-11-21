@@ -242,7 +242,7 @@ function makePorts(source, target) {
   const unit = horizontal ? {x:Math.sign(dx),y:0} : {x:0,y:Math.sign(dy) || 1};
   return {
     start: makePort(source,{x:(1+unit.x)/2,y:(1+unit.y)/2},unit),
-    end: makePort(target,{x:(1-unit.x)/2,y:(1-unit.y)/2},{x:-unit.x,y:-unit.y}),
+    end: makePort(target,{x:(1-unit.x)/2,y:(1-unit.y)/2},{x:-unit.x || 0,y:-unit.y || 0}),
   };
 }
 
@@ -334,4 +334,16 @@ export function projectScene(document) {
       to:element.tipPoints?.end?.boundToId ?? null,
       label:optArray(element.captions).map(caption=>plainText(caption.text)).join(' ').slice(0,MAX_TEXT)} : {}),
   }));
+}
+
+export function inspectScene(document) {
+  const { byId } = readScene(document);
+  return projectScene(document).map(item => {
+    const native = byId.get(item.id);
+    return {
+      ...item, locked: native.isLocked === true, zIndex: native.zIndex,
+      ...(native.style?.fc && typeof native.style.fc === 'string' ? { fill: native.style.fc } : {}),
+      ...(item.type === 'frame' ? { childCount: native.children?.length ?? 0 } : {}),
+    };
+  });
 }

@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "unidraw",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "summary": "Редактируемые схемы и майндмапы UniDraw из структуры, пакетные правки и проверка сохранённой доски.",
     "routingSummary": "Create, inspect, and edit native Unidraw boards and diagrams with a managed browser."
   },
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.1.0",
+    "version": "0.2.0",
     "minimumHostVersion": "3.31.0",
     "entrypoint": { "path": "trelio-unidraw.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
@@ -25,7 +25,9 @@
       { "source": "scripts/trelio-secret-setup.json", "path": "trelio-secret-setup.json", "mode": 420 },
       { "source": "scripts/trelio-unidraw.mjs", "path": "trelio-unidraw.mjs", "mode": 493 },
       { "source": "scripts/model.mjs", "path": "model.mjs", "mode": 420 },
-      { "source": "scripts/browser.mjs", "path": "browser.mjs", "mode": 420 }
+      { "source": "scripts/browser.mjs", "path": "browser.mjs", "mode": 420 },
+      { "source": "scripts/editing.mjs", "path": "editing.mjs", "mode": 420 },
+      { "source": "scripts/boards.mjs", "path": "boards.mjs", "mode": 420 }
     ]
   }
 }
