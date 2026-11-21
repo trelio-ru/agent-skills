@@ -184,6 +184,16 @@ test("MAX stores distinct provider URLs across invocations and does not bind dis
   if (process.platform !== "win32") assert.equal(fs.statSync(chatReferencesPath(options)).mode & 0o777, 0o600);
 }));
 
+test("MAX saves and reuses chat references for a selected account without a legacy connection", async () => withJournal(async () => {
+  const account = { id: "44444444-4444-4444-8444-444444444444", providerRef: null, companyBinding: "a".repeat(64) };
+  const selected = { ...options, connectionId: null, account };
+  rememberChatReference(selected, { url: "https://web.max.ru/123", title: "Виктория" }, true);
+
+  assert.equal(contextChatReference(selected), "https://web.max.ru/123");
+  assert.equal(path.basename(path.dirname(path.dirname(chatReferencesPath(selected)))), account.id);
+  assert.deepEqual(loadChatReferences({ ...selected, account: null }).chats, []);
+}));
+
 test("MAX task-bound read opens the original URL when another chat has the same title", async () => withJournal(async () => {
   rememberChatReference(options, { url: "https://web.max.ru/123", title: "Виктория" }, true);
   rememberChatReference(options, { url: "https://web.max.ru/456", title: "Виктория" });

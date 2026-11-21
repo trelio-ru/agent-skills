@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "apple-calendar",
-    "version": "1.0.5",
-    "summary": "Исправлено подключение на macOS, когда общая папка Trelio уже существует с обычными правами на чтение. Данные Apple Calendar хранятся с закрытыми правами владельца.",
+    "version": "1.0.6",
+    "summary": "Apple Calendar возвращает список аккаунтов и запускается, когда путь к локальному пакету содержит символическую ссылку.",
     "routingSummary": "Read and manage iCloud calendars through CalDAV, including availability, recurring events, reminders, invitations and RSVP on macOS and Windows."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.5",
+    "version": "1.0.6",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "scripts/trelio-apple-calendar.mjs",

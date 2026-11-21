@@ -17,7 +17,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const SKILL_ID = "max-web";
 const UUID_PATTERN =
@@ -218,10 +218,10 @@ const environmentValue = (environment, name) => {
   return matched ? environment[matched] : undefined;
 };
 
-const requireRuntimeIdentity = (environment = process.env) => {
-  // Identity is authenticated and injected by the generic package host after
-  // live release resolution. Keeping it out of provider arguments prevents a
-  // model-authored command from selecting another member's local namespace.
+const requireRuntimeIdentity = (environment = process.env, { legacyImport = false } = {}) => {
+  // The host always supplies the live company/member. The legacy connection
+  // locates old storage only; a selected account has its own verified locator.
+  const connectionId = environmentValue(environment, "TRELIO_SKILL_CONNECTION_ID");
   const identity = {
     skillId: String(environmentValue(environment, "TRELIO_SKILL_ID") || ""),
     runtimeVersion: String(
@@ -233,9 +233,7 @@ const requireRuntimeIdentity = (environment = process.env) => {
     memberId: String(
       environmentValue(environment, "TRELIO_SKILL_MEMBER_ID") || "",
     ).toLowerCase(),
-    connectionId: String(
-      environmentValue(environment, "TRELIO_SKILL_CONNECTION_ID") || "",
-    ).toLowerCase(),
+    connectionId: connectionId === undefined ? null : String(connectionId).toLowerCase(),
   };
   if (identity.skillId !== SKILL_ID) {
     throw new MaxRuntimeError(
@@ -249,7 +247,7 @@ const requireRuntimeIdentity = (environment = process.env) => {
       "TRELIO_SKILL_RUNTIME_VERSION is missing or invalid.",
     );
   }
-  for (const key of ["companyId", "memberId", "connectionId"]) {
+  for (const key of ["companyId", "memberId"]) {
     if (!UUID_PATTERN.test(identity[key])) {
       throw new MaxRuntimeError(
         "MAX_INVALID_IDENTITY",
@@ -257,7 +255,14 @@ const requireRuntimeIdentity = (environment = process.env) => {
       );
     }
   }
-  return identity;
+  const account = readAccountBinding(environment);
+  // An absent legacy ID and a malformed supplied ID are different cases. Never
+  // turn the latter into an empty migration or accept a selected-account import.
+  if ((legacyImport && account) || (identity.connectionId === null
+    ? !legacyImport && !account : !UUID_PATTERN.test(identity.connectionId))) {
+    throw new MaxRuntimeError("MAX_INVALID_IDENTITY", "Trusted connection or account context is missing or invalid.");
+  }
+  return account ? { ...identity, account } : identity;
 };
 
 const runtimeErrorPayload = (error) => {
@@ -299,7 +304,7 @@ const parseArguments = (argv, environment = process.env) => {
     companyId: identity.companyId,
     memberId: identity.memberId,
     connectionId: identity.connectionId,
-    account: readAccountBinding(environment),
+    account: identity.account ?? null,
     sendMode: "",
     // Empty means "use the common host discovery". An exact --chrome value
     // remains a provider CLI override, but platform lookup belongs to the
@@ -592,7 +597,10 @@ const connectionRoot = (options) => {
 // LEGACY: skill-personal-accounts-v1. This probe reads only directory metadata,
 // never a cookie, credential or message. An inaccessible path is not “no account”.
 const importExistingAccount = () => {
-  const identity = requireRuntimeIdentity();
+  const identity = requireRuntimeIdentity(process.env, { legacyImport: true });
+  // Without a legacy locator, there is no directory to check. The common
+  // catalogue can still list and bind profiles already imported elsewhere.
+  if (identity.connectionId === null) return { schemaVersion: 1, accounts: [] };
   const root = connectionRoot(identity);
   let exists = false;
   try { const stat = fs.lstatSync(root); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Unsafe account directory."); exists = true; }
@@ -623,8 +631,10 @@ const writeChatReferences = (options, value) => {
     fs.rmSync(temporary, { force: true });
   }
 };
-const hasChatReferenceIdentity = (options) => ["companyId", "memberId", "connectionId"]
-  .every((key) => UUID_PATTERN.test(options[key] || ""));
+const hasChatReferenceIdentity = (options) => [options.companyId, options.memberId]
+  .every((id) => UUID_PATTERN.test(id || ""))
+  && (UUID_PATTERN.test(options.connectionId || "") || (options.connectionId === null
+    && UUID_PATTERN.test(options.account?.id || "") && /^[a-f0-9]{64}$/u.test(options.account?.companyBinding || "")));
 const normalizeChatContextRef = (value) => {
   try {
     if (typeof value !== "string" || value.length > 512) throw new Error();
@@ -7466,7 +7476,16 @@ export {
   installMaxDownloadNavigation,
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// Node resolves symlinks for the module URL but can retain the caller's path in
+// argv. Compare physical paths while leaving ordinary module imports inert.
+const isDirectInvocation = () => {
+  if (!process.argv[1]) return false;
+  try {
+    return path.relative(fs.realpathSync.native(fileURLToPath(import.meta.url)),
+      fs.realpathSync.native(process.argv[1])) === "";
+  } catch { return false; }
+};
+if (isDirectInvocation()) {
   if (process.argv[2] === "__assist-worker") {
     // The detached worker communicates only through its owner-only session
     // record and authenticated loopback channel; stdout/stderr are discarded.

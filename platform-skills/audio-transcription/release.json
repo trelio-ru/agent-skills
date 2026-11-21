@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "audio-transcription",
-    "version": "1.2.2",
-    "summary": "После расшифровки записи рабочей встречи навык напоминает агенту сохранить полный текст и оформить итог в Trelio.",
+    "version": "1.2.3",
+    "summary": "Локальная расшифровка запускается и возвращает инструкции, когда путь к пакету содержит символическую ссылку.",
     "routingSummary": "Transcribe audio and video locally using GigaAM for Russian and multilingual Whisper for other languages or poor Russian results."
   },
   "connection": null,
   "runtime": {
-    "version": "1.4.2",
+    "version": "1.4.3",
     "minimumHostVersion": "1.4.0",
     "entrypoint": {
       "path": "scripts/audio-transcription.mjs",

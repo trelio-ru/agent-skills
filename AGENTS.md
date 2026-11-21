@@ -160,6 +160,13 @@ ancestors, включая Windows junction/reparse points.
 Windows owner roots и atomic temp files проверяются native helpers также за MAX_PATH; exact SID/DACL и reparse guards сохраняются.
 
 Для нескольких личных аккаунтов читай [общий контракт](docs/agent-skill-connections.md#общий-каталог-личных-аккаунтов): каталог и company bindings принадлежат host, protected storage и вход – provider-у.
+[MAX](docs/max-web-agent-skill.md#identity-и-запуск) и
+[Telegram Web](docs/telegram-web-agent-skill.md#вход) без legacy connection
+возвращают пустой импорт до файловой системы. После выбора аккаунта CLI и
+assist используют точную host-привязку, импортированный профиль остаётся по
+старому providerRef. Проверяй cold import и запуск выбранного аккаунта реальным
+CLI. MAX, Telegram Web, Apple Calendar и Audio Transcription сверяют физический
+entrypoint для запуска через симлинк/junction, сохраняя инертный module import.
 Telegram legacy import и выбранный личный account допускают отсутствие старого
 company connection по тому же контракту; проверяй настоящий isolated CLI до/после выбора.
 Для WhatsApp discovery, recency, date-only поиска, coverage и browser fallback

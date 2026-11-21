@@ -631,25 +631,30 @@ test('assistant command policy is signed with the actual package and matches onl
   }
 });
 
-test('materialized package CLI returns its complete guide before model/cache IO', () => {
+test('materialized package CLI returns its complete guide through a symlink before model/cache IO', t => {
   const root = temporary(), directory = path.join(root, 'package');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const built = JSON.parse(buildRuntimePackage(providerRoot).packageBytes);
   for (const file of built.files) {
     const target = path.join(directory, file.path);
     fs.mkdirSync(path.dirname(target), {recursive: true});
     fs.writeFileSync(target, Buffer.from(file.contentBase64, 'base64'));
   }
-  const result = spawnSync(process.execPath, [path.join(directory, 'scripts/audio-transcription.mjs'), 'guides'],
+  // Node resolves the entrypoint module to package/, although argv keeps
+  // linked-package/. The child must still dispatch the real guides command.
+  const alias = path.join(root, 'linked-package');
+  fs.symlinkSync(directory, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const result = spawnSync(process.execPath, [path.join(alias, 'scripts', 'audio-transcription.mjs'), 'guides'],
     {shell: false, cwd: root, encoding: 'utf8', env: {SystemRoot: process.env.SystemRoot}, timeout: 15000});
-  assert.equal(result.status, 0, result.stderr);
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(result.stderr, '');
   const guide = JSON.parse(result.stdout).guides[0];
   const expected = path.join(directory, 'references/workflow.md');
   assert.equal(fs.realpathSync(guide.path), fs.realpathSync(expected));
   assert.equal(guide.sha256, digest(fs.readFileSync(expected)));
   assert.equal(guide.bytes, fs.statSync(expected).size);
-  assert.deepEqual(fs.readdirSync(root), ['package']);
-  fs.rmSync(root, {recursive: true});
+  assert.deepEqual(fs.readdirSync(root).sort(), ['linked-package', 'package']);
 });
 
 test('prepared host actually uses a managed Python and official checksum-pinned model', {skip: !fixture && !process.env.CI}, () => {

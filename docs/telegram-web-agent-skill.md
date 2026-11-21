@@ -62,7 +62,7 @@ Connection definition имеет пустой config и `deprecatedConfigKeys` �
 `allowAutonomous`. Сохранённое значение не даёт разрешения и не показывается
 в форме. Общих Agent Secrets и отдельного consent registry нет.
 
-Один private Chrome profile хранится локально для exact
+Legacy private Chrome profile хранится локально для exact
 `company + member + connection`:
 
 ```text
@@ -96,8 +96,13 @@ Exact команда входа – `login --headed`. Runtime также пер�
 операция делает fresh `probe` того же private profile и только затем продолжает
 работу.
 
-Account slots не являются частью контракта. Разные аккаунты подключаются
-разными Trelio connections и получают разные profile directories.
+При отсутствии `TRELIO_SKILL_CONNECTION_ID` команда `__trelio_accounts_import`
+возвращает пустой список до обращения к файловой системе. После выбора аккаунта
+host передаёт его проверенную привязку и live company/member. Новый аккаунт
+хранит профиль в `integrations/telegram-web/accounts/<account-id>/`,
+импортированный использует прежний путь из `providerRef`. Обычные команды и
+assist worker используют ту же точную привязку. CLI исполняется и через симлинк
+или Windows junction к тому же физическому entrypoint.
 
 ## Команды
 

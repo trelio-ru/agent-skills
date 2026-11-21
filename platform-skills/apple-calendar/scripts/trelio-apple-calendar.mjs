@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { SKILL, VERSION, UUID, identity, configRoot, check, Fault, hash } from './core.mjs';
 import { Store } from './storage.mjs';
 import { configure } from './setup.mjs';
@@ -94,7 +95,16 @@ export async function execute(argv, { env = process.env, storeFactory = (root, o
     });
   } finally { store.close(); }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// Node resolves the module URL even if the invocation used a cache path alias.
+// Match the physical entrypoint and keep imports free of CLI side effects.
+const isDirectInvocation = () => {
+  if (!process.argv[1]) return false;
+  try {
+    return path.relative(realpathSync.native(fileURLToPath(import.meta.url)),
+      realpathSync.native(process.argv[1])) === '';
+  } catch { return false; }
+};
+if (isDirectInvocation()) {
   try {
     const result = await execute(process.argv.slice(2));
     const output = JSON.stringify(result);

@@ -3,11 +3,13 @@ registerInstructionGuideContract(new URL("../", import.meta.url));
 import { readSkillInstructions } from "../../tools/read-skill-instructions.mjs";
 import './http-errors.test.mjs';
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 
 import {
@@ -56,6 +58,72 @@ Object.assign(process.env, {
   TRELIO_SKILL_COMPANY_ID: identityArguments[1],
   TRELIO_SKILL_MEMBER_ID: identityArguments[3],
   TRELIO_SKILL_CONNECTION_ID: identityArguments[5],
+});
+
+test("Telegram Web CLI imports legacy accounts and launches selected accounts through a symlink without a connection", (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "trelio-telegram-web-accounts-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const script = fileURLToPath(new URL("../scripts/trelio-telegram-web.mjs", import.meta.url));
+  const alias = path.join(root, "linked-scripts");
+  fs.symlinkSync(path.dirname(script), alias, process.platform === "win32" ? "junction" : "dir");
+  const cli = path.join(alias, path.basename(script));
+  const configHome = path.join(root, "config");
+  const [companyId, memberId, connectionId] = [identityArguments[1], identityArguments[3], identityArguments[5]];
+  const environment = {
+    SystemRoot: process.env.SystemRoot,
+    TRELIO_CONFIG_HOME: configHome,
+    TRELIO_SKILL_ID: "telegram-web",
+    TRELIO_SKILL_RUNTIME_VERSION: "3.4.0",
+    TRELIO_SKILL_COMPANY_ID: companyId,
+    TRELIO_SKILL_MEMBER_ID: memberId,
+  };
+
+  // As with the real host, cold import supplies no account or legacy ID.
+  // Through the alias, the child must emit JSON instead of exiting silently.
+  const runCli = (args, extra = {}, expectedStatus = 0) => {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      env: { ...environment, ...extra }, encoding: "utf8", shell: false, timeout: 15_000,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, expectedStatus, result.stderr || result.stdout);
+    assert.equal(result.stderr, "");
+    return JSON.parse(result.stdout);
+  };
+  const importCommand = ["__trelio_accounts_import"];
+  const legacy = { TRELIO_SKILL_CONNECTION_ID: connectionId };
+  const empty = { schemaVersion: 1, accounts: [] };
+  assert.deepEqual(runCli(importCommand), empty);
+  assert.deepEqual(runCli(importCommand, legacy), empty);
+  assert.equal(fs.existsSync(configHome), false);
+
+  const integrationRoot = path.join(configHome, "integrations", "telegram-web");
+  const oldProfile = path.join(integrationRoot, companyId, memberId, connectionId);
+  fs.mkdirSync(oldProfile, { recursive: true, mode: 0o700 });
+  const imported = runCli(importCommand, legacy);
+  assert.equal(imported.schemaVersion, 1);
+  assert.equal(imported.accounts.length, 1);
+  assert.equal(imported.accounts[0].sourceKey, connectionId);
+  assert.equal(imported.accounts[0].scope, "company");
+  assert.deepEqual(JSON.parse(imported.accounts[0].providerRef), { companyId, memberId, connectionId });
+  assert.deepEqual(runCli(importCommand), empty, "a missing ID never scans other profiles");
+
+  const id = "44444444-4444-4444-8444-444444444444";
+  const select = providerRef => ({
+    TRELIO_SKILL_ACCOUNT_JSON: JSON.stringify({ id, companyBinding: "a".repeat(64), providerRef }),
+  });
+  for (const [providerRef, selectedRoot] of [
+    [null, path.join(integrationRoot, "accounts", id)],
+    [imported.accounts[0].providerRef, oldProfile],
+  ]) {
+    assert.deepEqual(runCli(["policy", "show"], select(providerRef)), {
+      ok: true, policy: { sendMode: "confirm" }, path: path.join(selectedRoot, "config", "policy.json"),
+    });
+  }
+  const invalidLegacy = { TRELIO_SKILL_CONNECTION_ID: "bad-id" };
+  assert.equal(runCli(importCommand, invalidLegacy, 2).code, "TELEGRAM_INVALID_IDENTITY");
+  assert.equal(runCli(importCommand, select(null), 2).code, "TELEGRAM_INVALID_IDENTITY");
+  assert.equal(runCli(["policy", "show"], {}, 2).code, "TELEGRAM_INVALID_IDENTITY");
+  assert.equal(runCli(["policy", "show"], { ...select(null), ...invalidLegacy }, 2).code, "TELEGRAM_INVALID_IDENTITY");
 });
 
 test("Telegram Web local policy defaults to confirm and keeps state outside workspace", () => {
@@ -594,8 +662,8 @@ test("Telegram Web release manifest and instructions publish the global search c
     "utf8",
   );
 
-  assert.equal(release.release.version, "2.5.3");
-  assert.equal(release.runtime.version, "2.5.3");
+  assert.equal(release.release.version, "2.5.4");
+  assert.equal(release.runtime.version, "2.5.4");
   assert.equal(release.runtime.minimumHostVersion, "3.31.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,

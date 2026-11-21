@@ -2,7 +2,8 @@
 
 ## Архитектура
 
-Подписанный Node entrypoint использует literal argv и `shell=false`. GigaAM
+Подписанный Node entrypoint использует literal argv и `shell=false`. Симлинк
+или Windows junction к тому же физическому entrypoint запускает обычный CLI. GigaAM
 закреплён на commit `7447938d791c4f3e643386ee22c33777004293a5` официального
 `salute-developers/GigaAM`; исходники и MIT notice в package. Перед `torch.load`
 проверяется SHA-256. Произвольные веса и remote code запрещены.

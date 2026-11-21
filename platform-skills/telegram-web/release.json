@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-web",
-    "version": "2.5.3",
-    "summary": "Telegram Web ждёт появления приложения или окна авторизации. Экран загрузки больше не вызывает просьбу войти.",
+    "version": "2.5.4",
+    "summary": "Список личных аккаунтов и выбранный аккаунт работают в компаниях без старого подключения. Исправлен запуск из папки пакета, открытой через символическую ссылку.",
     "routingSummary": "Read and manage Telegram Web chats, messages and files."
   },
   "connection": {
@@ -20,7 +20,7 @@
     ]
   },
   "runtime": {
-    "version": "2.5.3",
+    "version": "2.5.4",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "trelio-telegram-web.mjs",

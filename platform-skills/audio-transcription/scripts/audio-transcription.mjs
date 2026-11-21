@@ -3,14 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath} from 'node:url';
 import {artifacts, childEnvironment, ensureSetup, installationPlan, modelDirectory, performSetup, providerRoot, pythonPath, ready, startSetup, whisper} from './bootstrap.mjs';
 import {atomicJson, privateDirectory, readJson, stateDirectory} from './storage.mjs';
 
 // The catalog has its own patch history. This executable implements the
 // source-original protocol admitted by the common host/backend from 1.2.0;
 // aligning it down to the catalog version would disable genuine voice reads.
-export const RUNTIME_VERSION = '1.4.2';
+export const RUNTIME_VERSION = '1.4.3';
 const busy = new Set(['queued', 'validating', 'loading', 'transcribing']);
 // The suffix admits a local file to the worker. FFmpeg detects its container
 // from the bytes because some recorders save CAF audio with an .m4a suffix.
@@ -179,7 +179,16 @@ export async function run(argv, {root = stateDirectory()} = {}) {
   return launchWorker(directory, stateRoot);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// Match the same physical entrypoint under a linked cache directory without
+// starting CLI or private source dispatch when this module is only imported.
+const isDirectInvocation = () => {
+  if (!process.argv[1]) return false;
+  try {
+    return path.relative(fs.realpathSync.native(fileURLToPath(import.meta.url)),
+      fs.realpathSync.native(process.argv[1])) === '';
+  } catch { return false; }
+};
+if (isDirectInvocation()) {
   try {
     if (process.argv[2] === '__setup' && process.env.TRELIO_AUDIO_SETUP_ROOT) {
       await performSetup(process.argv[3], process.env.TRELIO_AUDIO_SETUP_ROOT, {model: process.argv[4]});

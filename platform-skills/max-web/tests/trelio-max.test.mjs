@@ -198,8 +198,8 @@ test("MAX worker closure receipt is private, credential-free and cannot replace 
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.13.4");
-  assert.equal(release.runtime.version, "2.13.4");
+  assert.equal(release.release.version, "2.13.5");
+  assert.equal(release.runtime.version, "2.13.5");
   assert.equal(release.runtime.minimumHostVersion, "3.31.0");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -306,6 +306,72 @@ test("MAX bridge-style env-only CLI invocation reaches the command", () => {
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test("MAX CLI imports legacy accounts and launches selected accounts through a symlink without a connection", (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "trelio-max-web-accounts-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const script = runtimeEntrypoint;
+  const alias = path.join(root, "linked-scripts");
+  fs.symlinkSync(path.dirname(script), alias, process.platform === "win32" ? "junction" : "dir");
+  const cli = path.join(alias, path.basename(script));
+  const configHome = path.join(root, "config");
+  const [companyId, memberId, connectionId] = [hostRuntimeEnvironment.TRELIO_SKILL_COMPANY_ID, hostRuntimeEnvironment.TRELIO_SKILL_MEMBER_ID, hostRuntimeEnvironment.TRELIO_SKILL_CONNECTION_ID];
+  const environment = {
+    SystemRoot: process.env.SystemRoot,
+    TRELIO_CONFIG_HOME: configHome,
+    TRELIO_SKILL_ID: "max-web",
+    TRELIO_SKILL_RUNTIME_VERSION: hostRuntimeEnvironment.TRELIO_SKILL_RUNTIME_VERSION,
+    TRELIO_SKILL_COMPANY_ID: companyId,
+    TRELIO_SKILL_MEMBER_ID: memberId,
+  };
+
+  // As with the real host, cold import supplies no account or legacy ID.
+  // Through the alias, the child must emit JSON instead of exiting silently.
+  const runCli = (args, extra = {}, expectedStatus = 0) => {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      env: { ...environment, ...extra }, encoding: "utf8", shell: false, timeout: 15_000,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, expectedStatus, result.stderr || result.stdout);
+    assert.equal(result.stderr, "");
+    return JSON.parse(result.stdout);
+  };
+  const importCommand = ["__trelio_accounts_import"];
+  const legacy = { TRELIO_SKILL_CONNECTION_ID: connectionId };
+  const empty = { schemaVersion: 1, accounts: [] };
+  assert.deepEqual(runCli(importCommand), empty);
+  assert.deepEqual(runCli(importCommand, legacy), empty);
+  assert.equal(fs.existsSync(configHome), false);
+
+  const integrationRoot = path.join(configHome, "integrations", "max-web");
+  const oldProfile = path.join(integrationRoot, companyId, memberId, connectionId);
+  fs.mkdirSync(oldProfile, { recursive: true, mode: 0o700 });
+  const imported = runCli(importCommand, legacy);
+  assert.equal(imported.schemaVersion, 1);
+  assert.equal(imported.accounts.length, 1);
+  assert.equal(imported.accounts[0].sourceKey, connectionId);
+  assert.equal(imported.accounts[0].scope, "company");
+  assert.deepEqual(JSON.parse(imported.accounts[0].providerRef), { companyId, memberId, connectionId });
+  assert.deepEqual(runCli(importCommand), empty, "a missing ID never scans other profiles");
+
+  const id = "44444444-4444-4444-8444-444444444444";
+  const select = providerRef => ({
+    TRELIO_SKILL_ACCOUNT_JSON: JSON.stringify({ id, companyBinding: "a".repeat(64), providerRef }),
+  });
+  for (const [providerRef, selectedRoot] of [
+    [null, path.join(integrationRoot, "accounts", id)],
+    [imported.accounts[0].providerRef, oldProfile],
+  ]) {
+    assert.deepEqual(runCli(["policy", "show"], select(providerRef)), {
+      ok: true, policy: { sendMode: "confirm" }, path: path.join(selectedRoot, "config", "policy.json"),
+    });
+  }
+  const invalidLegacy = { TRELIO_SKILL_CONNECTION_ID: "bad-id" };
+  assert.equal(runCli(importCommand, invalidLegacy, 2).code, "MAX_INVALID_IDENTITY");
+  assert.equal(runCli(importCommand, select(null), 2).code, "MAX_INVALID_IDENTITY");
+  assert.equal(runCli(["policy", "show"], {}, 2).code, "MAX_INVALID_IDENTITY");
+  assert.equal(runCli(["policy", "show"], { ...select(null), ...invalidLegacy }, 2).code, "MAX_INVALID_IDENTITY");
 });
 
 test("MAX local policy defaults to confirm and keeps state outside workspace", () => {

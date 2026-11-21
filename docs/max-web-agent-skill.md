@@ -5,17 +5,22 @@ runtime; DOM test dependencies в него не входят.
 
 ## Identity и запуск
 
-Company/member/connection identity приходит только из проверенного package host
-через `TRELIO_SKILL_COMPANY_ID`, `TRELIO_SKILL_MEMBER_ID` и
-`TRELIO_SKILL_CONNECTION_ID`. Runtime проверяет также exact
-`TRELIO_SKILL_ID=max-web` и корректную `TRELIO_SKILL_RUNTIME_VERSION` до выбора
-локального каталога. Model-authored CLI-флаги identity не поддерживаются:
+Live company/member identity приходит из проверенного package host через
+`TRELIO_SKILL_COMPANY_ID` и `TRELIO_SKILL_MEMBER_ID`. Runtime проверяет также
+exact `TRELIO_SKILL_ID=max-web` и корректную `TRELIO_SKILL_RUNTIME_VERSION` до
+выбора локального каталога. `TRELIO_SKILL_CONNECTION_ID` указывает на прежний
+профиль. При его отсутствии `__trelio_accounts_import` возвращает пустой список
+до обращения к файловой системе. Обычные команды без legacy ID требуют
+проверенной привязки выбранного аккаунта из `TRELIO_SKILL_ACCOUNT_JSON`.
+Импортированный аккаунт продолжает использовать точный старый профиль из
+`providerRef`. Model-authored CLI-флаги identity не поддерживаются:
 `--company-id`, `--member-id` и `--connection-id` отклоняются как неизвестные
 аргументы и не могут выбрать другой локальный namespace.
 
 Агент запускает только `runtimeExecution.localAction` и добавляет в
 `parameters.arguments` команду и её обычные MAX-параметры. Секция `connection`
-из `get_agent_skill` для обычного запуска не нужна.
+из `get_agent_skill` для обычного запуска не нужна. CLI исполняется и через
+симлинк или Windows junction к тому же физическому entrypoint.
 
 Headed Chrome, включая login и assist, создаётся сразу неактивным через
 host `startInBackground` (runtime >= 3.2.0). Host запускает dedicated persistent

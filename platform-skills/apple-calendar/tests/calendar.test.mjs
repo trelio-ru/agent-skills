@@ -142,11 +142,26 @@ test('mismatching server read-back retains unknown, and DELETE verifies only exa
   assert.equal((await ops2.apply(deletion.planId,deletion.planHash)).state,'verified'); assert.equal(p2.calls.at(-1).options.headers['If-Match'],'"2"');
 });
 
-test('packaged CLI guides/importer need no credentials, reject unknown flags, and signed policies have exact commands', async () => {
-  const env={...process.env,TRELIO_SKILL_ID:'apple-calendar',TRELIO_SKILL_COMPANY_ID:crypto.randomUUID(),TRELIO_SKILL_MEMBER_ID:crypto.randomUUID()};delete env.TRELIO_SKILL_ACCOUNT_JSON;
-  const cli=fileURLToPath(new URL('../scripts/trelio-apple-calendar.mjs',import.meta.url));
+test('packaged CLI guides and importer work through a symlink without credentials', async t => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'apple-calendar-cli-')));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const env = {
+    SystemRoot: process.env.SystemRoot,
+    TRELIO_CONFIG_HOME: path.join(root, 'config'),
+    TRELIO_SKILL_ID: 'apple-calendar',
+    TRELIO_SKILL_COMPANY_ID: crypto.randomUUID(),
+    TRELIO_SKILL_MEMBER_ID: crypto.randomUUID(),
+  };
+  const entry = fileURLToPath(new URL('../scripts/trelio-apple-calendar.mjs', import.meta.url));
+  const alias = path.join(root, 'linked-scripts');
+  // Execute the real main module through a directory alias, just as the host may.
+  await fs.symlink(path.dirname(entry), alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const cli = path.join(alias, path.basename(entry));
   for(const command of ['guides','__trelio_accounts_import']) {
-    const result=spawnSync(process.execPath,[cli,command],{env,encoding:'utf8',shell:false});assert.equal(result.status,0,result.stdout);assert.equal(result.stderr,'');
+    const result = spawnSync(process.execPath, [cli, command], { env, encoding: 'utf8', shell: false, timeout: 15_000 });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(result.stderr, '');
     const json=JSON.parse(result.stdout);if(command==='guides') { const item=json.requiredFiles[0];const bytes=await fs.readFile(item.path);assert.equal(bytes.length,item.sizeBytes);assert.equal(hash(bytes),item.sha256); }
     else assert.deepEqual(json,{schemaVersion:1,accounts:[]});
   }

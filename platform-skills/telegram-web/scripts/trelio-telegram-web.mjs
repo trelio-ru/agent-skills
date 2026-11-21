@@ -16,7 +16,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const SKILL_ID = "telegram-web";
 const TELEGRAM_WEB_URL = "https://web.telegram.org/k/";
@@ -151,14 +151,6 @@ const cacheHome = () => {
   return path.join(os.homedir(), ".cache", "trelio");
 };
 
-const normalizeIdentityPart = (value, label) => {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9-]{0,127}$/u.test(normalized)) {
-    throw new Error(`${label} must contain only lowercase letters, digits and hyphens.`);
-  }
-  return normalized;
-};
-
 const ensurePrivateDirectory = (directory) => {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   if (process.platform !== "win32") fs.chmodSync(directory, 0o700);
@@ -189,21 +181,29 @@ class TelegramWebRuntimeError extends Error {
   }
 }
 
-const requireRuntimeIdentity = (environment = process.env) => {
-  // The signed host supplies company/member/connection identity. Legacy CLI
-  // flags may repeat it but can never choose another profile namespace.
+const requireRuntimeIdentity = (environment = process.env, { legacyImport = false } = {}) => {
+  // The signed host supplies live company/member identity and either an old
+  // connection or a selected personal account. Legacy flags cannot replace it.
+  const connectionId = environmentValue(environment, "TRELIO_SKILL_CONNECTION_ID");
   const identity = {
     skillId: String(environmentValue(environment, "TRELIO_SKILL_ID") || ""),
     runtimeVersion: String(environmentValue(environment, "TRELIO_SKILL_RUNTIME_VERSION") || ""),
     companyId: String(environmentValue(environment, "TRELIO_SKILL_COMPANY_ID") || "").toLowerCase(),
     memberId: String(environmentValue(environment, "TRELIO_SKILL_MEMBER_ID") || "").toLowerCase(),
-    connectionId: String(environmentValue(environment, "TRELIO_SKILL_CONNECTION_ID") || "").toLowerCase(),
+    connectionId: connectionId === undefined ? null : String(connectionId).toLowerCase(),
   };
   if (identity.skillId !== SKILL_ID || !VERSION_PATTERN.test(identity.runtimeVersion)
-    || ![identity.companyId, identity.memberId, identity.connectionId].every((part) => UUID_PATTERN.test(part))) {
+    || ![identity.companyId, identity.memberId].every((part) => UUID_PATTERN.test(part))) {
     throw new TelegramWebRuntimeError("TELEGRAM_INVALID_IDENTITY", "Trusted Telegram Web runtime identity is missing or invalid.");
   }
-  return identity;
+  const account = readAccountBinding(environment);
+  // The import probe may see no legacy connection. Work without one requires
+  // an independently validated account binding; invalid explicit IDs still fail.
+  if ((legacyImport && account) || (identity.connectionId === null
+    ? !legacyImport && !account : !UUID_PATTERN.test(identity.connectionId))) {
+    throw new TelegramWebRuntimeError("TELEGRAM_INVALID_IDENTITY", "Trusted connection or account context is missing or invalid.");
+  }
+  return account ? { ...identity, account } : identity;
 };
 
 const environmentValue = (environment, name) => {
@@ -231,7 +231,7 @@ const parseArguments = (argv, environment = process.env) => {
     companyId: identity.companyId,
     memberId: identity.memberId,
     connectionId: identity.connectionId,
-    account: readAccountBinding(environment),
+    account: identity.account ?? null,
     sendMode: "",
     // Browser discovery is shared by the host runtime. This field is set only
     // when the caller explicitly chooses an exact executable with --chrome.
@@ -348,12 +348,6 @@ const parseArguments = (argv, environment = process.env) => {
     else throw new Error(`Unknown argument: ${argument}`);
   }
 
-  if (!options.companyId || !options.memberId || !options.connectionId) {
-    throw new Error("--company-id, --member-id and --connection-id are required.");
-  }
-  options.companyId = normalizeIdentityPart(options.companyId, "company-id");
-  options.memberId = normalizeIdentityPart(options.memberId, "member-id");
-  options.connectionId = normalizeIdentityPart(options.connectionId, "connection-id");
   if (!SUPPORTED_COMMANDS.has(options.command)) {
     throw new Error(`Unsupported Telegram Web browser command: ${options.command || "(missing)"}`);
   }
@@ -540,7 +534,9 @@ const connectionRoot = (options) => {
 // LEGACY: skill-personal-accounts-v1. This probe reads only directory metadata,
 // never a cookie, credential or message. An inaccessible path is not “no account”.
 const importExistingAccount = () => {
-  const identity = requireRuntimeIdentity();
+  const identity = requireRuntimeIdentity(process.env, { legacyImport: true });
+  // There is no exact legacy directory to inspect when the host omits the ID.
+  if (identity.connectionId === null) return { schemaVersion: 1, accounts: [] };
   const root = connectionRoot(identity);
   let exists = false;
   try { const stat = fs.lstatSync(root); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Unsafe account directory."); exists = true; }
@@ -3036,7 +3032,6 @@ const readAssistWorkerConfig = () => {
     || !UUID_PATTERN.test(value.sessionId || "")
     || !UUID_PATTERN.test(value.companyId || "")
     || !UUID_PATTERN.test(value.memberId || "")
-    || !UUID_PATTERN.test(value.connectionId || "")
     || value.companyId !== identity.companyId
     || value.memberId !== identity.memberId
     || value.connectionId !== identity.connectionId
@@ -3053,7 +3048,9 @@ const readAssistWorkerConfig = () => {
     || value.expiresAt - Date.now() > TELEGRAM_ASSIST_HOLD_MS) {
     throw new TelegramWebRuntimeError("TELEGRAM_ASSIST_CONFIG_INVALID", "The assisted-browser worker config is invalid.");
   }
-  return value;
+  // Equality with the verified host identity also admits a literal null only
+  // for a selected account. Reuse that same binding in the detached worker.
+  return { ...value, account: identity.account ?? null };
 };
 
 const readBoundedAssistBody = (request) => new Promise((resolve, reject) => {
@@ -3224,7 +3221,7 @@ const runAssistWorker = async () => {
   await browserSessionRuntime();
   const config = readAssistWorkerConfig();
   const options = {
-    account: readAccountBinding(),
+    account: config.account,
     companyId: config.companyId,
     memberId: config.memberId,
     connectionId: config.connectionId,
@@ -4458,7 +4455,16 @@ export {
   writePrivateJson,
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// An entrypoint invoked through a symlink or Windows junction is still the
+// same script. Imports and unresolved argv paths must not start the worker.
+const isDirectInvocation = () => {
+  if (!process.argv[1]) return false;
+  try {
+    return path.relative(fs.realpathSync.native(fileURLToPath(import.meta.url)),
+      fs.realpathSync.native(process.argv[1])) === "";
+  } catch { return false; }
+};
+if (isDirectInvocation()) {
   (process.argv[2] === "__assist-worker" ? runAssistWorker() : main()).catch((error) => {
     output(runtimeErrorPayload(error));
     process.exitCode = 2;
