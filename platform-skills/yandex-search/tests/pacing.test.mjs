@@ -238,3 +238,23 @@ test("successful preparation cannot make an uncertain dispatch safe to repeat", 
   assert.equal(preparations, 1);
   assert.equal(sends, 1);
 });
+
+test("delivered CAPTCHA flow requires server user_approval and preserves one-attempt fences", () => {
+  const captchaSection = instruction.split(/\r?\n## CAPTCHA\r?\n/u)[1]?.split(/\r?\n## /u)[0];
+  assert.ok(captchaSection, "The delivered instruction must contain the CAPTCHA route.");
+  assert.ok(captchaSection.includes("`request_user_approval`"));
+  assert.ok(captchaSection.includes('{"skillId": "yandex-search", "action": "captcha.solve"}'));
+  for (const requirement of [
+    "schemaVersion: 1",
+    'type: "user_approval"',
+    'decision: "approved"',
+    "approved: true",
+    'source: "trelio_server"',
+    "structuredContent",
+  ]) assert.ok(captchaSection.includes(requirement), requirement);
+  assert.match(captchaSection, /без других полей и\s+вопроса пользователю: V1 отвечает автоматически/u);
+  assert.match(captchaSection, /один раз отправь[\s\S]*той же\s+вкладки/u);
+  assert.match(captchaSection, /повторного `yandexPacing\.submit`/u);
+  assert.match(captchaSection, /Иначе сообщи о блокировке,\s+CAPTCHA не решай/u);
+  assert.match(captchaSection, /Об отклонении сообщи, без цикла/u);
+});
