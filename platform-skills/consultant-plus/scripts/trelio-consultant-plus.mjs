@@ -1,312 +1,107 @@
 #!/usr/bin/env node
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import {
-  chmod,
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  rename,
-  rm,
-} from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import os from "node:os";
-import path from "node:path";
-import process from "node:process";
+const SKILL_ID = 'consultant-plus';
+const MINIMUM_HOST_VERSION = '3.34.21';
+const HOME = 'https://cloud.consultant.ru/';
+const origins = [new URL(HOME).origin];
+const domains = ['consultant.ru'];
 
-const SKILL_ID = "consultant-plus";
-const STATE_SCHEMA_VERSION = 1;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const ACCESS_STATES = new Set(["unknown", "connected", "no_access", "needs_reconnect"]);
-const BROWSER_PREFERENCES = new Set([
-  "codex-browser",
-  "codex-chrome",
-  "claude-chrome",
-  "claude-edge",
-]);
-
-const fail = (message) => {
-  throw new Error(message);
+// Lifecycle and paced submissions belong to the host. This adapter pins the
+// site and presentation, and exposes only the arguments needed by this skill.
+const commands = {
+  doctor: {}, status: {}, wait: {}, ready: {}, 'show-login': {}, close: {},
+  open: {}, setup: {}, navigate: { url: 'string' },
+  'download-original': { frameId: 'string', x: 'number', y: 'number' },
+  'read-text': { query: 'string?', offset: 'number?', controlQuery: 'string?', controlOffset: 'number?' },
+  screenshot: {}, click: { frameId: 'string', x: 'number', y: 'number' },
+  scroll: { frameId: 'string', x: 'number', y: 'number', deltaY: 'number' },
+  'type-text': { frameId: 'string', inputFile: 'string' },
+  key: { frameId: 'string', key: 'string' },
+  submit: { frameId: 'string', x: 'number?', y: 'number?' },
+  'answer-ready': { frameId: 'string' },
 };
+const fail = () => { throw new Error('MANAGED_SEARCH_INVALID_INPUT'); };
 
-const parseArguments = (argv) => {
-  const [command = "help", ...tokens] = argv;
-  const options = new Map();
-
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (!token.startsWith("--")) fail(`Неизвестный аргумент: ${token}`);
-    const name = token.slice(2);
-    if (!name || options.has(name)) fail(`Некорректная или повторная опция: ${token}`);
-
-    if (name === "confirm") {
-      options.set(name, true);
-      continue;
-    }
-
-    const value = tokens[index + 1];
-    if (!value || value.startsWith("--")) fail(`Для ${token} требуется значение.`);
-    options.set(name, value);
-    index += 1;
+function parse(argv) {
+  const [operation, ...flags] = argv;
+  if (!Object.hasOwn(commands, operation) || flags.length % 2) fail();
+  const spec = commands[operation], args = {};
+  for (let index = 0; index < flags.length; index += 2) {
+    const field = flags[index].slice(2), value = flags[index + 1];
+    if (!flags[index].startsWith('--') || !Object.hasOwn(spec, field) || Object.hasOwn(args, field) || !value) fail();
+    const number = spec[field].startsWith('number');
+    if (number && (!/^-?\d+$/u.test(value) || !Number.isSafeInteger(Number(value)))) fail();
+    args[field] = number ? Number(value) : value;
   }
+  for (const [field, type] of Object.entries(spec)) if (!type.endsWith('?') && !Object.hasOwn(args, field)) fail();
+  if (operation === 'submit' && Object.hasOwn(args, 'x') !== Object.hasOwn(args, 'y')) fail();
+  // Enter stays behind the host's one-shot submission fence.
+  if (operation === 'key' && !['Tab','Shift+Tab','Escape','Backspace','Delete','Home','End','PageUp','PageDown','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Control+A','Meta+A'].includes(args.key)) fail();
+  return { operation, args };
+}
 
-  return { command, options };
-};
+async function queryFromFile(file, hostUrl) {
+  if (!path.isAbsolute(file)) fail();
+  // Read a private regular JSON file through the host's own path/ACL checks.
+  // Only its path is sent in argv. The question never appears in diagnostics.
+  const { readPrivateJsonFile } = await import(new URL('trelio-workspace.mjs', hostUrl));
+  const input = await readPrivateJsonFile(file, { maximumBytes: 24_576, fatalUtf8: true }).catch(fail);
+  if (!input || Object.keys(input).length !== 1 || typeof input.text !== 'string'
+    || !input.text.trim() || input.text.length > 4000) fail();
+  return input.text;
+}
 
-const requireExactOptions = (options, allowed) => {
-  for (const name of options.keys()) {
-    if (!allowed.has(name)) fail(`Команда не поддерживает --${name}.`);
+export async function run(argv, env = process.env) {
+  // First-time account discovery is structural. It cannot open Chromium or
+  // inspect a native profile, including when another client already has one.
+  if (argv.length === 1 && argv[0] === '__trelio_accounts_import') return { schemaVersion: 1, accounts: [] };
+  if (argv.length === 1 && argv[0] === 'commands') return { schemaVersion: 1, commands };
+  let { operation, args } = parse(argv);
+  if (operation === 'doctor') return { schemaVersion: 1,
+    hostVisualAvailable: Boolean(env.TRELIO_VISUAL_SESSION_MODULE_URL), minimumHostVersion: MINIMUM_HOST_VERSION };
+  const hostUrl = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank');
+  if (hostUrl.protocol !== 'file:' || env.TRELIO_SKILL_ID !== SKILL_ID) throw new Error('MANAGED_SEARCH_HOST_REQUIRED');
+  const host = await import(hostUrl);
+  if (host.VISUAL_PRESENTATION_API !== 'trelio.visual-presentation/v1'
+    || host.VISUAL_ATTACHMENT_FILE_API !== 'trelio.visual-attachment-file/v1'
+    || host.VISUAL_SEMANTIC_CONTROLS_API !== 'trelio.visual-semantic-controls/v1'
+    || typeof host.runVisualSession !== 'function') throw new Error('MANAGED_SEARCH_HOST_UPGRADE_REQUIRED');
+  if (operation === 'open' || operation === 'setup') {
+    args = { url: HOME };
+    if (operation === 'open') operation = 'navigate';
+  } else if (operation === 'navigate') {
+    const url = new URL(args.url);
+    // Resume only from the provider's own document URL. The browser separately
+    // enforces signed origins for redirects and the user's sign-in navigation.
+    if (!origins.includes(url.origin) || url.username || url.password || url.href.length > 2048) fail();
+    args = { url: url.href };
+  } else if (operation === 'download-original') {
+    operation = 'download-attachment';
+  } else if (operation === 'type-text') {
+    args = { frameId: args.frameId, text: await queryFromFile(args.inputFile, hostUrl) };
+  } else if (operation === 'submit') {
+    args = Object.hasOwn(args, 'x') ? { action: 'click', ...args } : { action: 'key', key: 'Enter', ...args };
+  } else if (operation === 'answer-ready') {
+    operation = 'request-ready';
   }
-};
+  // An export click is separately admitted for the exact first-party file
+  // origin. Never broaden the file allowlist to all sign-in redirects.
+  return host.runVisualSession({ origins, domains, observationMode: 'text',
+    presentation: 'hidden', semanticControls: true, attachmentDownloads: true,
+    attachmentFilePolicy: { origins }, operation, args, env });
+}
 
-const requireRuntimeIdentity = () => {
-  const companyId = String(process.env.TRELIO_SKILL_COMPANY_ID || "");
-  const memberId = String(process.env.TRELIO_SKILL_MEMBER_ID || "");
-  const skillId = String(process.env.TRELIO_SKILL_ID || "");
-
-  if (!UUID_PATTERN.test(companyId)) fail("TRELIO_SKILL_COMPANY_ID отсутствует или некорректен.");
-  if (!UUID_PATTERN.test(memberId)) fail("TRELIO_SKILL_MEMBER_ID отсутствует или некорректен.");
-  if (skillId !== SKILL_ID) fail("Runtime запущен не для навыка consultant-plus.");
-
-  return { companyId, memberId, skillId };
-};
-
-const resolveConfigHome = () => {
-  const explicitRoot = process.env.TRELIO_CONFIG_HOME;
-  if (explicitRoot) {
-    if (!path.isAbsolute(explicitRoot)) fail("TRELIO_CONFIG_HOME должен быть абсолютным путём.");
-    return path.normalize(explicitRoot);
+if (process.argv[1] && await fs.realpath(process.argv[1]) === await fs.realpath(fileURLToPath(import.meta.url))) {
+  try { process.stdout.write(JSON.stringify(await run(process.argv.slice(2))) + '\n'); }
+  catch (error) {
+    // Unknown native failures may contain private page data. Keep a closed
+    // diagnostic vocabulary and never retry an input from the CLI.
+    const safe = ['MANAGED_SEARCH_INVALID_INPUT', 'MANAGED_SEARCH_HOST_REQUIRED', 'MANAGED_SEARCH_HOST_UPGRADE_REQUIRED'];
+    process.stdout.write(JSON.stringify({ schemaVersion: 1, state: 'error',
+      code: safe.includes(error.message) ? error.message : 'MANAGED_SEARCH_RUNTIME_FAILED' }) + '\n');
+    process.exitCode = 1;
   }
-
-  if (process.platform === "win32") {
-    const localAppData = process.env.LOCALAPPDATA;
-    if (!localAppData || !path.isAbsolute(localAppData)) {
-      fail("LOCALAPPDATA отсутствует или некорректен.");
-    }
-    return path.join(localAppData, "Trelio");
-  }
-
-  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-  if (xdgConfigHome) {
-    if (!path.isAbsolute(xdgConfigHome)) fail("XDG_CONFIG_HOME должен быть абсолютным путём.");
-    return path.join(xdgConfigHome, "trelio");
-  }
-
-  return path.join(os.homedir(), ".config", "trelio");
-};
-
-const resolveStateLocation = (identity) => {
-  const configHome = resolveConfigHome();
-  const directory = path.join(
-    configHome,
-    "integrations",
-    SKILL_ID,
-    identity.companyId,
-    identity.memberId,
-    "browser",
-    "state",
-  );
-  return { configHome, directory, file: path.join(directory, "access.json") };
-};
-
-const assertRealPrivateDirectory = async (directory) => {
-  const metadata = await lstat(directory);
-  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-    fail(`Небезопасный путь локального состояния: ${directory}`);
-  }
-  if (process.platform !== "win32") await chmod(directory, 0o700);
-};
-
-const ensureStateDirectory = async ({ configHome, directory }) => {
-  // Runtime owns everything below the configured Trelio root. Checking each
-  // segment before descending prevents a pre-created symlink inside this
-  // namespace from redirecting even mkdir side effects into another tree.
-  await mkdir(configHome, { recursive: true, mode: 0o700 });
-  const relativeSegments = path.relative(configHome, directory).split(path.sep).filter(Boolean);
-  let current = configHome;
-  await assertRealPrivateDirectory(current);
-  for (const segment of relativeSegments) {
-    current = path.join(current, segment);
-    await mkdir(current, { mode: 0o700 }).catch((error) => {
-      if (error?.code !== "EEXIST") throw error;
-    });
-    await assertRealPrivateDirectory(current);
-  }
-};
-
-const defaultState = (identity) => ({
-  schemaVersion: STATE_SCHEMA_VERSION,
-  skillId: identity.skillId,
-  companyId: identity.companyId,
-  memberId: identity.memberId,
-  accessState: "unknown",
-  browserPreference: null,
-  lastVerifiedAt: null,
-  updatedAt: null,
-});
-
-const validateStoredState = (candidate, identity) => {
-  if (
-    !candidate
-    || typeof candidate !== "object"
-    || Array.isArray(candidate)
-    || candidate.schemaVersion !== STATE_SCHEMA_VERSION
-    || candidate.skillId !== identity.skillId
-    || candidate.companyId !== identity.companyId
-    || candidate.memberId !== identity.memberId
-    || !ACCESS_STATES.has(candidate.accessState)
-    || (
-      candidate.browserPreference !== null
-      && !BROWSER_PREFERENCES.has(candidate.browserPreference)
-    )
-    || (
-      candidate.accessState === "connected"
-      && !BROWSER_PREFERENCES.has(candidate.browserPreference)
-    )
-    || (candidate.lastVerifiedAt !== null && typeof candidate.lastVerifiedAt !== "string")
-    || (candidate.updatedAt !== null && typeof candidate.updatedAt !== "string")
-  ) {
-    fail("Локальное состояние ConsultantPlus повреждено или относится к другой учётной записи.");
-  }
-  return candidate;
-};
-
-const readState = async (location, identity) => {
-  try {
-    const metadata = await lstat(location.file);
-    if (metadata.isSymbolicLink() || !metadata.isFile()) {
-      fail("Файл локального состояния ConsultantPlus имеет небезопасный тип.");
-    }
-    if (metadata.size > 16 * 1024) {
-      fail("Файл локального состояния ConsultantPlus слишком велик.");
-    }
-    const bytes = await readFile(location.file, "utf8");
-    return validateStoredState(JSON.parse(bytes), identity);
-  } catch (error) {
-    if (error?.code === "ENOENT") return defaultState(identity);
-    if (error instanceof SyntaxError) fail("Локальное состояние ConsultantPlus содержит некорректный JSON.");
-    throw error;
-  }
-};
-
-const writeState = async (location, state) => {
-  await ensureStateDirectory(location);
-  const temporaryFile = path.join(
-    location.directory,
-    `.access.${process.pid}.${randomUUID()}.tmp`,
-  );
-  const body = `${JSON.stringify(state, null, 2)}\n`;
-  let handle;
-
-  try {
-    // Exclusive creation plus same-directory rename makes a complete state
-    // visible atomically and avoids following an attacker-controlled target
-    // symlink. The temporary file never carries browser credentials.
-    handle = await open(temporaryFile, "wx", 0o600);
-    await handle.writeFile(body, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await rename(temporaryFile, location.file);
-    if (process.platform !== "win32") await chmod(location.file, 0o600);
-  } finally {
-    await handle?.close().catch(() => undefined);
-    await rm(temporaryFile, { force: true }).catch(() => undefined);
-  }
-};
-
-const renderState = (state) => ({
-  ok: true,
-  accessState: state.accessState,
-  browserPreference: state.browserPreference,
-  configured: state.accessState !== "unknown",
-  canUseConsultantPlus: state.accessState === "connected",
-  lastVerifiedAt: state.lastVerifiedAt,
-  updatedAt: state.updatedAt,
-  storesCredentials: false,
-});
-
-const main = async () => {
-  const { command, options } = parseArguments(process.argv.slice(2));
-
-  if (command === "help") {
-    requireExactOptions(options, new Set());
-    process.stdout.write([
-      "ConsultantPlus local preference runtime",
-      "",
-      "Commands:",
-      "  status",
-      "  set-connected --browser codex-browser|codex-chrome|claude-chrome|claude-edge",
-      "  set-no-access",
-      "  set-needs-reconnect [--browser SURFACE]",
-      "  reset --confirm",
-      "",
-    ].join("\n"));
-    return;
-  }
-
-  const identity = requireRuntimeIdentity();
-  const location = resolveStateLocation(identity);
-  const current = await readState(location, identity);
-
-  if (command === "status") {
-    requireExactOptions(options, new Set());
-    process.stdout.write(`${JSON.stringify(renderState(current))}\n`);
-    return;
-  }
-
-  const now = new Date().toISOString();
-  let next;
-
-  if (command === "set-connected") {
-    requireExactOptions(options, new Set(["browser"]));
-    const browserPreference = options.get("browser");
-    if (!BROWSER_PREFERENCES.has(browserPreference)) {
-      fail("Для set-connected требуется поддерживаемый --browser.");
-    }
-    next = {
-      ...current,
-      accessState: "connected",
-      browserPreference,
-      lastVerifiedAt: now,
-      updatedAt: now,
-    };
-  } else if (command === "set-no-access") {
-    requireExactOptions(options, new Set());
-    next = {
-      ...current,
-      accessState: "no_access",
-      browserPreference: null,
-      lastVerifiedAt: null,
-      updatedAt: now,
-    };
-  } else if (command === "set-needs-reconnect") {
-    requireExactOptions(options, new Set(["browser"]));
-    const browserPreference = options.get("browser") ?? current.browserPreference;
-    if (browserPreference !== null && !BROWSER_PREFERENCES.has(browserPreference)) {
-      fail("Для set-needs-reconnect указан неподдерживаемый --browser.");
-    }
-    next = {
-      ...current,
-      accessState: "needs_reconnect",
-      browserPreference,
-      lastVerifiedAt: null,
-      updatedAt: now,
-    };
-  } else if (command === "reset") {
-    requireExactOptions(options, new Set(["confirm"]));
-    if (options.get("confirm") !== true) fail("Для reset требуется --confirm.");
-    next = { ...defaultState(identity), updatedAt: now };
-  } else {
-    fail(`Неизвестная команда: ${command}`);
-  }
-
-  validateStoredState(next, identity);
-  await writeState(location, next);
-  process.stdout.write(`${JSON.stringify(renderState(next))}\n`);
-};
-
-main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+}

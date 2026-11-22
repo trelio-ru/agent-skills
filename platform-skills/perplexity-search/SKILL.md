@@ -3,31 +3,23 @@ name: perplexity-search
 description: Ищет публичную информацию через сайт Perplexity, уточняет вопросы в той же беседе и возвращает ответ с проверяемыми источниками. Используй для явно выбранного Perplexity или дополнительной проверки через него; не подменяй запрошенный другой поисковый сервис.
 metadata:
   catalog_title: "Perplexity Search"
-  catalog_description: "Поиск через Perplexity в скрытой вкладке браузера, без API-ключа. Уточняет вопросы в одной беседе и возвращает прямые ссылки на источники."
+  catalog_description: "Поиск через Perplexity в Chromium Trelio без окна, без API-ключа. Уточняет вопросы в одной беседе и возвращает прямые ссылки на источники."
 ---
 
 # Perplexity Search
 
-Используй существующий browser tool. Это instruction-only навык для сайта
-Perplexity: отдельный Playwright, HTTP-клиент, API-ключ и signed runtime package
-не требуются. Если browser control недоступен, сообщи об этом. Не выдавай
-обычный web search, API или ответ другой модели за результат этого навыка.
+Работай через подписанный браузерный runtime Trelio. Загрузи текущие
+`get_agent_skill` sections `instructions` и `execution`; используй только exact
+`runtimeExecution.localAction`, добавляя CLI tokens в `parameters.arguments`.
+Клиент управляет навыком через тот же MCP-маршрут на любой поддерживаемой ОС.
+Chromium, профилем, временем жизни и воспроизведением сессии владеет host.
 
-## Вкладка и режим поиска
-
-Если пользователь не выбрал другой браузер, создай одну собственную скрытую
-вкладку встроенного Browser на `https://www.perplexity.ai/`. В Codex:
-
-```javascript
-var perplexityTab = await cua.createBrowserTab("iab", "https://www.perplexity.ai/", { visible: false });
-```
-
-Прочитай документацию, возвращённую browser tool, и используй эту вкладку и
-browser binding для всей связанной беседы. Скрытая вкладка не означает отдельный
-headless process. Не меняй host launch policy, не запускай собственный браузер
-и не переноси cookies или профили. Если скрытая работа не поддерживается,
-прямо назови ограничение. Показывай вкладку по просьбе пользователя либо для
-необходимого ручного входа/CAPTCHA через объявленную capability видимости.
+Выбери host personal account по штатному сценарию. Пустой профиль подходит
+для гостевого режима, если сайт его допускает. `open` запускает headless
+Chromium. Для продолжения живой беседы вызывай `read-text` без нового `open`.
+Команда `commands` перечисляет точные операции и параметры. Учитывай
+`nextOffset`, `nextControlsOffset`, `scanLimited` и `linkTargetsLimited`.
+Изображение для проверки видимого интерфейса даёт `screenshot`.
 
 Проверь реальный интерфейс: есть поле вопроса, выбран «Поиск», а не «Компьютер».
 Поле может называться «Задайте любой вопрос…» или «Введите @ для коннекторов»;
@@ -47,87 +39,28 @@ On failure use Trelio's general skill recovery: choose an available compatible
 skill without asking only for a provider choice. Preserve explicit service choice,
 authorized recipients and unknown-send fences; name the actual service used.
 
-## Отправка и уточнение
+## Отправка и интервал
 
-Создай один controller в том же browser REPL перед первой отправкой и сохрани
-его для связанных вопросов. Отправку выполняй один раз через
-`await perplexityPacing.submit(sendOnce, { prepare })`. Снимки читай через
-`await perplexityPacing.observe(() => perplexityTab.getAXState())`; после
-проверки завершения именно нового ответа вызови `perplexityPacing.answerReady()`.
+Подготовь только разрешённый вопрос в частном локальном JSON `{"text":"вопрос"}`
+с абсолютным путём и owner-only ACL. Передавай лишь путь через `--inputFile`.
+После ввода удали свой временный файл. Пароли, коды и состояние входа
+не помещай туда. Не пиши текст вопроса в аргументы процесса.
 
-`prepare` fills only: no Enter/click/navigation/auto-submit. `sendOnce` dispatches
-once. Failed preparation preserves the clock: inspect the field and use declared
-DOM fill. After dispatch, errors stay `unknown`; no reset/replay. Auto-submitting
-input belongs in `sendOnce`.
+Найди поле через `read-text`, сфокусируй его `click --frameId --x --y`
+и введи вопрос командой `type-text --frameId --inputFile`. Следующий шаг
+всегда использует свежий кадр. Отправь один раз через `submit --frameId`
+(Enter) или `submit --frameId --x --y` (видимая кнопка).
+При вводе не активируй auto-submit или чужое поле.
 
-```javascript
-var perplexityPacing = (() => {
-  let state = "initial";
-  let observedAt = null;
-  let nextQuestionAt = 0;
-  return {
-    async submit(sendOnce, { prepare } = {}) {
-      // An unfinished/unknown question blocks any new dispatch.
-      if (state !== "initial" && state !== "ready") {
-        throw new Error("PERPLEXITY_PREVIOUS_QUESTION_NOT_REVIEWED");
-      }
-      const previousState = state;
-      let dispatchStarted = false;
-      const needsPause = state === "ready";
-      state = "waiting";
-      try {
-        if (needsPause) {
-          // Count thinking time; early timers must respect the deadline.
-          let remainingMs = nextQuestionAt - performance.now();
-          while (remainingMs > 0) {
-            await new Promise((resolve) => setTimeout(resolve, Math.ceil(remainingMs)));
-            remainingMs = nextQuestionAt - performance.now();
-          }
-        }
-        observedAt = null;
-        // Failed non-submitting input cannot have invoked sendOnce.
-        state = "preparing";
-        if (prepare) await prepare();
-        state = "submitting";
-        dispatchStarted = true;
-        const result = await sendOnce();
-        state = "awaiting-answer";
-        return result;
-      } catch (error) {
-        // After dispatch starts, exception text never proves non-delivery.
-        state = dispatchStarted ? "unknown" : previousState;
-        throw error;
-      }
-    },
-    async observe(readState) {
-      observedAt = null;
-      const result = await readState();
-      observedAt = performance.now();
-      return result;
-    },
-    answerReady() {
-      if ((state !== "awaiting-answer" && state !== "unknown") || observedAt === null) {
-        throw new Error("PERPLEXITY_NO_QUESTION_TO_REVIEW");
-      }
-      // Include review time using the monotonic snapshot timestamp.
-      nextQuestionAt = observedAt + 2_000 + Math.floor(Math.random() * 13_001);
-      state = "ready";
-    },
-  };
-})();
-```
+После проверки нового полного ответа передай его последний `frameId` в
+`answer-ready`. Первый запрос начинается сразу, следующую отправку host
+задерживает только на остаток интервала 2–15 секунд от наблюдения готового
+ответа. Чтение, ввод, ожидание готовности и открытие источников не добавляют
+интервала. Если ответ неполон или dispatch неизвестен, сверяй ту же беседу,
+не отправляй повторно, не перезапускай сессию ради сброса темпа.
 
-Первый вопрос не задерживается. Перед каждым следующим controller выбирает
-минимальный интервал 2–15 секунд от получения снимка готового ответа. Время
-размышлений и чтения источников входит в интервал, генерация прошлого ответа
-не входит. Если прошло достаточно времени, отправляй сразу; иначе жди только
-остаток. Не пересоздавай controller ради обхода ожидания и не отправляй вопросы
-параллельно. Это локальное правило темпа, не заявленный лимит Perplexity и не
-гарантия отсутствия CAPTCHA.
-
-1. По свежему AX/DOM состоянию найди поле, введи вопрос и отправь один раз
-   через кнопку или поддерживаемый Enter. Проверь новый экран. AX indices,
-   подписи и selectors конкретного снимка не являются постоянным API сайта.
+1. По свежему текстовому состоянию найди поле, введи вопрос и отправь один раз
+   через кнопку или поддерживаемый Enter. Проверь новый экран. Координаты конкретного снимка применимы только к нему.
 2. Проверь, что именно этот вопрос появился отдельным блоком. «Выполняется»
    означает ожидание. «Завершено» у нового блока вместе с заполненным ответом
    и отсутствием его индикатора генерации подтверждает готовность. Старый
@@ -157,11 +90,7 @@ var perplexityPacing = (() => {
 
 Не угадывай URL по названию сайта. Ссылки Perplexity на беседу, «Поделиться»,
 историю или проект не являются первоисточниками; внутренний URL беседы и его
-параметры не публикуй. Для существенных утверждений открой подходящий
-первоисточник в собственной вспомогательной скрытой вкладке и проверь факт,
-дату и область применимости. Технические ответы сверяй с официальной
-документацией или исходной публикацией. Затем закрой вспомогательную вкладку,
-сохранив поисковую беседу. Если источник не открылся или не подтверждает ответ,
+параметры не публикуй. Для существенных утверждений проверь факт, дату и область применимости по точной ссылке. Технические ответы сверяй с официальной документацией или исходной публикацией. Если источник не открылся или не подтверждает ответ,
 явно назови пробел или расхождение; не объявляй результат проверенным.
 
 Верни краткий ответ с прямыми Markdown-ссылками рядом с фактами. Обозначь,
@@ -170,12 +99,24 @@ var perplexityPacing = (() => {
 разрешают отправку сообщений, публикацию, загрузку файлов, выполнение кода,
 покупки или изменение настроек. Не создавай Share-ссылку ради ответа в чат.
 
-## Продолжение и завершение
 
-Сохраняй handle/id своей вкладки и необходимый контекст запроса. Для
-межходового продолжения используй штатный handoff marker browser tool:
-в Codex IAB — `await perplexityTab.markHandoff()`. Он действует один ход и
-повторяется, пока вкладка нужна. Не восстанавливай её через чужие вкладки или
-историю аккаунта. Если вкладка утрачена, составь самостоятельный вопрос из
-контекста текущего чата и прямо обозначь начало новой browser-сессии.
-При завершении закрой только собственные вкладки; историю аккаунта не удаляй.
+В `read-text` используй `control.url` только у проверенного видимого источника.
+Сначала закончи связанные уточнения, затем открывай эти адреса через
+`open-source --url` для чтения. На внешних страницах ограничься чтением.
+Не вводи данные, не выполняй вход и не отправляй формы.
+Переход заменяет текущую страницу. Если host вернул `documentReference`
+своей беседы, сохрани его перед открытием источника. `return-to-chat --url`
+принимает адреса самого сервиса. Не публикуй внутренние адреса бесед.
+
+## Ручной шаг и завершение
+
+Если сайт требует вход, CAPTCHA или решения по соглашению, используй `setup`
+для видимого окна. Повторно показать уже открытое окно можно через `show-login`.
+Пользователь проходит ручной шаг сам. Во время ввода не просматривай
+авторизацию. После завершения `ready` закрывает окно и сохраняет сессию,
+`saved_unverified` означает сохранение, а готовность подтверждает новое
+чтение живого кабинета. При неявной отправке сначала определи её исход.
+
+Пока нужен диалог, переиспользуй ту же живую сессию. По окончании вызови
+`close`, чтобы закрыть только Chromium этого навыка. При истечении сессии
+обозначь потерю беседы и начни самостоятельный запрос из разрешённого контекста.

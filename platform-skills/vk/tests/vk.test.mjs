@@ -116,7 +116,8 @@ test('signed host dispatch fixes VK scope, text mode, attachments and search pac
   const temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-vk-api-')));
   t.after(() => fs.rm(temporary, { recursive: true, force: true }));
   const host = path.join(temporary, 'host.mjs');
-  await fs.writeFile(host, `export const VISUAL_FILE_UPLOAD_API = 'trelio.visual-file-upload/v1';
+  await fs.writeFile(host, `export const VISUAL_PRESENTATION_API = 'trelio.visual-presentation/v1';
+    export const VISUAL_FILE_UPLOAD_API = 'trelio.visual-file-upload/v1';
   export const VISUAL_ATTACHMENT_FILE_API = 'trelio.visual-attachment-file/v1';
   export function runVisualSession({env,...input}) {
     return input.operation === 'status' ? { state: 'saved_unverified' } : input;
@@ -126,6 +127,7 @@ test('signed host dispatch fixes VK scope, text mode, attachments and search pac
     TRELIO_VISUAL_ORIGINS: 'https://other.test' };
   const setup = await runVk(['setup'], env);
   assert.equal(setup.observationMode, 'text');
+  assert.equal(setup.presentation, 'hidden'); // The host presents setup separately.
   assert.equal(setup.attachmentDownloads, true);
   assert.deepEqual(setup.attachmentFilePolicy, { origins: [
     'https://psv4.userapi.com',
@@ -188,6 +190,7 @@ test('first navigation enters manual login; restored session and pending failure
   t.after(() => fs.rm(temporary, { recursive: true, force: true }));
   const host = path.join(temporary, 'host.mjs');
   await fs.writeFile(host, `export const calls = [];
+    export const VISUAL_PRESENTATION_API = 'trelio.visual-presentation/v1';
     export function runVisualSession({env,...input}) {
       calls.push(input);
       if (input.operation === 'status') return JSON.parse(env.TEST_STATUS);
@@ -244,7 +247,8 @@ test('real CLI never exposes raw host exception, input, URL or private path', as
   const temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-vk-error-')));
   t.after(() => fs.rm(temporary, { recursive: true, force: true }));
   const host = path.join(temporary, 'host.mjs');
-  await fs.writeFile(host, 'export function runVisualSession() { throw new Error("synthetic-private-host-detail"); }');
+  await fs.writeFile(host, `export const VISUAL_PRESENTATION_API = 'trelio.visual-presentation/v1';
+    export function runVisualSession() { throw new Error("synthetic-private-host-detail"); }`);
   const result = spawnSync(process.execPath, [path.join(source, 'scripts', 'trelio-vk.mjs'), 'screenshot'], {
     encoding: 'utf8', timeout: 15_000,
     env: { SystemRoot: process.env.SystemRoot, TRELIO_SKILL_ID: 'vk',

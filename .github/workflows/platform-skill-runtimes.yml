@@ -35,7 +35,6 @@ jobs:
       has_provider_matrix: ${{ steps.selection.outputs.has_provider_matrix }}
       run_package_tool: ${{ steps.selection.outputs.run_package_tool }}
       run_source_tests: ${{ steps.selection.outputs.run_source_tests }}
-      run_consultant_plus: ${{ steps.selection.outputs.run_consultant_plus }}
       run_telegram_contract: ${{ steps.selection.outputs.run_telegram_contract }}
       run_dodostats: ${{ steps.selection.outputs.run_dodostats }}
     steps:
@@ -92,11 +91,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Run ConsultantPlus provider regressions
-        if: needs.hosted-plan.outputs.run_consultant_plus == 'true'
-        run: >-
-          node --test
-          platform-skills/consultant-plus/tests/trelio-consultant-plus.test.mjs
       - name: Run Telegram release contract regression
         if: needs.hosted-plan.outputs.run_telegram_contract == 'true'
         run: >-
@@ -112,18 +106,6 @@ jobs:
         # Instruction-only: execute its delivered REPL snippet with fake timers,
         # without an executable package, Google account or browser installation.
         run: node --test platform-skills/google-ai-search/tests/pacing.test.mjs
-      - name: Run Perplexity Search instruction controller regressions
-        # The browser tool owns execution; this instruction has no runtime
-        # manifest/package and must not enter the signed-package OS matrix.
-        run: node --test platform-skills/perplexity-search/tests/pacing.test.mjs
-      - name: Run DeepSeek Search instruction controller regressions
-        run: node --test platform-skills/deepseek-search/tests/pacing.test.mjs
-      - name: Run Yandex Search instruction controller regressions
-        run: node --test platform-skills/yandex-search/tests/pacing.test.mjs
-      - name: Run GigaChat instruction controller regressions
-        # Runs the delivered browser REPL controller without an executable
-        # package, user account, provider requests or browser installation.
-        run: node --test platform-skills/gigachat/tests/pacing.test.mjs
       - name: Run DodoStats / DrinkitStats Remote MCP contract regression
         if: needs.hosted-plan.outputs.run_dodostats == 'true'
         run: >-

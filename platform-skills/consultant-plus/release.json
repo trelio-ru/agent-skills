@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "consultant-plus",
+    "version": "1.1.0",
+    "summary": "Поиск и чтение документов в Chromium Trelio с отдельным видимым входом",
+    "routingSummary": "Research Russian law in the user's ConsultantPlus account, verify editions and preserve originals."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Войдите в свой аккаунт КонсультантПлюс в отдельном видимом Chromium Trelio. После входа рабочий поиск и чтение идут без окна."
+    ],
+    "configFields": [],
+    "secretFields": []
+  },
+  "runtime": {
+    "version": "1.1.0",
+    "minimumHostVersion": "3.34.21",
+    "entrypoint": {
+      "path": "trelio-consultant-plus.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network",
+      "local-accounts-v1"
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "protected-snapshot",
+      "manualAssist": true
+    },
+    "files": [
+      {
+        "source": "scripts/trelio-consultant-plus.mjs",
+        "path": "trelio-consultant-plus.mjs",
+        "mode": 493
+      }
+    ]
+  }
+}

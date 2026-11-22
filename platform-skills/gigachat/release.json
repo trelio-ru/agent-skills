@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "gigachat",
+    "version": "1.1.0",
+    "summary": "Гостевой диалог и уточнения в Chromium Trelio с отдельным видимым входом",
+    "routingSummary": "Ask and follow up with GigaChat using the managed browser, then verify public sources."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Обычная работа идёт в Chromium Trelio без окна. Навык может работать без входа, если сайт допускает гостевой режим. Для входа или проверки откроется отдельное видимое окно."
+    ],
+    "configFields": [],
+    "secretFields": []
+  },
+  "runtime": {
+    "version": "1.1.0",
+    "minimumHostVersion": "3.34.21",
+    "entrypoint": {
+      "path": "trelio-gigachat.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network",
+      "local-accounts-v1"
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "protected-snapshot",
+      "manualAssist": true
+    },
+    "files": [
+      {
+        "source": "scripts/trelio-gigachat.mjs",
+        "path": "trelio-gigachat.mjs",
+        "mode": 493
+      }
+    ]
+  }
+}

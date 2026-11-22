@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "deepseek-search",
+    "version": "0.2.0",
+    "summary": "Поиск и диалог в Chromium Trelio с отдельным видимым входом",
+    "routingSummary": "Find and verify public information with DeepSeek Search, with follow-up questions in the same conversation."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Войдите в DeepSeek в отдельном видимом Chromium, если сайт требует вход. Обычная работа идёт в Chromium Trelio без окна."
+    ],
+    "configFields": [],
+    "secretFields": []
+  },
+  "runtime": {
+    "version": "0.2.0",
+    "minimumHostVersion": "3.34.21",
+    "entrypoint": {
+      "path": "trelio-deepseek-search.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network",
+      "local-accounts-v1"
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "protected-snapshot",
+      "manualAssist": true
+    },
+    "files": [
+      {
+        "source": "scripts/trelio-deepseek-search.mjs",
+        "path": "trelio-deepseek-search.mjs",
+        "mode": 493
+      }
+    ]
+  }
+}

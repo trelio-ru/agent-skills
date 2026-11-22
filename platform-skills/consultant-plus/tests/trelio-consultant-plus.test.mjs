@@ -1,150 +1,109 @@
-import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import test from "node:test";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { buildRuntimePackage } from '../../tools/build-runtime-package.mjs';
+import { run } from '../scripts/trelio-consultant-plus.mjs';
 
-const execFileAsync = promisify(execFile);
-const testDirectory = path.dirname(fileURLToPath(import.meta.url));
-const runtimePath = path.resolve(testDirectory, "../scripts/trelio-consultant-plus.mjs");
-const companyId = "11111111-1111-4111-8111-111111111111";
-const memberId = "22222222-2222-4222-8222-222222222222";
+const root = fileURLToPath(new URL('../', import.meta.url));
+const skillId = 'consultant-plus';
+const manifest = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
 
-const readInstructionBundle = async () => {
-  const skillDirectory = path.resolve(testDirectory, "..");
-  return readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
-};
-
-const runRuntime = async (configHome, args, extraEnvironment = {}) => {
-  const result = await execFileAsync(process.execPath, [runtimePath, ...args], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      TRELIO_CONFIG_HOME: configHome,
-      TRELIO_SKILL_ID: "consultant-plus",
-      TRELIO_SKILL_COMPANY_ID: companyId,
-      TRELIO_SKILL_MEMBER_ID: memberId,
-      ...extraEnvironment,
-    },
-  });
-  return JSON.parse(result.stdout);
-};
-
-test("runtime persists browser access state without credentials", async () => {
-  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "trelio-consultant-plus-"));
-  const configHome = path.join(temporaryDirectory, "config");
-
-  try {
-    assert.deepEqual(await runRuntime(configHome, ["status"]), {
-      ok: true,
-      accessState: "unknown",
-      browserPreference: null,
-      configured: false,
-      canUseConsultantPlus: false,
-      lastVerifiedAt: null,
-      updatedAt: null,
-      storesCredentials: false,
-    });
-
-    const connected = await runRuntime(configHome, [
-      "set-connected",
-      "--browser",
-      "codex-chrome",
-    ]);
-    assert.equal(connected.accessState, "connected");
-    assert.equal(connected.browserPreference, "codex-chrome");
-    assert.equal(connected.canUseConsultantPlus, true);
-    assert.match(connected.lastVerifiedAt, /^\d{4}-\d{2}-\d{2}T/u);
-
-    const stateFile = path.join(
-      configHome,
-      "integrations",
-      "consultant-plus",
-      companyId,
-      memberId,
-      "browser",
-      "state",
-      "access.json",
-    );
-    const stored = JSON.parse(await readFile(stateFile, "utf8"));
-    assert.equal(stored.accessState, "connected");
-    assert.equal(stored.browserPreference, "codex-chrome");
-    assert.equal(Object.hasOwn(stored, "cookie"), false);
-    assert.equal(Object.hasOwn(stored, "password"), false);
-
-    if (process.platform !== "win32") {
-      assert.equal((await stat(path.dirname(stateFile))).mode & 0o777, 0o700);
-      assert.equal((await stat(stateFile)).mode & 0o777, 0o600);
+async function fixture(t) {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-search-test-')));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const host = path.join(dir, 'visual.mjs');
+  await fs.writeFile(host, `
+    export const VISUAL_PRESENTATION_API = 'trelio.visual-presentation/v1';
+    export const VISUAL_ATTACHMENT_FILE_API = 'trelio.visual-attachment-file/v1';
+    export const VISUAL_SEMANTIC_CONTROLS_API = 'trelio.visual-semantic-controls/v1';
+    export function runVisualSession({env,...input}) { return input; }
+  `);
+  await fs.writeFile(path.join(dir, 'trelio-workspace.mjs'), `
+    import fs from 'node:fs/promises';
+    export async function readPrivateJsonFile(file, opts) {
+      if (opts.maximumBytes !== 24576 || opts.fatalUtf8 !== true) throw Error('fixture guard failed');
+      return JSON.parse(await fs.readFile(file,'utf8'));
     }
+  `);
+  const question = path.join(dir, 'question.json');
+  await fs.writeFile(question, JSON.stringify({text:'RFC 9110 и пробел'}), {mode:0o600});
+  const hostUrl = pathToFileURL(host).href;
+  const env = { TRELIO_SKILL_ID: skillId, TRELIO_VISUAL_SESSION_MODULE_URL: hostUrl };
+  return { dir, env, question };
+}
 
-    const reconnect = await runRuntime(configHome, ["set-needs-reconnect"]);
-    assert.equal(reconnect.accessState, "needs_reconnect");
-    assert.equal(reconnect.browserPreference, "codex-chrome");
-    assert.equal(reconnect.lastVerifiedAt, null);
-
-    const noAccess = await runRuntime(configHome, ["set-no-access"]);
-    assert.equal(noAccess.accessState, "no_access");
-    assert.equal(noAccess.browserPreference, null);
-
-    const reset = await runRuntime(configHome, ["reset", "--confirm"]);
-    assert.equal(reset.accessState, "unknown");
-    assert.equal(reset.configured, false);
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true });
-  }
+test('signed provider preserves shared headless, paced search, manual handoff and original exports', async t => {
+  const {env,question} = await fixture(t);
+  const opened = await run(['open'], env);
+  assert.equal(opened.operation, 'navigate');
+  assert.equal(opened.args.url, 'https://cloud.consultant.ru/');
+  assert.equal(opened.presentation, 'hidden');
+  assert.equal(opened.observationMode, 'text');
+  assert.equal(opened.semanticControls, true);
+  assert.deepEqual(opened.domains, ['consultant.ru']);
+  assert.deepEqual(opened.attachmentFilePolicy, { origins: ['https://cloud.consultant.ru'] });
+  assert.equal(opened.attachmentDownloads, true);
+  assert.deepEqual((await run(['setup'], env)).args, opened.args);
+  assert.equal((await run(['show-login'], env)).operation, 'show-login');
+  assert.equal((await run(['ready'], env)).operation, 'ready');
+  assert.equal((await run(['close'], env)).operation, 'close');
+  assert.deepEqual((await run(['type-text','--frameId','fresh','--inputFile',question],env)).args,
+    {frameId:'fresh',text:'RFC 9110 и пробел'});
+  assert.deepEqual((await run(['submit','--frameId','fresh'],env)).args,
+    {action:'key',key:'Enter',frameId:'fresh'});
+  assert.deepEqual((await run(['submit','--frameId','fresh','--x','74','--y','45'],env)).args,
+    {action:'click',frameId:'fresh',x:74,y:45});
+  assert.equal((await run(['answer-ready','--frameId','fresh'],env)).operation,'request-ready');
+  const download = await run(['download-original','--frameId','fresh','--x','74','--y','45'],env);
+  assert.deepEqual(download.args, {frameId:'fresh',x:74,y:45});
+  assert.equal(download.operation, 'download-attachment');
+  assert.deepEqual(download.attachmentFilePolicy, opened.attachmentFilePolicy);
+  await assert.rejects(run(['navigate','--url','https://cloud.consultant.ru.example.test/'],env),
+    /MANAGED_SEARCH_INVALID_INPUT/);
+  await assert.rejects(run(['download-original','--url','https://cloud.consultant.ru/example'],env),
+    /MANAGED_SEARCH_INVALID_INPUT/);
 });
 
-test("runtime rejects invalid identity, browser and symlinked private paths", async () => {
-  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "trelio-consultant-plus-safe-"));
-  const configHome = path.join(temporaryDirectory, "config");
-
-  try {
-    await assert.rejects(
-      runRuntime(configHome, ["status"], { TRELIO_SKILL_MEMBER_ID: "not-a-uuid" }),
-      /TRELIO_SKILL_MEMBER_ID/u,
-    );
-    await assert.rejects(
-      runRuntime(configHome, ["set-connected", "--browser", "safari"]),
-      /поддерживаемый --browser/u,
-    );
-
-    await mkdir(configHome, { recursive: true, mode: 0o700 });
-    if (process.platform !== "win32") await chmod(configHome, 0o700);
-    const externalDirectory = path.join(temporaryDirectory, "external");
-    await mkdir(externalDirectory);
-    await symlink(externalDirectory, path.join(configHome, "integrations"), "dir");
-
-    await assert.rejects(
-      runRuntime(configHome, ["set-no-access"]),
-      /Небезопасный путь локального состояния/u,
-    );
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true });
+test('rejects client overrides and unpaced Enter, while the exact package can discover accounts', async () => {
+  for (const args of [['key','--frameId','fresh','--key','Enter'], ['open','--presentation','windowed'],
+    ['submit','--frameId','fresh','--x','25'],
+    ['type-text','--frameId','fresh','--text','closed'],['setup','--url','https://other-provider.test/']]) {
+    await assert.rejects(run(args, {}), /MANAGED_SEARCH_INVALID_INPUT/);
   }
+  await assert.rejects(run(['open'],{}), /MANAGED_SEARCH_HOST_REQUIRED/);
+  assert.equal((await run(['doctor'],{})).minimumHostVersion,manifest.runtime.minimumHostVersion);
+  assert.equal((await run(['doctor'],{})).hostVisualAvailable,false);
+  assert.deepEqual(await run(['__trelio_accounts_import'],new Proxy({},{
+    get(){throw Error('account import must not consult the environment');}
+  })),{schemaVersion:1,accounts:[]});
+  const built = buildRuntimePackage(root);
+  const { files } = JSON.parse(built.packageBytes);
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-search-package-')));
+  try {
+    for (const file of files) await fs.writeFile(path.join(dir,file.path),Buffer.from(file.contentBase64,'base64'));
+    const result = spawnSync(process.execPath,
+      [path.join(dir,manifest.runtime.entrypoint.path),'__trelio_accounts_import'],{encoding:'utf8',timeout:15000});
+    assert.equal(result.stderr,'');
+    assert.equal(result.status,0);
+    assert.deepEqual(JSON.parse(result.stdout),{schemaVersion:1,accounts:[]});
+  } finally { await fs.rm(dir, {recursive:true,force:true}); }
 });
 
 test("skill keeps onboarding, browser handoff, workspace evidence, export and fallback decisions explicit", async () => {
-  const instructions = await readInstructionBundle();
+  const instructions = await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8');
 
   // Keep every pre-refactor security/evidence decision explicit while allowing
   // concise phrasing. These assertions cover the main delivered text itself;
   // the Markdown skill must not depend on inaccessible package references.
   const decisions = [
-    /ask once\s+whether the user wants this skill and has access/u,
-    /`no_access`: do not repeat the access question/u,
-    /`unavailable_on_surface`[\s\S]*without changing saved state/u,
-    /Codex desktop: `codex-browser`[\s\S]*in-app Browser/u,
-    /Claude in Chrome/u,
-    /Show the browser only for required human/u,
-    /hide\s+or collapse[\s\S]*keeping exact tab\/profile\/session alive/u,
-    /Continue\s+search, navigation, bounded DOM reading, export and download verification[\s\S]*background/u,
-    /do not bring the window back unless the user must act/u,
-    /warning that work \*\*will\*\* end[\s\S]*Продолжить работу[\s\S]*not logout/u,
-    /AX\/DOM click[\s\S]*fresh screenshot[\s\S]*visual click[\s\S]*recheck/u,
-    /Never[\s\S]*request\s+sign-in or report an access blocker from that warning alone/u,
+    /The user completes protected input/u,
+    /Keep routine work headless/u,
+    /will\*\*[\s\S]*Продолжить работу[\s\S]*not logout/u,
+    /`download-original --frameId --x --y`/u,
     /Download\s+autonomously/u,
     /Before Agent Workspace handoff\/submit, save every exact source materially/u,
     /supporting conclusions, recommendations, controlling dates, quotes or edition/u,
@@ -155,7 +114,7 @@ test("skill keeps onboarding, browser handoff, workspace evidence, export and fa
     /PDF for forms/u,
     /Unicode text/u,
     /no bulk result-list,[\s\S]*all-edition or corpus exports/u,
-    /Never request, receive, store or inspect\s+login\/password, OTP, cookies, profile files or session tokens/u,
+    /Never request, receive, store or inspect\s+login\/password, OTP, cookies, profile\s+files or session tokens/u,
     /independent public legal source/u,
     /wait for explicit selection/u,
     /not automatic switching/u,

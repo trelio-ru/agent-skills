@@ -15,15 +15,10 @@ const PROVIDERS = Object.freeze({
   "vk-ads": { owner: "general", matrix: { language: "node", testFile: "platform-skills/vk-ads/tests/runtime.test.mjs" } },
   "1c-edo": { owner: "general", matrix: { language: "python" } },
   "document-facsimile": { owner: "general", matrix: { language: "python" } },
-  "consultant-plus": { owner: "general", matrix: null },
   "dodostats-drinkitstats": { owner: "general", matrix: null },
   // Browser-tool instructions ship no executable package. Keep their source
   // guards without inventing Node preparation or browser installation jobs.
   "google-ai-search": { owner: "general", matrix: null },
-  "gigachat": { owner: "general", matrix: null },
-  "perplexity-search": { owner: "general", matrix: null },
-  "deepseek-search": { owner: "general", matrix: null },
-  "yandex-search": { owner: "general", matrix: null },
   // Concierge composes already signed messenger skills and ships no executable.
   // Its source still needs the shared instruction gate; a fake Node runtime or
   // provider preparation job would misrepresent the dependency and its readiness.
@@ -80,9 +75,6 @@ const HOSTED_OPERATING_SYSTEMS = Object.freeze([
 
 // Preserve the former full self-hosted gate for shared infrastructure changes.
 const FULL_SELF_HOSTED_SKILLS = Object.freeze([
-  "gigachat",
-  "perplexity-search",
-  "deepseek-search",
   "vk-ads",
   "document-facsimile",
   "email-imap-smtp",
@@ -94,7 +86,6 @@ const FULL_SELF_HOSTED_SKILLS = Object.freeze([
   "whatsapp-web",
   "telegram-mtproto",
   "telegram-web",
-  "consultant-plus",
   "dodostats-drinkitstats",
 ]);
 
@@ -197,7 +188,6 @@ export const selectProviderRegressions = (rawFiles, {
     hasHostedMatrix: hostedMatrix.include.length > 0,
     runPackageTool: hasWork,
     runSourceTests: hasWork,
-    runConsultantPlus: full || selectedSkills.includes("consultant-plus"),
     runTelegramContract: full || selectedSkills.includes("telegram-mtproto"),
     runDodoStats: full || selectedSkills.includes("dodostats-drinkitstats"),
   };
@@ -257,7 +247,6 @@ const appendGithubOutputs = (outputPath, selection) => {
     has_provider_matrix: String(selection.hasHostedMatrix),
     run_package_tool: String(selection.runPackageTool),
     run_source_tests: String(selection.runSourceTests),
-    run_consultant_plus: String(selection.runConsultantPlus),
     run_telegram_contract: String(selection.runTelegramContract),
     run_dodostats: String(selection.runDodoStats),
     self_hosted_skills: selection.selfHostedSkills.join(","),

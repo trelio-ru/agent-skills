@@ -2,21 +2,21 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk",
-    "version": "0.2.2",
-    "summary": "Скачивание расшифровок звонков с дополнительного файлового сервера ВКонтакте",
+    "version": "0.3.0",
+    "summary": "Работа с ВКонтакте в Chromium Trelio без окна и видимый ручной вход через VK ID",
     "routingSummary": "Read VK pages and chats; exchange messages and download or upload original attachments."
   },
   "connection": {
     "schemaVersion": 1,
     "intro": [
       "Перед работой обязательно войдите во ВКонтакте в отдельном Chromium. Используйте свой аккаунт. Вход через VK ID выполняется вручную; пароль, код и QR не передаются модели.",
-      "После «готово» или закрытия окна авторизация сохраняется локально в защищённом снимке. Готовность проверяется по странице ВКонтакте. Отправка сообщений и публикация требуют отдельного поручения пользователя."
+      "После «готово» или закрытия окна авторизация сохраняется локально в защищённом снимке. Обычная работа идёт без окна. Готовность проверяется по странице ВКонтакте. Отправка сообщений и публикация требуют отдельного поручения пользователя."
     ],
     "configFields": [],
     "secretFields": []
   },
   "runtime": {
-    "version": "0.2.2",
+    "version": "0.3.0",
     "minimumHostVersion": "3.34.21",
     "entrypoint": { "path": "trelio-vk.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],

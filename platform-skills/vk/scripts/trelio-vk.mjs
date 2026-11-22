@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const MINIMUM_HOST_VERSION = '3.34.21';
+const PRESENTATION_API = 'trelio.visual-presentation/v1';
 const ATTACHMENT_FILE_API = 'trelio.visual-attachment-file/v1';
 // VK serves document originals from psv4.userapi.com and also redirects call
 // transcripts to psv4.vkuserphoto.ru. Grant only those exact HTTPS origins to
@@ -127,7 +128,10 @@ export async function runVk(argv, env = process.env) {
   try { moduleUrl = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank'); }
   catch { throw new Error('VK_HOST_REQUIRED'); }
   if (moduleUrl.protocol !== 'file:' || env.TRELIO_SKILL_ID !== 'vk') throw new Error('VK_HOST_REQUIRED');
-  const { runVisualSession, VISUAL_FILE_UPLOAD_API, VISUAL_ATTACHMENT_FILE_API } = await import(moduleUrl.href);
+  const { runVisualSession, VISUAL_FILE_UPLOAD_API, VISUAL_ATTACHMENT_FILE_API, VISUAL_PRESENTATION_API } = await import(moduleUrl.href);
+  // Keep the choice in signed source. The host opens a visible window only
+  // for manual setup, with the same account and current lease.
+  if (VISUAL_PRESENTATION_API !== PRESENTATION_API) throw new Error('VK_HOST_UPGRADE_REQUIRED');
   const hasAttachmentFileApi = VISUAL_ATTACHMENT_FILE_API === ATTACHMENT_FILE_API;
   if (operation === 'download-attachment' && !hasAttachmentFileApi) throw new Error('VK_HOST_UPGRADE_REQUIRED');
   // Never advertise successful selection through an older visual interface
@@ -151,7 +155,7 @@ export async function runVk(argv, env = process.env) {
   // protected snapshot, lease and one-use input frames; no alternate transport
   // or caller-selected browser implementation is available here.
   const policy = {
-    observationMode: 'text', attachmentDownloads: true, fileUploads: true,
+    observationMode: 'text', presentation: 'hidden', attachmentDownloads: true, fileUploads: true,
     origins: [...ORIGINS], domains: [...DOMAINS], env,
     ...(hasAttachmentFileApi ? { attachmentFilePolicy: { origins: [...ATTACHMENT_FILE_ORIGINS] } } : {}),
   };

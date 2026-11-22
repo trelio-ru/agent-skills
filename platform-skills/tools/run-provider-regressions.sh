@@ -15,9 +15,6 @@ PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 TELEGRAM_MTPROTO_TEST_APP_CREDENTIAL_JSON='{"api_id":"12345","api_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 
 FULL_SKILL_SET=(
-  gigachat
-  perplexity-search
-  deepseek-search
   vk-ads
   document-facsimile
   email-imap-smtp
@@ -29,7 +26,6 @@ FULL_SKILL_SET=(
   whatsapp-web
   telegram-mtproto
   telegram-web
-  consultant-plus
   dodostats-drinkitstats
 )
 
@@ -46,7 +42,7 @@ print_usage() {
 
 is_supported_skill() {
   case "$1" in
-    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|consultant-plus|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|google-ai-search|gigachat|perplexity-search|deepseek-search|yandex-search|russian-post-registered-mail)
+    vk-ads|document-facsimile|email-imap-smtp|1c-edo|iphone-mirroring|gosuslugi|max-web|whatsapp-web|telegram-mtproto|telegram-web|dodostats-drinkitstats|gas-pravosudie|ozon-buyer-search|google-ai-search|russian-post-registered-mail)
       return 0
       ;;
     *)
@@ -131,18 +127,6 @@ node --test \
 if has_skill google-ai-search; then
   node --test platform-skills/google-ai-search/tests/pacing.test.mjs
 fi
-if has_skill gigachat; then
-  node --test platform-skills/gigachat/tests/pacing.test.mjs
-fi
-if has_skill perplexity-search; then
-  node --test platform-skills/perplexity-search/tests/pacing.test.mjs
-fi
-if has_skill deepseek-search; then
-  node --test platform-skills/deepseek-search/tests/pacing.test.mjs
-fi
-if has_skill yandex-search; then
-  node --test platform-skills/yandex-search/tests/pacing.test.mjs
-fi
 
 # Every selected executable package remains deterministic before its behavior
 # is tested. Instruction-only and Remote MCP providers have no package here.
@@ -201,7 +185,6 @@ done
 
 NODE_TESTS=()
 has_skill vk-ads && NODE_TESTS+=(platform-skills/vk-ads/tests/runtime.test.mjs)
-has_skill consultant-plus && NODE_TESTS+=(platform-skills/consultant-plus/tests/trelio-consultant-plus.test.mjs)
 has_skill gas-pravosudie && NODE_TESTS+=(platform-skills/gas-pravosudie/tests/runtime.test.mjs)
 has_skill iphone-mirroring && NODE_TESTS+=(platform-skills/iphone-mirroring/tests/trelio-iphone-mirroring.test.mjs)
 if has_skill gosuslugi; then

@@ -1,15 +1,25 @@
 ---
 name: yandex-search
-description: Поиск Яндекса и диалог с Алисой AI через браузер. Агент сам выбирает поиск или обсуждение, уточняет запрос и отвечает на встречные вопросы в том же чате. Соблюдай явно выбранный пользователем сервис.
+description: Поиск Яндекса и диалог с Алисой AI через Chromium Trelio. Агент сам выбирает поиск или обсуждение, уточняет запрос и отвечает на встречные вопросы в том же чате. Соблюдай явно выбранный пользователем сервис.
 metadata:
   catalog_title: "Яндекс: поиск и Алиса AI"
-  catalog_description: "Поиск Яндекса и диалог с Алисой AI через браузер. Агент сам выбирает поиск или обсуждение, уточняет запрос и отвечает на встречные вопросы в том же чате. Соблюдай явно выбранный пользователем сервис."
+  catalog_description: "Поиск Яндекса и диалог с Алисой AI через Chromium Trelio. Агент сам выбирает поиск или обсуждение, уточняет запрос и отвечает на встречные вопросы в том же чате. Соблюдай явно выбранный пользователем сервис."
 ---
 
 # Яндекс: поиск и Алиса AI
 
-Instruction-only навык на browser tool, без отдельного Playwright/HTTP/API/runtime.
-Недоступность browser control сообщай; результат другого сервиса не называй Яндексом.
+Работай через подписанный браузерный runtime Trelio. Загрузи текущие
+`get_agent_skill` sections `instructions` и `execution`; используй только exact
+`runtimeExecution.localAction`, добавляя CLI tokens в `parameters.arguments`.
+Клиент управляет навыком через тот же MCP-маршрут на любой поддерживаемой ОС.
+Chromium, профилем, временем жизни и воспроизведением сессии владеет host.
+
+Выбери host personal account по штатному сценарию. Пустой профиль подходит
+для гостевого режима, если сайт его допускает. `open` запускает headless
+Chromium. Для продолжения живой беседы вызывай `read-text` без нового `open`.
+Команда `commands` перечисляет точные операции и параметры. Учитывай
+`nextOffset`, `nextControlsOffset`, `scanLimited` и `linkTargetsLimited`.
+Изображение для проверки видимого интерфейса даёт `screenshot`.
 
 ## Выбор сценария и контекст
 
@@ -22,127 +32,53 @@ Instruction-only навык на browser tool, без отдельного Playw
 как получателя; выбор режима его не заменяет.
 Не открывай почту, заказы, чужие чаты и личные сервисы ради публичного поиска.
 
-## Скрытый браузер
+Через `open --target chat` открой Алису. Для обычной выдачи используй
+`open --target search`, затем `search --inputFile` с тем же частным JSON.
+`search` отправляет один GET-запрос через общий controller. Алису и выдачу
+обрабатывай по очереди. Для продолжения Алисы сохранённый `documentReference`
+разрешено открыть через `return-to-chat --url` после проверки, что он относится
+к собственной беседе.
 
-По умолчанию используй собственные скрытые вкладки встроенного Browser:
-`cua.createBrowserTab("iab", url, { visible: false })` в Codex.
-Прочитай документацию tool. Соблюдай выбранный браузер, честно укажи доступность
-скрытой работы. Не меняй host launch policy и не запускай свой Chromium;
-скрытая вкладка не обещает headless process. Работай без активации окна.
+Если Яндекс показывает CAPTCHA, одна попытка через штатные видимые элементы
+разрешена после exact `request_user_approval` с
+`{"skillId":"yandex-search","action":"captcha.solve"}`, если инструмент доступен.
+Требуй в `structuredContent` те же `skillId` и `action`, `schemaVersion=1`,
+`type=user_approval`, `source=trelio_server`, `decision=approved`
+и `approved=true`. При отсутствии разрешения или повторном challenge передай
+шаг человеку через `setup --target search --inputFile` с исходным запросом.
+После `ready` верни ту же выдачу через `resume-search --inputFile` и проверь,
+что CAPTCHA ушла и виден результат. Обычный новый запрос идёт через `search`.
+Не используй solver, повторный submit или другой транспорт ради обхода защиты.
 
-Поиск открывай прямо на
-`"https://yandex.ru/search/?text=" + encodeURIComponent(query)`;
-главная Яндекса может вести в Dzen, который не нужен. Алису открывай на
-`https://alice.yandex.ru/` в отдельной собственной вкладке. Если открыт чужой
-диалог, создай свой новый чат через UI, не читая историю. При переключении
-сценария сохраняй поисковую вкладку и чат; не отправляй запросы параллельно.
+## Отправка и интервал
 
-CAPTCHA, login, access denied и site-safety interstitial не обходятся.
-Не считывай auth-поля, cookies, storage, tokens и файлы профиля, не переноси их
-между браузерами. Показывай вкладку только по просьбе пользователя либо для
-обязательного ручного шага, используя объявленную capability видимости.
-Недоступность выбранного режима сообщай явно, без смены browser/HTTP transport
-ради обхода policy; поиск не выдавай за ответ Алисы.
+Подготовь только разрешённый вопрос в частном локальном JSON `{"text":"вопрос"}`
+с абсолютным путём и owner-only ACL. Передавай лишь путь через `--inputFile`.
+После ввода удали свой временный файл. Пароли, коды и состояние входа
+не помещай туда. Не пиши текст вопроса в аргументы процесса.
 
-## CAPTCHA
+Найди поле через `read-text`, сфокусируй его `click --frameId --x --y`
+и введи вопрос командой `type-text --frameId --inputFile`. Следующий шаг
+всегда использует свежий кадр. Отправь один раз через `submit --frameId`
+(Enter) или `submit --frameId --x --y` (видимая кнопка).
+При вводе не активируй auto-submit или чужое поле.
 
-Вызови Trelio MCP `request_user_approval` с
-`{"skillId": "yandex-search", "action": "captcha.solve"}`, без других полей и
-вопроса пользователю: V1 отвечает автоматически.
-
-Разрешён только exact `structuredContent`: `schemaVersion: 1`,
-`type: "user_approval"`, `decision: "approved"`, `approved: true`,
-`source: "trelio_server"` и те же `skillId`/`action`. Иначе сообщи о блокировке,
-CAPTCHA не решай.
-
-Затем один раз отправь решение CAPTCHA через controls той же вкладки, без solver,
-перебора и повторного `yandexPacing.submit`. Об отклонении сообщи, без цикла.
-
-On failure use Trelio's general skill recovery: choose an available compatible
-skill without asking only for a provider choice. Preserve explicit service choice,
-authorized recipients and unknown-send fences; name the actual service used.
-
-## Интервал между отправками
-
-До первого запроса создай один controller в browser REPL. Поисковую навигацию
-и каждый вопрос Алисе выполняй через `await yandexPacing.submit(sendOnce, { prepare })`:
-ровно одна отправка через UI без автоповтора. Controller общий; смена
-вкладки/режима/темы не обнуляет интервал.
-
-Состояние читай через
-`await yandexPacing.observe(() => targetTab.getAXState())`.
-После проверки, что снимок содержит новую готовую выдачу или полный новый ответ
-на принятый вопрос, вызови `yandexPacing.responseReady()`.
-Старый ответ и одно доступное поле ввода готовность не доказывают.
-
-`prepare` fills only: no Enter/click/navigation/auto-submit. `sendOnce` dispatches
-once. Failed preparation preserves the clock: inspect the field and use declared
-DOM fill. After dispatch, errors stay `unknown`; no reset/replay. Auto-submitting
-input belongs in `sendOnce`.
-
-```javascript
-var yandexPacing = (() => {
-  let state = "initial", observedAt = null, nextRequestAt = 0;
-  return {
-    async submit(sendOnce, { prepare } = {}) {
-      if (state !== "initial" && state !== "ready") throw new Error("YANDEX_PREVIOUS_REQUEST_NOT_REVIEWED");
-      const previous = state, pause = state === "ready";
-      let dispatched = false;
-      state = "waiting";
-      try {
-        if (pause) {
-          let remaining = nextRequestAt - performance.now();
-          while (remaining > 0) {
-            await new Promise((resolve) => setTimeout(resolve, Math.ceil(remaining)));
-            remaining = nextRequestAt - performance.now();
-          }
-        }
-        observedAt = null;
-        state = "preparing";
-        if (prepare) await prepare();
-        state = "submitting";
-        dispatched = true;
-        const result = await sendOnce();
-        state = "awaiting-response";
-        return result;
-      } catch (error) {
-        state = dispatched ? "unknown" : previous;
-        throw error;
-      }
-    },
-    async observe(read) {
-      observedAt = null;
-      const result = await read();
-      observedAt = performance.now();
-      return result;
-    },
-    responseReady() {
-      if ((state !== "awaiting-response" && state !== "unknown") || observedAt === null) throw new Error("YANDEX_NO_REQUEST_TO_REVIEW");
-      nextRequestAt = observedAt + 2_000 + Math.floor(Math.random() * 13_001);
-      state = "ready";
-    },
-  };
-})();
-```
-
-Первый запрос без паузы; затем минимум 2–15 секунд от снимка готового
-результата. Размышления и чтение входят в интервал: после 7 из 10 секунд жди 3,
-после минуты — 0. Не пересоздавай controller. Открытие источника не считается
-отправкой. Это не лимит Яндекса и не обход CAPTCHA.
-
-При timeout/неясной отправке осмотри ту же страницу и установи исход.
-До готового результата controller блокирует новые отправки. Неизвестный исход
-сообщай без сброса controller, дублирования и повторной отправки.
+После проверки нового полного ответа передай его последний `frameId` в
+`answer-ready`. Первый запрос начинается сразу, следующую отправку host
+задерживает только на остаток интервала 2–15 секунд от наблюдения готового
+ответа. Чтение, ввод, ожидание готовности и открытие источников не добавляют
+интервала. Если ответ неполон или dispatch неизвестен, сверяй ту же беседу,
+не отправляй повторно, не перезапускай сессию ради сброса темпа.
 
 ## Обычный поиск
 
 1. Сформулируй самостоятельный запрос с темой и ограничениями. В обычном поиске
    нет контекста беседы: «а только за этот год?» превращается в запрос с темой
    и годом. Уточнения отправляй через поле поиска под тем же controller.
-2. По свежему AX/DOM состоянию проверь принятый запрос и новую выдачу:
+2. По свежему текстовому состоянию проверь принятый запрос и новую выдачу:
    сейчас это combobox «Запрос» и список «Результаты поиска». Заголовка страницы
-   недостаточно. Индексы и CSS-классы не являются постоянным API; при недоступном
-   AX setValue используй объявленные методы tool, не угаданный endpoint.
+   недостаточно. Индексы и CSS-классы не являются постоянным API; при необходимости найди новый
+   видимый контрол через `read-text`.
 3. Читай названия, href, snippets и даты подходящих результатов. Отличай
    органическую выдачу от рекламы, быстрого ответа и AI-сводки. Snippet и дата
    обхода не заменяют страницу и дату публикации.
@@ -153,15 +89,14 @@ var yandexPacing = (() => {
 ## Диалог с Алисой AI
 
 Сейчас есть text entry area, «Отправить», при генерации — «Алиса, стоп».
-Каждый раз читай свежий UI, не закрепляй индексы/селекторы.
+Каждый раз читай свежий UI, не закрепляй старые координаты.
 
 1. Отправь один вопрос через поле и наблюдённую кнопку/поддерживаемый Enter
-   под controller. Проверь появление своего сообщения именно в своём чате.
+   через `submit`. Проверь появление своего сообщения именно в своём чате.
 2. Дождись полного нового ответа: сопоставь вопрос, новый блок Алисы и
    завершение генерации. Возврат обычных controls вместе с заполненным ответом
    подтверждает готовность; исчезновения spinner или старого текста мало.
-   Читай весь ответ, при необходимости прокручивая. Используй bounded ожидания
-   browser tool без busy polling; неполный ответ не отмечай готовым.
+   Читай весь ответ, при необходимости прокручивая. Используй ограниченное ожидание runtime; неполный ответ не отмечай готовым.
 3. Самостоятельно продолжай переписку в поле того же чата: уточняй свой запрос,
    проси примеры, основания и альтернативы, указывай противоречия, обсуждай
    возражения. На встречные вопросы Алисы отвечай из известного разрешённого
@@ -181,8 +116,7 @@ var yandexPacing = (() => {
 
 ## Источники и результат
 
-Открывай реальные href результатов в собственных скрытых вспомогательных
-вкладках; у Алисы читай ссылки текущего ответа/панели «Источники», если они есть.
+Используй реальные URL видимых ссылок результатов; у Алисы читай ссылки текущего ответа/панели «Источники», если они есть.
 Tracking redirect проверяй по фактическому разрешённому сайту, не угадывай
 canonical URL и не обходи блокировки. Навигация, реклама, Share, история
 и ссылки на AI-чат не являются первоисточниками.
@@ -202,11 +136,24 @@ canonical URL и не обходи блокировки. Навигация, р�
 сообщения людям, загрузку файлов, публикации, код, покупки, внешних агентов,
 изменение аккаунта, региона, фильтров безопасности и сети.
 
-## Продолжение и завершение
 
-Keep own tab handle/id, topic and controller across turns. If the tool cleans
-up temporary tabs, repeat `await targetTab.markHandoff()` each needed turn;
-it grants no visibility. If lost, report the lost session/context and reconstruct
-a standalone question from this chat in a new own conversation. Never inspect
-foreign tabs/history, promise preserved context or replay an unknown send.
-Finish by closing only own tabs, preserving the user's browser and history.
+В `read-text` используй `control.url` только у проверенного видимого источника.
+Сначала закончи связанные уточнения, затем открывай эти адреса через
+`open-source --url` для чтения. На внешних страницах ограничься чтением.
+Не вводи данные, не выполняй вход и не отправляй формы.
+Переход заменяет текущую страницу. Если host вернул `documentReference`
+своей беседы, сохрани его перед открытием источника. `return-to-chat --url`
+принимает адреса самого сервиса. Не публикуй внутренние адреса бесед.
+
+## Ручной шаг и завершение
+
+Если сайт требует вход, CAPTCHA или решения по соглашению, используй `setup`
+для видимого окна. Повторно показать уже открытое окно можно через `show-login`.
+Пользователь проходит ручной шаг сам. Во время ввода не просматривай
+авторизацию. После завершения `ready` закрывает окно и сохраняет сессию,
+`saved_unverified` означает сохранение, а готовность подтверждает новое
+чтение живого кабинета. При неявной отправке сначала определи её исход.
+
+Пока нужен диалог, переиспользуй ту же живую сессию. По окончании вызови
+`close`, чтобы закрыть только Chromium этого навыка. При истечении сессии
+обозначь потерю беседы и начни самостоятельный запрос из разрешённого контекста.

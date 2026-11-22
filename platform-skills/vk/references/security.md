@@ -18,7 +18,8 @@ HTTPS origins и начальную страницу VK. Caller не меняе�
 камера или микрофон являются технической границей конкретного действия.
 Host применяет origin/document/MIME policy также к redirects и clicks.
 
-Host запускает отдельный managed headed Chromium без remote-debugging
+Host запускает отдельный Chromium headless для работы и видимый для ручного
+входа. Оба режима работают без remote-debugging
 port/pipe, --enable-automation и fingerprint spoof. Fixed local extension
 использует закрытые Page/Input и response-only Fetch guards. Настоящий HTTP
 redirect может не иметь Content-Type, конечный document обязан быть HTML;

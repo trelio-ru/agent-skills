@@ -44,9 +44,9 @@ test("several provider changes select their union without unrelated skills", () 
 
   assert.deepEqual(selection.selectedSkills, ["consultant-plus", "telegram-mtproto"]);
   assert.deepEqual(selection.selfHostedSkills, ["consultant-plus", "telegram-mtproto"]);
-  assert.equal(selection.hostedMatrix.include.length, 3);
-  assert.ok(selection.hostedMatrix.include.every(({ skill }) => skill === "telegram-mtproto"));
-  assert.equal(selection.runConsultantPlus, true);
+  assert.equal(selection.hostedMatrix.include.length, 6);
+  assert.deepEqual([...new Set(selection.hostedMatrix.include.map(row => row.skill))],
+    ["consultant-plus", "telegram-mtproto"]);
   assert.equal(selection.runTelegramContract, true);
   assert.equal(selection.runDodoStats, false);
 });
@@ -112,17 +112,14 @@ test("shared tooling and workflow changes retain the full regression gate", () =
     assert.ok(selection.selfHostedSkills.includes("dodostats-drinkitstats"), filePath);
     assert.ok(selection.selfHostedSkills.includes("gigachat"), filePath);
     assert.ok(selection.selfHostedSkills.includes("perplexity-search"), filePath);
-    assert.ok(!selection.hostedMatrix.include.some(row => row.skill === "perplexity-search"), filePath);
     assert.ok(selection.selfHostedSkills.includes("deepseek-search"), filePath);
-    assert.ok(!selection.hostedMatrix.include.some(row => row.skill === "deepseek-search"), filePath);
-    assert.equal(selection.runConsultantPlus, true, filePath);
     assert.equal(selection.runTelegramContract, true, filePath);
     assert.equal(selection.runDodoStats, true, filePath);
   }
 });
 
 test("instruction-only providers still run the shared instruction contracts", () => {
-  for (const skill of ["ozon-buyer-search", "google-ai-search", "gigachat", "perplexity-search", "deepseek-search", "yandex-search", "giga-concierge"]) {
+  for (const skill of ["ozon-buyer-search", "google-ai-search", "giga-concierge"]) {
     const selection = selectProviderRegressions([
       `platform-skills/${skill}/SKILL.md`,
     ]);

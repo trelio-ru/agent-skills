@@ -1,210 +1,90 @@
-import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import test from "node:test";
-import vm from "node:vm";
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { buildRuntimePackage } from '../../tools/build-runtime-package.mjs';
+import { run } from '../scripts/trelio-deepseek-search.mjs';
 
-const instruction = readFileSync(new URL("../SKILL.md", import.meta.url), "utf8");
-const controllerSource = [...instruction.matchAll(/```javascript\r?\n([\s\S]*?)```/gu)]
-  .map((match) => match[1])
-  .find((source) => source.startsWith("var deepseekPacing ="));
-assert.ok(controllerSource, "The browser REPL controller must be available in the delivered instruction.");
+const root = fileURLToPath(new URL('../', import.meta.url));
+const skillId = 'deepseek-search';
+const manifest = JSON.parse(await fs.readFile(new URL('../release.json', import.meta.url), 'utf8'));
 
-/**
- * Execute the actual delivered snippet, rather than a separate test copy.
- * Fake randomness/timers prove the delay boundaries and ordering without
- * sending DeepSeek requests or making CI wait for artificial pauses.
- */
-const createHarness = ({ random = () => 0, deferTimers = false, earlyTimer = false } = {}) => {
-  let now = 100;
-  const delays = [];
-  const timers = [];
-  const context = vm.createContext({
-    Math: { floor: Math.floor, ceil: Math.ceil, random },
-    performance: { now: () => now },
-    setTimeout: (done, delay) => {
-      delays.push(delay);
-      const complete = () => {
-        // One deliberately early callback proves that the monotonic deadline,
-        // rather than merely an awaited timeout, owns the minimum interval.
-        now += earlyTimer && delays.length === 1 ? delay - 1 : delay;
-        done();
-      };
-      if (deferTimers) timers.push(complete);
-      else complete();
-    },
-  });
-  vm.runInContext(controllerSource, context, { timeout: 1_000 });
-  return {
-    controller: context.deepseekPacing,
-    delays,
-    advance: (milliseconds) => { now += milliseconds; },
-    releaseTimer: () => timers.shift()(),
-  };
-};
+async function fixture(t) {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-search-test-')));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const host = path.join(dir, 'visual.mjs');
+  await fs.writeFile(host, `
+    export const VISUAL_PRESENTATION_API = 'trelio.visual-presentation/v1';
+    export const VISUAL_EXTERNAL_NAVIGATION_API = 'trelio.visual-external-navigation/v1';
+    export const VISUAL_SEMANTIC_CONTROLS_API = 'trelio.visual-semantic-controls/v1';
+    export function runVisualSession({env,...input}) { return input; }
+  `);
+  await fs.writeFile(path.join(dir, 'trelio-workspace.mjs'), `
+    import fs from 'node:fs/promises';
+    export async function readPrivateJsonFile(file, opts) {
+      if (opts.maximumBytes !== 24576 || opts.fatalUtf8 !== true) throw Error('fixture guard failed');
+      return JSON.parse(await fs.readFile(file,'utf8'));
+    }
+  `);
+  const question = path.join(dir, 'question.json');
+  await fs.writeFile(question, JSON.stringify({text:'RFC 9110 и пробел'}), {mode:0o600});
+  const hostUrl = pathToFileURL(host).href;
+  const env = { TRELIO_SKILL_ID: skillId, TRELIO_VISUAL_SESSION_MODULE_URL: hostUrl };
+  return { dir, env, question };
+}
 
-const observeReady = async ({ controller }) => {
-  await controller.observe(() => "Completed answer observed");
-  controller.answerReady();
-};
+test('signed provider preserves shared headless, pacing, manual handoff and references', async t => {
+  const {env,question} = await fixture(t);
+  const opened = await run(['open'], env);
+  assert.equal(opened.operation, 'navigate');
+  assert.equal(opened.args.url, 'https://chat.deepseek.com/');
+  assert.equal(opened.presentation, 'hidden');
+  assert.equal(opened.observationMode, 'text');
+  assert.equal(opened.semanticControls, true);
+  assert.equal(opened.externalNavigation, true);
+  assert.equal(opened.referenceRoutes.length >= 1, true);
+  assert.deepEqual((await run(['setup'], env)).args, opened.args);
+  assert.equal((await run(['show-login'], env)).operation, 'show-login');
+  assert.equal((await run(['ready'], env)).operation, 'ready');
+  assert.equal((await run(['close'], env)).operation, 'close');
+  assert.deepEqual((await run(['type-text','--frameId','fresh','--inputFile',question],env)).args,
+    {frameId:'fresh',text:'RFC 9110 и пробел'});
+  assert.deepEqual((await run(['submit','--frameId','fresh'],env)).args,
+    {action:'key',key:'Enter',frameId:'fresh'});
+  assert.deepEqual((await run(['submit','--frameId','fresh','--x','74','--y','45'],env)).args,
+    {action:'click',frameId:'fresh',x:74,y:45});
+  assert.equal((await run(['answer-ready','--frameId','fresh'],env)).operation,'request-ready');
+  assert.deepEqual((await run(['open-source','--url','https://www.rfc-editor.org/rfc/rfc9110.html'],env)).args,
+    {url:'https://www.rfc-editor.org/rfc/rfc9110.html'});
+  await assert.rejects(run(['return-to-chat','--url','https://www.rfc-editor.org/'],env),/MANAGED_SEARCH_INVALID_INPUT/);
+  await assert.rejects(run(['open-source','--url','file:///private/secret'],env),/MANAGED_SEARCH_INVALID_INPUT/);
 
-test("the first question has no delay and the next requires observed completion", async () => {
-  let sends = 0;
-  const harness = createHarness();
-  const { controller, delays } = harness;
-  assert.throws(() => controller.answerReady(), /DEEPSEEK_NO_QUESTION_TO_REVIEW/u);
-  assert.equal(await controller.submit(() => ++sends), 1);
-  await assert.rejects(controller.submit(() => ++sends), /DEEPSEEK_PREVIOUS_QUESTION_NOT_REVIEWED/u);
-  assert.equal(sends, 1);
-  assert.deepEqual(delays, []);
-  assert.throws(() => controller.answerReady(), /DEEPSEEK_NO_QUESTION_TO_REVIEW/u);
-  await observeReady(harness);
 });
 
-test("each follow-up gets fresh randomness with inclusive 2 and 15 second bounds", async () => {
-  const randomValues = [0, 1 - Number.EPSILON, 0.5];
-  const harness = createHarness({ random: () => randomValues.shift() });
-  const { controller, delays } = harness;
-  await controller.submit(() => undefined);
-  for (let index = 0; index < 3; index += 1) {
-    await observeReady(harness);
-    await controller.submit(() => undefined);
+test('rejects client overrides and unpaced Enter, while the exact package can discover accounts', async () => {
+  for (const args of [['key','--frameId','fresh','--key','Enter'], ['open','--presentation','windowed'],
+    ['navigate','--url','https://example.test/'], ['submit','--frameId','fresh','--x','25'],
+    ['type-text','--frameId','fresh','--text','closed'],['setup','--url','https://other-provider.test/']]) {
+    await assert.rejects(run(args, {}), /MANAGED_SEARCH_INVALID_INPUT/);
   }
-  assert.deepEqual(delays, [2_000, 15_000, 8_500]);
-  assert.equal(randomValues.length, 0);
-});
-
-test("operator thinking counts both before and after completion acknowledgement", async () => {
-  for (const thinkBeforeAcknowledgement of [false, true]) {
-    const { controller, delays, advance } = createHarness({ random: () => 1 - Number.EPSILON });
-    await controller.submit(() => undefined);
-    await controller.observe(() => "Completed answer observed");
-    if (thinkBeforeAcknowledgement) advance(60_000);
-    controller.answerReady();
-    if (!thinkBeforeAcknowledgement) advance(60_000);
-    await controller.submit(() => undefined);
-    assert.deepEqual(delays, [], "A minute of operator thinking must not acquire another pause.");
-  }
-});
-
-test("a 10 second interval with 7 seconds already elapsed waits only 3 seconds", async () => {
-  const harness = createHarness({ random: () => 8_000 / 13_001 });
-  await harness.controller.submit(() => undefined);
-  await observeReady(harness);
-  harness.advance(7_000);
-  await harness.controller.submit(() => undefined);
-  assert.deepEqual(harness.delays, [3_000]);
-});
-
-test("an early timer callback still cannot submit before the interval deadline", async () => {
-  const harness = createHarness({ earlyTimer: true });
-  await harness.controller.submit(() => undefined);
-  await observeReady(harness);
-  await harness.controller.submit(() => undefined);
-  assert.deepEqual(harness.delays, [2_000, 1]);
-});
-
-test("a follow-up cannot send before its timer or race another submission", async () => {
-  let sends = 0;
-  const harness = createHarness({ deferTimers: true });
-  const { controller } = harness;
-  await controller.submit(() => ++sends);
-  await observeReady(harness);
-  const pending = controller.submit(() => ++sends);
-  assert.equal(sends, 1);
-  assert.throws(() => controller.answerReady(), /DEEPSEEK_NO_QUESTION_TO_REVIEW/u);
-  await assert.rejects(controller.submit(() => ++sends), /DEEPSEEK_PREVIOUS_QUESTION_NOT_REVIEWED/u);
-  harness.releaseTimer();
-  assert.equal(await pending, 2);
-  await assert.rejects(controller.submit(() => ++sends), /DEEPSEEK_PREVIOUS_QUESTION_NOT_REVIEWED/u);
-  assert.equal(sends, 2);
-});
-
-test("completion cannot be acknowledged while a UI submission is still pending", async () => {
-  let releaseSubmit;
-  const harness = createHarness();
-  const { controller } = harness;
-  const pending = controller.submit(() => new Promise((resolve) => { releaseSubmit = resolve; }));
-  assert.throws(() => controller.answerReady(), /DEEPSEEK_NO_QUESTION_TO_REVIEW/u);
-  await assert.rejects(controller.submit(() => undefined), /DEEPSEEK_PREVIOUS_QUESTION_NOT_REVIEWED/u);
-  releaseSubmit();
-  await pending;
-  await observeReady(harness);
-});
-
-test("an ambiguous UI error blocks replay until the answer is observed", async () => {
-  let attempts = 0;
-  const harness = createHarness();
-  const { controller } = harness;
-  await assert.rejects(controller.submit(() => { attempts += 1; throw new Error("UI timeout"); }), /UI timeout/u);
-  await assert.rejects(controller.submit(() => ++attempts), /DEEPSEEK_PREVIOUS_QUESTION_NOT_REVIEWED/u);
-  assert.equal(attempts, 1);
-  // This explicit transition represents inspecting the original conversation
-  // and observing its completed answer, not merely catching the UI error.
-  await observeReady(harness);
-  assert.equal(await controller.submit(() => ++attempts), 2);
-});
-
-test("failed observation cannot acknowledge readiness using an older snapshot", async () => {
-  const { controller } = createHarness();
-  await controller.submit(() => undefined);
-  await controller.observe(() => "Completed answer observed");
-  await assert.rejects(controller.observe(() => { throw new Error("Snapshot unavailable"); }), /Snapshot unavailable/u);
-  assert.throws(() => controller.answerReady(), /DEEPSEEK_NO_QUESTION_TO_REVIEW/u);
-});
-
-// A browser field can reject AX input before Enter/click is even invoked.
-// Run the delivered preparation boundary: no fabricated error classification
-// or manual controller reset may be needed to recover that unsent request.
-test("failed input preparation never dispatches and can recover with another input method", async () => {
-  const { controller, delays } = createHarness();
-  const events = [];
-  await assert.rejects(controller.submit(() => events.push("send"), {
-    prepare: () => { events.push("AX input"); throw new Error("Field has no settable value"); },
-  }), /Field has no settable value/u);
-  assert.deepEqual(events, ["AX input"]);
-  await controller.submit(() => events.push("send"), { prepare: () => events.push("DOM fill") });
-  assert.deepEqual(events, ["AX input", "DOM fill", "send"]);
-  assert.deepEqual(delays, []);
-});
-
-test("failed preparation preserves the existing completion deadline without another random pause", async () => {
-  let randomCalls = 0;
-  const harness = createHarness({ random: () => { randomCalls += 1; return 1 - Number.EPSILON; } });
-  await harness.controller.submit(() => undefined);
-  await observeReady(harness);
-  harness.advance(7_000);
-  await assert.rejects(harness.controller.submit(() => assert.fail("Unprepared send"), {
-    prepare: () => { throw new Error("Input refused"); },
-  }), /Input refused/u);
-  await harness.controller.submit(() => undefined, { prepare: () => undefined });
-  assert.deepEqual(harness.delays, [8_000]);
-  assert.equal(randomCalls, 1, "Input failure cannot invent a new completion or random deadline.");
-});
-
-test("pending preparation owns the submission slot until it settles", async () => {
-  const { controller } = createHarness();
-  let rejectPreparation;
-  let sends = 0;
-  const preparation = new Promise((resolve, reject) => { rejectPreparation = reject; });
-  const pending = controller.submit(() => ++sends, { prepare: () => preparation });
-  const failed = assert.rejects(pending, /Input refused/u);
-  await assert.rejects(controller.submit(() => ++sends), /DEEPSEEK_PREVIOUS_QUESTION_NOT_REVIEWED/u);
-  rejectPreparation(new Error("Input refused"));
-  await failed;
-  assert.equal(sends, 0);
-  assert.equal(await controller.submit(() => ++sends), 1);
-});
-
-test("successful preparation cannot make an uncertain dispatch safe to repeat", async () => {
-  const { controller } = createHarness();
-  let preparations = 0;
-  let sends = 0;
-  await assert.rejects(controller.submit(() => { sends += 1; throw new Error("Submit timeout"); }, {
-    prepare: () => { preparations += 1; },
-  }), /Submit timeout/u);
-  await assert.rejects(controller.submit(() => ++sends, {
-    prepare: () => { preparations += 1; },
-  }), /DEEPSEEK_PREVIOUS_QUESTION_NOT_REVIEWED/u);
-  assert.equal(preparations, 1);
-  assert.equal(sends, 1);
+  await assert.rejects(run(['open'],{}), /MANAGED_SEARCH_HOST_REQUIRED/);
+  assert.equal((await run(['doctor'],{})).minimumHostVersion,manifest.runtime.minimumHostVersion);
+  assert.equal((await run(['doctor'],{})).hostVisualAvailable,false);
+  assert.deepEqual(await run(['__trelio_accounts_import'],new Proxy({},{
+    get(){throw Error('account import must not consult the environment');}
+  })),{schemaVersion:1,accounts:[]});
+  const built = buildRuntimePackage(root);
+  const { files } = JSON.parse(built.packageBytes);
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-search-package-')));
+  try {
+    for (const file of files) await fs.writeFile(path.join(dir,file.path),Buffer.from(file.contentBase64,'base64'));
+    const result = spawnSync(process.execPath,
+      [path.join(dir,manifest.runtime.entrypoint.path),'__trelio_accounts_import'],{encoding:'utf8',timeout:15000});
+    assert.equal(result.stderr,'');
+    assert.equal(result.status,0);
+    assert.deepEqual(JSON.parse(result.stdout),{schemaVersion:1,accounts:[]});
+  } finally { await fs.rm(dir, {recursive:true,force:true}); }
 });
