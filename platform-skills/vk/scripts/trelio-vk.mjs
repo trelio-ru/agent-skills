@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const MINIMUM_HOST_VERSION = '3.34.21';
+// The default shared browser mode now admits external links and file transfer.
+const MINIMUM_HOST_VERSION = '3.34.32';
 const PRESENTATION_API = 'trelio.visual-presentation/v1';
 const ATTACHMENT_FILE_API = 'trelio.visual-attachment-file/v1';
 // Preserve explicit-file handling for known VK originals and call transcripts

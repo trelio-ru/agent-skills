@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk",
-    "version": "0.3.0",
-    "summary": "Работа с ВКонтакте в Chromium Trelio без окна и видимый ручной вход через VK ID",
+    "version": "0.3.1",
+    "summary": "Переходы по ссылкам и загрузки используют общий режим Chromium Trelio",
     "routingSummary": "Read VK pages and chats; exchange messages and download or upload original attachments."
   },
   "connection": {
@@ -16,8 +16,8 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.3.0",
-    "minimumHostVersion": "3.34.21",
+    "version": "0.3.1",
+    "minimumHostVersion": "3.34.32",
     "entrypoint": { "path": "trelio-vk.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
     "browserSession": { "apiVersion": 1, "sessionClass": "protected-snapshot", "manualAssist": true },

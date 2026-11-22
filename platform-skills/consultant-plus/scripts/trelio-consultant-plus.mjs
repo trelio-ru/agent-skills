@@ -4,7 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SKILL_ID = 'consultant-plus';
-const MINIMUM_HOST_VERSION = '3.34.21';
+// The common external navigation and file mode is enabled by default here.
+const MINIMUM_HOST_VERSION = '3.34.32';
 const HOME = 'https://cloud.consultant.ru/';
 const origins = [new URL(HOME).origin];
 const domains = ['consultant.ru'];

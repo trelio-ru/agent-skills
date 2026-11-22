@@ -52,7 +52,7 @@ targets: macOS Apple Silicon (Whisper с macOS 14), Windows x64, Linux x64 (glib
 Нужен host visual API >=3.28.3; source и PR не
 означают публичную готовность до native CI и signed host/provider release.
 
-ВКонтакте использует визуальный host API >=3.34.21: поиск, страницы,
+ВКонтакте использует визуальный host API >=3.34.32: поиск, страницы,
 сообщества и диалоги по отрисованному тексту и PNG, обязательный вход через VK ID,
 защищённый локальный snapshot и отдельный личный account. Разделы VK доступны
 по задаче пользователя. Для переходов по ссылкам навык использует Chromium Trelio.
