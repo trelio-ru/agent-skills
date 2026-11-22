@@ -84,7 +84,16 @@ export function parseCommand(argv) {
     if (!Object.hasOwn(startPages, args.editor)) throw new EditorFailure('EDITORS_COMMAND_INVALID');
     return { operation, browserOperation: 'navigate', args: { url: startPages[args.editor] } };
   }
-  if (operation === 'navigate') return { operation, browserOperation: operation, args: { url: editorLink(args.url).url } };
+  if (operation === 'navigate') {
+    // Keep canonical links for supported Docs and Sheets, and pass other
+    // page URLs to Chromium. Editor workflows still resolve exact files.
+    let url = args.url;
+    try { url = editorLink(url).url; }
+    catch (error) {
+      if (!(error instanceof EditorFailure) || error.code !== 'EDITORS_TARGET_INVALID') throw error;
+    }
+    return { operation, browserOperation: operation, args: { url } };
+  }
   if (operation === 'setup') return { operation, browserOperation: operation, args: { url: signIn.href } };
   if (operation === 'upload-file') {
     const { file, ...control } = args;

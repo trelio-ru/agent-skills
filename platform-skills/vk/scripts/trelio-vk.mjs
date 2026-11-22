@@ -7,19 +7,14 @@ import path from 'node:path';
 const MINIMUM_HOST_VERSION = '3.34.21';
 const PRESENTATION_API = 'trelio.visual-presentation/v1';
 const ATTACHMENT_FILE_API = 'trelio.visual-attachment-file/v1';
-// VK serves document originals from psv4.userapi.com and also redirects call
-// transcripts to psv4.vkuserphoto.ru. Grant only those exact HTTPS origins to
-// the coordinate-selected browser download. Navigation and authentication
-// keep their own scope.
+// Preserve explicit-file handling for known VK originals and call transcripts
+// on older supported runtimes as well.
 const ATTACHMENT_FILE_ORIGINS = Object.freeze([
   'https://psv4.userapi.com',
   'https://psv4.vkuserphoto.ru',
 ]);
-// The user chooses the VK workflow. A section moving onto a VK subdomain must
-// not become a provider-authored product ban. Keep the network boundary at the
-// actual VK hostnames, with label-aware matching, HTTPS and no userinfo/ports.
-// The host applies the same signed scope to clicks, redirects and snapshots;
-// its HTML-only observation and separate mutation authority still apply.
+// Retain the VK domains for the private session-cookie snapshot. Ordinary
+// navigation uses the common Chromium behavior.
 const DOMAINS = Object.freeze(['vk.ru', 'vk.com']);
 const ORIGINS = Object.freeze([
   'https://vk.ru', 'https://www.vk.ru', 'https://m.vk.ru',
@@ -79,18 +74,6 @@ export function parseVkCommand(argv) {
   return { operation, args };
 }
 
-function validateNavigation(raw) {
-  // Reject an unrelated website before loading the host. This is provider
-  // scope validation; the host still owns document/MIME/frame and redirect
-  // checks, including clicks that do not pass through this CLI URL argument.
-  try {
-    const url = new URL(raw);
-    const inScope = ORIGINS.includes(url.origin)
-      || DOMAINS.some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`));
-    if (!inScope || url.protocol !== 'https:' || url.port || url.username || url.password) throw new Error();
-  } catch { throw new Error('VK_NAVIGATION_BLOCKED'); }
-}
-
 async function readGuides() {
   return {
     schemaVersion: 1,
@@ -123,7 +106,6 @@ export async function runVk(argv, env = process.env) {
     accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON),
     minimumHostVersion: MINIMUM_HOST_VERSION,
   };
-  if (operation === 'navigate') validateNavigation(args.url);
   let moduleUrl;
   try { moduleUrl = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank'); }
   catch { throw new Error('VK_HOST_REQUIRED'); }
@@ -150,10 +132,9 @@ export async function runVk(argv, env = process.env) {
       : { action: 'key', key: 'Enter', ...args };
   } else if (operation === 'search-ready') hostOperation = 'request-ready';
 
-  // Observation, attachment opt-in and origin policy are signed provider
-  // constants. The verified host supplies account identity and owns browser,
-  // protected snapshot, lease and one-use input frames; no alternate transport
-  // or caller-selected browser implementation is available here.
+  // The provider declares its own session origins, presentation and supported
+  // file commands. The verified host owns navigation, the selected account,
+  // the protected snapshot, and the browser's lease and input frames.
   const policy = {
     observationMode: 'text', presentation: 'hidden', attachmentDownloads: true, fileUploads: true,
     origins: [...ORIGINS], domains: [...DOMAINS], env,
@@ -181,7 +162,7 @@ if (process.argv[1] && await fs.realpath(process.argv[1]) === await fs.realpath(
   catch (error) {
     // Host/native errors can contain private URLs, input or filesystem paths.
     // Only static provider codes cross stdout; never print the raw exception.
-    const safeCodes = ['VK_COMMAND_INVALID', 'VK_HOST_REQUIRED', 'VK_HOST_UPGRADE_REQUIRED', 'VK_NAVIGATION_BLOCKED'];
+    const safeCodes = ['VK_COMMAND_INVALID', 'VK_HOST_REQUIRED', 'VK_HOST_UPGRADE_REQUIRED'];
     process.stdout.write(`${JSON.stringify({ schemaVersion: 1, state: 'error',
       code: safeCodes.includes(error?.message) ? error.message : 'VK_RUNTIME_FAILED' })}\n`);
     process.exitCode = 1;

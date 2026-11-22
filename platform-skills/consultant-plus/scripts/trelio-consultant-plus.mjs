@@ -9,8 +9,8 @@ const HOME = 'https://cloud.consultant.ru/';
 const origins = [new URL(HOME).origin];
 const domains = ['consultant.ru'];
 
-// Lifecycle and paced submissions belong to the host. This adapter pins the
-// site and presentation, and exposes only the arguments needed by this skill.
+// Lifecycle, ordinary navigation and paced submissions belong to the host.
+// This adapter fixes the sign-in entry point and presents the skill commands.
 const commands = {
   doctor: {}, status: {}, wait: {}, ready: {}, 'show-login': {}, close: {},
   open: {}, setup: {}, navigate: { url: 'string' },
@@ -72,12 +72,6 @@ export async function run(argv, env = process.env) {
   if (operation === 'open' || operation === 'setup') {
     args = { url: HOME };
     if (operation === 'open') operation = 'navigate';
-  } else if (operation === 'navigate') {
-    const url = new URL(args.url);
-    // Resume only from the provider's own document URL. The browser separately
-    // enforces signed origins for redirects and the user's sign-in navigation.
-    if (!origins.includes(url.origin) || url.username || url.password || url.href.length > 2048) fail();
-    args = { url: url.href };
   } else if (operation === 'download-original') {
     operation = 'download-attachment';
   } else if (operation === 'type-text') {
@@ -87,8 +81,8 @@ export async function run(argv, env = process.env) {
   } else if (operation === 'answer-ready') {
     operation = 'request-ready';
   }
-  // An export click is separately admitted for the exact first-party file
-  // origin. Never broaden the file allowlist to all sign-in redirects.
+  // Keep the explicit-file export mode for first-party originals, including
+  // on older supported host versions.
   return host.runVisualSession({ origins, domains, observationMode: 'text',
     presentation: 'hidden', semanticControls: true, attachmentDownloads: true,
     attachmentFilePolicy: { origins }, operation, args, env });

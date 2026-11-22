@@ -19,11 +19,13 @@ test('validate the exact editor URL and command before touching the host', async
   assert.equal(parseCommand(['navigate', '--url', docUrl + '?usp=sharing']).args.url, docUrl);
   assert.equal(parseCommand(['navigate', '--url', docUrl + '?usp=drive_link&tab=t.0']).args.url, docUrl + '?tab=t.0');
   assert.equal(parseCommand(['navigate', '--url', sheetUrl.replace('#gid', '?gid') + '&usp=sharing']).args.url, sheetUrl);
-  assert.throws(() => parseCommand(['navigate', '--url', sheetUrl.replace('#gid', '?gid') + '#gid=3']), /EDITORS_TARGET_INVALID/u);
-  assert.throws(() => parseCommand(['navigate', '--url', docUrl.replace('/edit', '/export?format=txt')]), /EDITORS_TARGET_INVALID/u);
-  assert.throws(() => parseCommand(['navigate', '--url', docUrl.replace('.com/', '.com.evil.test/')]), /EDITORS_TARGET_INVALID/u);
-  assert.throws(() => parseCommand(['navigate', '--url', docUrl + '?token=abcdef']), /EDITORS_TARGET_INVALID/u);
-  assert.throws(() => parseCommand(['navigate', '--url', docUrl + '?tab=other']), /EDITORS_TARGET_INVALID/u);
+  const reference = 'https://external.example.test/reference';
+  assert.equal(parseCommand(['navigate', '--url', reference]).args.url, reference);
+  for (const url of [reference, sheetUrl.replace('#gid', '?gid') + '#gid=3',
+    docUrl.replace('/edit', '/export?format=txt'), docUrl.replace('.com/', '.com.evil.test/'),
+    docUrl + '?token=abcdef', docUrl + '?tab=other']) {
+    assert.throws(() => parseWorkflow('inspect-file', JSON.stringify({ url, title: 'Fixture' })), /EDITORS_TARGET_INVALID/u);
+  }
   assert.throws(() => parseWorkflow('replace-document-text', JSON.stringify({ ...docSpec, replacement: 'first marker twice' })), /EDITORS_SPEC_INVALID/u);
   assert.throws(() => parseWorkflow('copy-document', JSON.stringify({ url: docUrl, title: 'Fixture', newTitle: 'Copy', destination: 'shared_drive' })), /EDITORS_SPEC_INVALID/u);
   assert.throws(() => parseCommand(['upload-file', '--frameId', 'frame', '--x', '1', '--y', '2', '--file', 'relative.csv']), /EDITORS_COMMAND_INVALID/u);

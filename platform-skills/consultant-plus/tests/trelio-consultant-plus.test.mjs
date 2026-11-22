@@ -62,8 +62,8 @@ test('signed provider preserves shared headless, paced search, manual handoff an
   assert.deepEqual(download.args, {frameId:'fresh',x:74,y:45});
   assert.equal(download.operation, 'download-attachment');
   assert.deepEqual(download.attachmentFilePolicy, opened.attachmentFilePolicy);
-  await assert.rejects(run(['navigate','--url','https://cloud.consultant.ru.example.test/'],env),
-    /MANAGED_SEARCH_INVALID_INPUT/);
+  const reference = 'https://independent-source.example.test/document';
+  assert.deepEqual((await run(['navigate','--url',reference],env)).args, { url: reference });
   await assert.rejects(run(['download-original','--url','https://cloud.consultant.ru/example'],env),
     /MANAGED_SEARCH_INVALID_INPUT/);
 });

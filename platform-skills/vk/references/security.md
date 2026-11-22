@@ -10,13 +10,12 @@ clipboard, selectors, evaluate или произвольного результ�
 ## Browser и scope
 
 Signed implementation закрепляет observationMode=text, download/upload opt-ins,
-HTTPS origins и начальную страницу VK. Caller не меняет их аргументом или env.
-Навигация разрешает HTTPS на vk.ru/vk.com с поддоменами и exact vk.me.
-Проверка DNS label исключает чужие suffix/prefix lookalikes; userinfo,
-нестандартные порты, другие схемы и сторонние сайты не входят в scope.
+HTTPS origins для snapshot и начальную страницу VK. Caller не меняет их
+аргументом или env. Переходы по ссылкам и редиректы используют обычный
+HTTP(S)-режим Chromium Trelio, как и штатные файловые команды.
 У provider нет запрета на разделы VK по их названию. Недоступный control,
 камера или микрофон являются технической границей конкретного действия.
-Host применяет origin/document/MIME policy также к redirects и clicks.
+Host проверяет тип ответа также при redirects и clicks.
 
 Host запускает отдельный Chromium headless для работы и видимый для ручного
 входа. Оба режима работают без remote-debugging
@@ -87,17 +86,15 @@ Failure/expiry сами по себе не разрешают disconnect или 
 Signed attachmentDownloads принимает только fresh frameId/x/y. Fixed local
 anchor/one-click window.open router разрешает URL-кандидат по nonce и exact
 trusted координатам, без site source и model-selected JS. Page message не
-является authority; origin/redirect/MIME guards сохраняются на каждом этапе.
+является authority; host сверяет фактический ответ с выбранным вложением.
 Только exact pending main frame получает временное download exception,
 subresources/XHR и другие вкладки остаются закрыты. После завершения/отказа
 exception отзывается, прежний чат сохраняется.
 
 Authenticated browser stream ограничен 20 МиБ/30 секундами исходной lease.
-Отдельная подписанная область допускает точные HTTPS origins
-`https://psv4.userapi.com` и `https://psv4.vkuserphoto.ru` только для GET
-выбранного вложения в исходной вкладке. ВК перенаправляет расшифровки на
-`psv4.vkuserphoto.ru`. Правило отзывается после ответа или отказа и не
-участвует в навигации или cookie overlay.
+Для старых host-версий сохранена область файлового CDN с точными HTTPS origins
+`https://psv4.userapi.com` и `https://psv4.vkuserphoto.ru`. ВК перенаправляет
+расшифровки на `psv4.vkuserphoto.ru`.
 Проверенные форматы сохраняются с определённым по байтам расширением.
 Прочий формат допускается только при явном `Content-Disposition: attachment`,
 сохраняется по UUID как `.bin` без запуска или отображения. Receipts содержат
