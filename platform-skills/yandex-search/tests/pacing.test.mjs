@@ -46,6 +46,7 @@ test('published CAPTCHA policy keeps three reviewed attempts in the original ses
   assert.match(policy, /только после\s+явного отказа и нового видимого задания/u);
   assert.match(policy, /При неизвестном исходе проверь ту же\s+страницу без повторной отправки/u);
   assert.match(policy, /трёх отказах[\s\S]+setup --target search --inputFile/u);
+  assert.match(instructions.slice(instructions.indexOf('## Ручной шаг')), /ручной CAPTCHA по правилам выше/u);
 });
 
 test('signed provider preserves shared headless, pacing, manual handoff and references', async t => {

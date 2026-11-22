@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "yandex-search",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "summary": "Яндекс: до трёх одобренных попыток CAPTCHA в одной сессии и ручное продолжение при необходимости",
     "routingSummary": "Search Yandex and discuss follow-up questions with Alice AI in the managed browser."
   },
@@ -15,7 +15,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "1.2.1",
+    "version": "1.2.2",
     "minimumHostVersion": "3.34.21",
     "entrypoint": {
       "path": "trelio-yandex-search.mjs",
