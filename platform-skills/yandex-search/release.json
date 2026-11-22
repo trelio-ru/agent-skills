@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "yandex-search",
-    "version": "1.2.0",
-    "summary": "Поиск Яндекса и диалог с Алисой в Chromium Trelio с ручным прохождением проверки по необходимости",
+    "version": "1.2.1",
+    "summary": "Яндекс: до трёх одобренных попыток CAPTCHA в одной сессии и ручное продолжение при необходимости",
     "routingSummary": "Search Yandex and discuss follow-up questions with Alice AI in the managed browser."
   },
   "connection": {
@@ -15,7 +15,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "1.2.0",
+    "version": "1.2.1",
     "minimumHostVersion": "3.34.21",
     "entrypoint": {
       "path": "trelio-yandex-search.mjs",

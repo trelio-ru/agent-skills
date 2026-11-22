@@ -36,6 +36,18 @@ async function fixture(t) {
   return { dir, env, question };
 }
 
+test('published CAPTCHA policy keeps three reviewed attempts in the original session', async () => {
+  const instructions = await fs.readFile(new URL('../SKILL.md', import.meta.url), 'utf8');
+  // The approval API scopes the action. The skill owns the attempt budget
+  // and must distinguish a clear refusal from an unconfirmed dispatch.
+  const policy = instructions.slice(instructions.indexOf('При видимой CAPTCHA Яндекса'), instructions.indexOf('## Отправка'));
+  assert.match(policy, /request_user_approval[\s\S]+captcha\.solve[\s\S]+approved=true/u);
+  assert.match(policy, /до 3 попыток[^.]+той же\s+сессии для исходного запроса/u);
+  assert.match(policy, /только после\s+явного отказа и нового видимого задания/u);
+  assert.match(policy, /При неизвестном исходе проверь ту же\s+страницу без повторной отправки/u);
+  assert.match(policy, /трёх отказах[\s\S]+setup --target search --inputFile/u);
+});
+
 test('signed provider preserves shared headless, pacing, manual handoff and references', async t => {
   const {env,question} = await fixture(t);
   const opened = await run(['open'], env);

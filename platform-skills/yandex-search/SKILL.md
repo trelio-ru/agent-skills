@@ -11,15 +11,13 @@ metadata:
 Работай через подписанный браузерный runtime Trelio. Загрузи текущие
 `get_agent_skill` sections `instructions` и `execution`; используй только exact
 `runtimeExecution.localAction`, добавляя CLI tokens в `parameters.arguments`.
-Клиент управляет навыком через тот же MCP-маршрут на любой поддерживаемой ОС.
-Chromium, профилем, временем жизни и воспроизведением сессии владеет host.
+На всех поддерживаемых ОС host управляет Chromium, профилем и сессией.
 
-Выбери host personal account по штатному сценарию. Пустой профиль подходит
-для гостевого режима, если сайт его допускает. `open` запускает headless
-Chromium. Для продолжения живой беседы вызывай `read-text` без нового `open`.
+Выбери личный аккаунт. Гостевой профиль подходит, если сайт его допускает.
+`open` запускает headless Chromium. Продолжай беседу через `read-text` без нового `open`.
 Команда `commands` перечисляет точные операции и параметры. Учитывай
 `nextOffset`, `nextControlsOffset`, `scanLimited` и `linkTargetsLimited`.
-Изображение для проверки видимого интерфейса даёт `screenshot`.
+`screenshot` показывает интерфейс.
 
 ## Выбор сценария и контекст
 
@@ -39,16 +37,20 @@ Chromium. Для продолжения живой беседы вызывай `
 разрешено открыть через `return-to-chat --url` после проверки, что он относится
 к собственной беседе.
 
-Если Яндекс показывает CAPTCHA, одна попытка через штатные видимые элементы
-разрешена после exact `request_user_approval` с
-`{"skillId":"yandex-search","action":"captcha.solve"}`, если инструмент доступен.
-Требуй в `structuredContent` те же `skillId` и `action`, `schemaVersion=1`,
-`type=user_approval`, `source=trelio_server`, `decision=approved`
-и `approved=true`. При отсутствии разрешения или повторном challenge передай
-шаг человеку через `setup --target search --inputFile` с исходным запросом.
-После `ready` верни ту же выдачу через `resume-search --inputFile` и проверь,
-что CAPTCHA ушла и виден результат. Обычный новый запрос идёт через `search`.
-Не используй solver, повторный submit или другой транспорт ради обхода защиты.
+При видимой CAPTCHA Яндекса вызови `request_user_approval` с
+`{"skillId":"yandex-search","action":"captcha.solve"}`. Проверь `structuredContent`:
+те же `skillId` и `action`, `schemaVersion=1`, `type=user_approval`,
+`source=trelio_server`, `decision=approved`, `approved=true`.
+
+С этим разрешением сделай до 3 попыток штатными элементами Яндекса в той же
+сессии для исходного запроса. Считай попытку с момента отправки ответа.
+После каждой отправки проверь выдачу. Следующую попытку делай только после
+явного отказа и нового видимого задания. При неизвестном исходе проверь ту же
+страницу без повторной отправки. При блокировке, трёх отказах, неясном задании
+или недоступном одобрении передай шаг человеку через
+`setup --target search --inputFile`. Solver и смена транспорта запрещены.
+После `ready` открой исходную выдачу через `resume-search --inputFile` и проверь
+результат. Обычный новый запрос идёт через `search`.
 
 ## Отправка и интервал
 
