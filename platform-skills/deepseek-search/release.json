@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "deepseek-search",
-    "version": "0.2.0",
-    "summary": "Поиск и диалог в Chromium Trelio с отдельным видимым входом",
+    "version": "1.2.0",
+    "summary": "Переход на единую нумерацию версий навыков Trelio",
     "routingSummary": "Find and verify public information with DeepSeek Search, with follow-up questions in the same conversation."
   },
   "connection": {
@@ -15,7 +15,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.2.0",
+    "version": "1.2.0",
     "minimumHostVersion": "3.34.21",
     "entrypoint": {
       "path": "trelio-deepseek-search.mjs",

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { EditorFailure, editorLink, executeWorkflow, fieldCheckPolicy, parseWorkflow, workflowCommands } from './editor-workflows.mjs';
 
 export const SKILL_ID = 'google-editors-web';
-export const SKILL_VERSION = '0.1.5';
+export const SKILL_VERSION = '1.1.5';
 // This is the first host that opens ordinary web links by default alongside
 // editor references, attachment redirects and the embedded picker.
 export const MINIMUM_HOST_VERSION = '3.34.32';

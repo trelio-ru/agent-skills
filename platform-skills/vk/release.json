@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "vk",
-    "version": "0.3.1",
-    "summary": "Переходы по ссылкам и загрузки используют общий режим Chromium Trelio",
+    "version": "1.3.1",
+    "summary": "Переход на единую нумерацию версий навыков Trelio",
     "routingSummary": "Read VK pages and chats; exchange messages and download or upload original attachments."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.3.1",
+    "version": "1.3.1",
     "minimumHostVersion": "3.34.32",
     "entrypoint": { "path": "trelio-vk.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],

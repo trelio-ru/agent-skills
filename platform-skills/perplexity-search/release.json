@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "perplexity-search",
-    "version": "0.2.0",
-    "summary": "Поиск, уточнения и чтение источников в Chromium Trelio",
+    "version": "1.2.0",
+    "summary": "Переход на единую нумерацию версий навыков Trelio",
     "routingSummary": "Research public questions in Perplexity, continue the same thread, and verify cited sources."
   },
   "connection": {
@@ -15,7 +15,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.2.0",
+    "version": "1.2.0",
     "minimumHostVersion": "3.34.21",
     "entrypoint": {
       "path": "trelio-perplexity-search.mjs",

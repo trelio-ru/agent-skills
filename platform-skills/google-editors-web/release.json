@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "google-editors-web",
-    "version": "0.1.5",
-    "summary": "Обычные браузерные ссылки открываются в Chromium Trelio",
+    "version": "1.1.5",
+    "summary": "Переход на единую нумерацию версий навыков Trelio",
     "routingSummary": "Inspect Google Sheets ranges and find or replace Google Docs text using a managed browser without Google APIs."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.1.5",
+    "version": "1.1.5",
     "minimumHostVersion": "3.34.32",
     "entrypoint": { "path": "trelio-google-editors.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
