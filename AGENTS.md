@@ -774,6 +774,10 @@ offline envelope fixture не заменяет live проверку personal la
 
 ## Координация Git и релизных версий
 
+Первый выпуск нового публичного или приватного навыка — `1.0.0`.
+У существующего навыка продолжай его историю версий.
+См. [порядок выпуска](docs/release-process.md#номер-первого-выпуска).
+
 После commit – `npm run git:integrate`: очередь до fresh fetch/rebase, final CI
 и guarded push/read-back. Вливания идут FIFO перед ожидающим релизом.
 `releaseRole=observer` читает результат исходного тикета. `git:push-main` служит
