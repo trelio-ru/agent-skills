@@ -67,7 +67,9 @@ export async function runAvito(argv, env = process.env) {
   if (argv.length === 1 && argv[0] === 'guides') return {
     schemaVersion: 1,
     requiredBeforeWork: 'all_in_order',
-    guides: await Promise.all(['workflow', 'security'].map(async name => {
+    // Both ordinary and managed callers use this ordered signed manifest.
+    // Keep every chapter within the host's 24 KiB verified page limit.
+    guides: await Promise.all(['workflow', 'attachments', 'security'].map(async name => {
       const packaged = new URL(`./references/${name}.md`, import.meta.url);
       // Source checkout keeps scripts/ separate; signed packages put this
       // entrypoint at their root. Neither path is supplied by the caller.

@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "avito",
-    "version": "1.5.2",
-    "summary": "Переход на единую нумерацию версий навыков Trelio",
+    "version": "1.5.3",
+    "summary": "Загрузка полного руководства Авито по частям",
     "routingSummary": "Find Avito listings, chat with sellers, download voice messages, and send or receive files in the managed browser."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "1.5.2",
+    "version": "1.5.3",
     "minimumHostVersion": "3.28.3",
     "entrypoint": {
       "path": "trelio-avito.mjs",
@@ -42,6 +42,11 @@
       {
         "source": "references/workflow.md",
         "path": "references/workflow.md",
+        "mode": 420
+      },
+      {
+        "source": "references/attachments.md",
+        "path": "references/attachments.md",
         "mode": 420
       },
       {

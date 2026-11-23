@@ -95,9 +95,13 @@ test('materialized package exposes complete signed guides without credentials or
     assert.equal(result.status, 0, result.stderr);
     const metadata = JSON.parse(result.stdout);
     assert.equal(metadata.requiredBeforeWork, 'all_in_order');
-    assert.equal(metadata.guides.length, 2);
+    assert.deepEqual(metadata.guides.map(guide => guide.path),
+      ['workflow.md', 'attachments.md', 'security.md'].map(name => path.join(temporary, 'references', name)));
     for (const guide of metadata.guides) {
       const actual = await fs.readFile(guide.path);
+      // The host validates every page before delivering the first. A single
+      // oversized signed chapter would strand the whole ordinary guide.
+      assert.ok(actual.length <= 24 * 1024, 'signed guide exceeds the host page limit');
       assert.equal(actual.length, guide.sizeBytes);
       assert.equal(createHash('sha256').update(actual).digest('hex'), guide.sha256);
       const name = path.basename(guide.path);

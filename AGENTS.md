@@ -358,7 +358,8 @@ git fetch --prune origin, git status -sb, сравнение HEAD с upstream.
 
 Комментируй неочевидные инварианты, права, состояния, retries и восстановление.
 Для Avito, включая диалоги и ограничения первого контакта, читай
-[визуальный контракт](platform-skills/avito/references/workflow.md)
+[визуальный контракт](platform-skills/avito/references/workflow.md),
+[вложения и голосовые](platform-skills/avito/references/attachments.md)
 и [защиту сессии](platform-skills/avito/references/security.md). Только
 host bounded text/image/input API, без прямого HTTP, DOM/AX-дерева, code extraction
 или fallback. Локальный fixed link router может обработать href exact click
@@ -373,8 +374,11 @@ host проверяется отдельно на macOS, Windows и Linux до �
 Первый host account flow Avito обязан проходить реальный packaged
 `__trelio_accounts_import`: отсутствие legacy store даёт пустой bounded envelope
 без native/browser/credential IO, не ошибку и не сброс существующих snapshots.
+Обычная команда `guides` отдаёт все три signed части в порядке чтения.
+Packaged CLI test сверяет точные файлы, размеры, SHA-256 и лимит 24 КиБ
+для каждой части: превышение в любой части блокирует весь ответ.
 Avito minimum host >=3.17.0 включает исходящие через signed `fileUploads` и
-native chooser с frozen originals: [контракт](platform-skills/avito/references/workflow.md#исходящие-вложения).
+native chooser с frozen originals: [контракт](platform-skills/avito/references/attachments.md#исходящие-вложения).
 Проверка первого входящего ответа и поручения на передачу остаётся обязательной;
 допустимые форматы определяет Авито, unknown outcome не разрешает replay.
 Документы выбираются только через «Отправить файл», не через фото/видео.
@@ -382,7 +386,7 @@ native chooser с frozen originals: [контракт](platform-skills/avito/ref
 входящий DOCX не доказывает право текущего аккаунта на отправку документов.
 Голосовые используют отдельный signed `audioDownloads`/API marker и
 host >=3.28.3; min в release/doctor должен совпадать. Команда
-`download-audio`: [контракт](platform-skills/avito/references/workflow.md#голосовое-в-диалоге).
+`download-audio`: [контракт](platform-skills/avito/references/attachments.md#голосовое-в-диалоге).
 Native player/blob original не заменять обычным play, system recording или HTTP.
 После получения – отдельный доступный local ASR с его штатной подготовкой;
 неподдержанный host/плеер не означает общий запрет Авито на аудио.
