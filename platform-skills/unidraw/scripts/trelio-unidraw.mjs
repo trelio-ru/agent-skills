@@ -5,7 +5,7 @@ import { basename, extname, isAbsolute, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
-  assertBoardTitleAvailable, attachAsset, exportBoard, findImportedBoard, importBackups, moveElement,
+  assertBoardTitleAvailable, attachAsset, browserStep, exportBoard, findImportedBoard, importBackups, moveElement,
   renameFigure, verifyImport,
 } from './browser.mjs';
 import {
@@ -16,7 +16,7 @@ import { chooseProject, copyBoard, createFromTemplate, gallery } from './boards.
 import { canonicalBoardUrl, compileBoard, inspectScene, readScene, UniDrawError } from './model.mjs';
 
 const SKILL = 'unidraw';
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const ORIGIN = 'https://unidraw.io';
 const DASHBOARD = ORIGIN+'/app';
 const MAX_SPEC_BYTES = 192 * 1024;
@@ -360,7 +360,7 @@ export async function executeOnBoard(browser,operation,prepared,scratch,onProgre
     return {board,title:compiled.title,...expected,...verifyImport(compiled.scene,await exportBoard(browser,board))};
   }
   const {board} = prepared;
-  await browser.navigate(board);
+  await browserStep('BOARD_NAVIGATION_FAILED',() => browser.navigate(board));
   if (operation==='inspect-board') {
     const scene = await exportBoard(browser,board);
     const elements=inspectScene(scene);
@@ -443,9 +443,14 @@ export async function runUniDraw(argv,env=process.env) {
     await privateDirectory(accountDirectory);
     const scratch=await mkdtemp(join(accountDirectory,'transfer-'));
     try {
+      // The editor uses native canvas, pointer state and font metrics. Keep
+      // editor commands in the same full Chrome mode as the manual login,
+      // using the host's background window lifecycle to avoid stealing focus.
+      // Dashboard-only reads do not need a full editor window.
+      const headed = !['ready','list-templates'].includes(operation);
       const result=await host.withPersistentBrowserSession({
         label:'UniDraw',profileDirectory:join(accountDirectory,'profile'),lockPath:join(accountDirectory,'browser.lock'),
-        downloadsDirectory:scratch,headed:operation==='setup',startInBackground:operation!=='setup',
+        downloadsDirectory:scratch,headed,startInBackground:operation!=='setup',
         async prepareContext(context) {
           // The package may select a dashboard or one exact first-party
           // board. Form values cannot navigate the authenticated profile to

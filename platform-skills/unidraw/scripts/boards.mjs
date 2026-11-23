@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonicalBoardUrl, readScene, UniDrawError } from './model.mjs';
-import { assertBoardTitleAvailable, exportBoard, findImportedBoard, verifyImport } from './browser.mjs';
+import { assertBoardTitleAvailable, browserStep, exportBoard, findImportedBoard, verifyImport } from './browser.mjs';
 import { verifyUnaffected } from './editing.mjs';
 
 const HOME = 'https://unidraw.io/app';
@@ -35,13 +35,17 @@ export async function gallery(browser) {
   }));
 }
 
-async function editorBoard(browser, excluded) {
+async function editorBoard(browser, onIdentified) {
   for (let attempt = 0; attempt < 24; attempt++) {
     let result;
     try { result = canonicalBoardUrl(await browser.url()); }
     catch (cause) { if (cause.code !== 'INVALID_BOARD_URL') throw cause; }
-    if (result && result !== excluded) {
-      await browser.ui.getByTestId('elements-search-button').waitFor({ state: 'visible', ...WAIT });
+    if (result) {
+      // Keep the observed navigation in the unknown-outcome receipt even if
+      // the editor never becomes ready enough to export and verify the board.
+      await onIdentified(result);
+      await browserStep('TEMPLATE_EDITOR_NOT_READY',() =>
+        browser.ui.getByTestId('elements-search-button').waitFor({ state: 'visible', ...WAIT }));
       if (canonicalBoardUrl(await browser.url()) !== result) fail('BOARD_CHANGED');
       return result;
     }
@@ -64,11 +68,15 @@ export async function createFromTemplate(browser, spec, onProgress) {
     if (await candidate.getAttribute('src') === source) targets.push(candidate);
   }
   if (targets.length !== 1) fail('TEMPLATE_NOT_UNIQUE');
-  if (await browser.url() !== HOME) fail('WRONG_GALLERY_LOCATION');
+  // Check the image's actual actionability without clicking. A blocking
+  // overlay or stale carousel must fail before the receipt claims a write.
+  const target = targets[0];
+  await browserStep('TEMPLATE_NOT_ACTIONABLE',() => target.click({ ...WAIT, trial: true }));
+  if ((await browser.url()).replace(/\/$/,'') !== HOME) fail('WRONG_GALLERY_LOCATION');
+  if (await target.getAttribute('src') !== source) fail('TEMPLATE_PREVIEW_CHANGED');
   await onProgress({ stage: 'template' });
-  await targets[0].click(WAIT);
-  const board = await editorBoard(browser);
-  await onProgress({ stage: 'read_back', board });
+  await browserStep('TEMPLATE_CLICK_OUTCOME_UNKNOWN',() => target.click(WAIT));
+  const board = await editorBoard(browser,board => onProgress({ stage: 'read_back', board }));
   const scene = await exportBoard(browser, board);
   const count = readScene(scene).elements.length;
   if (!count) fail('TEMPLATE_CONTENT_NOT_VERIFIED');

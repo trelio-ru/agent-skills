@@ -8,7 +8,8 @@ import test from 'node:test';
 import {
   boardText, canonicalBoardUrl, compileBoard, plainText, projectScene, readScene,
 } from '../scripts/model.mjs';
-import { findUniqueShape, verifyImport } from '../scripts/browser.mjs';
+import { exportBoard, findUniqueShape, verifyImport } from '../scripts/browser.mjs';
+import { createFromTemplate } from '../scripts/boards.mjs';
 import { branchClipboard, projectPoint, verifyBranchPaste, verifyReconnection, verifyUnaffected } from '../scripts/editing.mjs';
 import { parseCommand, prepareSpec, runUniDraw } from '../scripts/trelio-unidraw.mjs';
 import { buildRuntimePackage } from '../../tools/build-runtime-package.mjs';
@@ -114,6 +115,68 @@ test('managed account setup packages only the existing manual login',()=>{
   });
   assert.deepEqual(parseCommand(['setup']),{operation:'setup'});
   assert.throws(()=>parseCommand(['setup','--local-account','fixture']),{code:'INVALID_COMMAND'});
+});
+
+test('export does not toggle an already open submenu and reports a safe download failure',async()=>{
+  const {scene}=compileBoard(await fixture('mixed'));
+  let dialog=false;
+  let downloads=0;
+  const mustStayOpen={isVisible:async()=>true,
+    click:async()=>assert.fail('an already open menu must not be toggled')};
+  const format={isVisible:async()=>true,click:async()=>{dialog=true;}};
+  const save={isVisible:async()=>dialog,waitFor:async()=>assert.ok(dialog),click:async()=>{downloads++;}};
+  const browser={
+    url:async()=>url,
+    ui:{
+      getByTestId:id=>id==='elements-search-button'?{waitFor:async()=>{}}:mustStayOpen,
+      getByRole:(_role,{name})=>({'Сохранить файл':mustStayOpen,'Файл доски':format,
+        'Сохранить бэкап на компьютер':save})[name],
+    },
+    downloadScene:async click=>{await click();return scene;},
+  };
+  assert.equal(await exportBoard(browser,url),scene);
+  assert.equal(downloads,1);
+  browser.downloadScene=async()=>{throw Error('private browser path and board content');};
+  await assert.rejects(exportBoard(browser,url),{code:'EXPORT_DOWNLOAD_FAILED',message:'EXPORT_DOWNLOAD_FAILED'});
+});
+
+test('template actionability is checked before the claim and editor faults retain the board URL',async()=>{
+  const source='https://unidraw.io/assets/flowchart-preview.png';
+  const spec={template:'Flowchart'};
+  let currentUrl;
+  let blocked=true;
+  let clicks=0;
+  const progress=[];
+  const target={
+    getAttribute:async()=>source,
+    async click({trial}) {
+      if (trial) {
+        if (blocked) throw Error('overlay obscures this template');
+        return;
+      }
+      clicks++;
+      currentUrl=url;
+    },
+  };
+  const browser={
+    navigate:async next=>{currentUrl=next;},
+    url:async()=>currentUrl,
+    ui:{
+      getByText:()=>({waitFor:async()=>{}}),
+      locator:()=>({first:()=>({waitFor:async()=>{}})}),
+      evaluate:async()=>[{name:'Flowchart',source}],
+      getByRole:()=>({all:async()=>[target]}),
+      getByTestId:()=>({waitFor:async()=>{throw Error('editor hydration timed out');}}),
+    },
+  };
+  const observe=event=>progress.push(event);
+  await assert.rejects(createFromTemplate(browser,spec,observe),{code:'TEMPLATE_NOT_ACTIONABLE'});
+  assert.deepEqual(progress,[]);
+  assert.equal(clicks,0);
+  blocked=false;
+  await assert.rejects(createFromTemplate(browser,spec,observe),{code:'TEMPLATE_EDITOR_NOT_READY'});
+  assert.deepEqual(progress,[{stage:'template'},{stage:'read_back',board:url}]);
+  assert.equal(clicks,1);
 });
 
 test('a board patch can reference a pasted node in the same batch and refuses a forward reference',async()=>{

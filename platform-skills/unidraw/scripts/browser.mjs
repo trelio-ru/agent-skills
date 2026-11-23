@@ -7,13 +7,26 @@ const exact = name => ({ name, exact:true });
 const stop = code => { throw new UniDrawError(code); };
 const testId = (ui, name) => ui.getByTestId(name);
 
-async function openControl(button,target) {
-  for (let attempt=0; attempt<2 && !await target.isVisible(); attempt++) {
-    await button.click(WAIT);
-    try { await target.waitFor({state:'visible',timeout:900}); }
-    catch { /* Opening a menu is local UI only. Try once after noisy startup. */ }
+export async function browserStep(code, action) {
+  try {
+    return await action();
+  } catch (cause) {
+    // Native browser errors can include board URLs, labels and locator traces.
+    // Keep an exact step for recovery without exposing those inputs.
+    if (cause instanceof UniDrawError) throw cause;
+    stop(code);
   }
-  if (!await target.isVisible()) stop('EDITOR_CONTROL_NOT_AVAILABLE');
+}
+
+async function openControl(button,target,code = 'EDITOR_CONTROL_NOT_AVAILABLE') {
+  await browserStep(code,async()=>{
+    for (let attempt=0; attempt<2 && !await target.isVisible(); attempt++) {
+      await button.click(WAIT);
+      try { await target.waitFor({state:'visible',timeout:900}); }
+      catch { /* Opening a menu is local UI only. Try once after noisy startup. */ }
+    }
+    if (!await target.isVisible()) stop(code);
+  });
 }
 
 function sameBoard(url, expected) {
@@ -109,12 +122,16 @@ export async function exportBoard(browser, board) {
   const { ui } = browser;
   await boardGuard(browser,board);
   const saveMenu = ui.getByRole('menuitem',exact('Сохранить файл'));
-  await openControl(testId(ui,'menu-button'),saveMenu);
-  await saveMenu.click(WAIT);
-  await ui.getByRole('menuitem',exact('Файл доски')).click(WAIT);
+  const format = ui.getByRole('menuitem',exact('Файл доски'));
+  await openControl(testId(ui,'menu-button'),saveMenu,'EXPORT_MENU_NOT_OPEN');
+  // The submenu may already be open from pointer movement in the native UI.
+  // Acting on its visible child avoids toggling the parent closed again.
+  await openControl(saveMenu,format,'EXPORT_FORMAT_NOT_OPEN');
   const save = ui.getByRole('button',exact('Сохранить бэкап на компьютер'));
+  await openControl(format,save,'EXPORT_DIALOG_NOT_OPEN');
   if (!sameBoard(await browser.url(),board)) stop('BOARD_CHANGED');
-  const document = await browser.downloadScene(() => save.click(WAIT));
+  const document = await browserStep('EXPORT_DOWNLOAD_FAILED',() =>
+    browser.downloadScene(() => save.click(WAIT)));
   if (!sameBoard(await browser.url(),board)) stop('BOARD_CHANGED');
   readScene(document);
   return document;
