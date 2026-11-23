@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.16.11",
-    "summary": "Можно поставить первую реакцию на сообщение и проверить снятие последней, когда Telegram не присылает пустой список реакций",
-    "routingSummary": "Read, search, send, and manage Telegram messages, files, and chats."
+    "version": "2.17.0",
+    "summary": "Telegram-навык читает доступные описания личных профилей и ссылки в них. Ответ показывает, вернул ли Telegram описание и удалось ли прочитать профиль.",
+    "routingSummary": "Read, search, send, and manage Telegram messages, files, and chats, and read individual profile bios."
   },
   "connection": {
     "schemaVersion": 1,
@@ -19,7 +19,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.17.6",
+    "version": "2.18.0",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

@@ -8,6 +8,7 @@ import copy
 import json
 import pathlib
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace as NS
 from unittest import mock
 
@@ -32,7 +33,8 @@ class InteractionTests(unittest.TestCase):
                   available_reactions=TL("ChatReactionsSome")(reactions=[TL("ReactionEmoji")(emoticon="👍")]),
                   exported_invite="PRIVATE_INVITE", participants="PRIVATE_PARTICIPANTS")
         self.functions = NS(**vars(community.F), GetSendAsRequest=TL("GetSendAsRequest"), DeleteMessagesRequest=TL("DeleteMessagesRequest"))
-        self.enterContext(mock.patch.object(C, "api", return_value=(NS(messages=self.functions, channels=self.functions, stats=self.functions),
+        self.enterContext(mock.patch.object(C, "api", return_value=(NS(messages=self.functions, channels=self.functions, stats=self.functions,
+                          users=NS(GetFullUserRequest=TL("GetFullUserRequest"))),
                           community.T, community.U, NS(parse=base.markdown))))
         self.client.dispatch = self.dispatch
         self.group.forum = False
@@ -102,6 +104,111 @@ class InteractionTests(unittest.TestCase):
         self.assertIsNone(result["audienceCount"])
         self.assertTrue(result["aboutTruncated"])
         self.assertEqual(len(result["about"]), 4096)
+
+    def test_user_about_reports_only_observed_profile_state(self):
+        from telethon.errors import UserIdInvalidError, UserPrivacyRestrictedError
+
+        explicitly_empty = TL("UserFull")(id=8, about="")
+        too_long = TL("UserFull")(id=8, about="я" * 4097)
+        cases = (
+            (explicitly_empty, "empty", "", True, False),
+            (TL("UserFull")(id=8), "not_returned", "", False, False),
+            (too_long, "available", "я" * 4096, True, True),
+            (TL("UserFull")(id=9, about="PRIVATE_OTHER_BIO"), "invalid_response", "", False, False),
+            (TL("UserFull")(id=8, about=NS(note="PRIVATE_NOTE")), "invalid_response", "", False, False),
+            (UserPrivacyRestrictedError(request=None), "access_denied", "", False, False),
+            (UserIdInvalidError(request=None), "peer_unavailable", "", False, False),
+            (TimeoutError("PRIVATE_PROVIDER_ERROR"), "request_failed", "", False, False),
+        )
+
+        def dispatch(request):
+            self.assertEqual(type(request).__name__, "GetFullUserRequest")
+            self.assertEqual(request.id.id, 8)
+            if isinstance(provider_value, Exception):
+                raise provider_value
+            return NS(full_user=provider_value)
+
+        self.client.dispatch = dispatch
+        for provider_value, status, about, available, truncated in cases:
+            with self.subTest(status=status):
+                result = self.cli("chat-info", "--chat", "@alice")
+                self.assertEqual(result["chat"]["id"], 8)
+                self.assertEqual(result["chatType"], "user")
+                self.assertEqual(result["aboutStatus"], status)
+                self.assertEqual(result["about"], about)
+                self.assertIs(result["aboutAvailable"], available)
+                self.assertIs(result["aboutTruncated"], truncated)
+                self.assertNotIn("PRIVATE_", json.dumps(result))
+
+    def test_members_to_profile_by_id_reuses_native_session_peer(self):
+        from telethon import TelegramClient, functions, types, utils
+
+        now = datetime(2026, 9, 5, tzinfo=timezone.utc)
+        group = types.Channel(id=77, title="Группа", photo=types.ChatPhotoEmpty(),
+                              date=now, megagroup=True, access_hash=700, participants_count=1)
+        # No username, contact or personal dialog. The participant response is
+        # the only source of this user's peer information.
+        user = types.User(id=8000000012, first_name="Алиса", access_hash=1234567891,
+                          phone="PRIVATE_PHONE")
+        bio = "Пример 🔗 https://example.org/about\n@profile"
+        native_full = types.UserFull(id=user.id, about=bio, settings=types.PeerSettings(),
+                                    notify_settings=types.PeerNotifySettings(), common_chats_count=1,
+                                    note=types.TextWithEntities("PRIVATE_NOTE", []))
+        sent = []
+
+        async def respond(request, *, ordered):
+            # Only the network is simulated. Telethon resolves the real
+            # InputUser, calls its normal RPC wrapper and persists entities.
+            if isinstance(request, functions.InvokeWithoutUpdatesRequest):
+                request = request.query
+            sent.append(type(request).__name__)
+            if isinstance(request, functions.channels.GetChannelsRequest):
+                return types.messages.Chats([group])
+            if isinstance(request, functions.channels.GetParticipantsRequest):
+                return types.channels.ChannelParticipants(
+                    count=1, participants=[types.ChannelParticipant(user.id, now)], chats=[], users=[user],
+                )
+            if isinstance(request, functions.users.GetUsersRequest):
+                self.assertEqual(request.id, [types.InputUser(user.id, user.access_hash)])
+                return [user]
+            if isinstance(request, functions.users.GetFullUserRequest):
+                self.assertEqual(request.id, types.InputUser(user.id, user.access_hash))
+                return types.users.UserFull(native_full, [], [user])
+            self.fail(f"Unexpected native request: {type(request).__name__}")
+
+        def open_client():
+            client = TelegramClient(str(pathlib.Path(self.temp) / "synthetic"), 1, "synthetic",
+                                    receive_updates=False)
+            client._sender.send = respond
+            client.get_me = mock.AsyncMock(return_value=self.client.account)
+            return client
+
+        async def exercise():
+            first = open_client()
+            first.session.process_entities([group])
+            with mock.patch.object(M, "build_client", return_value=first):
+                args = M.build_parser().parse_args(["members", "--chat", str(utils.get_peer_id(group)), "--limit", "1"])
+                members = await M.command_members_async(args, self.identity)
+            row = members["participants"][0]
+            self.assertEqual(row["id"], user.id)
+            self.assertNotIn("about", row)
+            self.assertNotIn("PRIVATE_", json.dumps(row))
+            self.assertNotIn("GetFullUserRequest", sent)
+            second = open_client()
+            with (mock.patch.object(M, "build_client", return_value=second),
+                  mock.patch.object(C, "api", return_value=(functions, types, utils, None))):
+                args = M.build_parser().parse_args(["chat-info", "--chat", str(row["id"])])
+                return await I.run(args, self.identity, M)
+
+        result = asyncio.run(exercise())
+        self.assertEqual(sent[-2:], ["GetUsersRequest", "GetFullUserRequest"])
+        self.assertEqual(result["chat"]["id"], user.id)
+        self.assertEqual(result["about"], bio)
+        self.assertEqual(result["aboutStatus"], "available")
+        self.assertTrue(result["aboutAvailable"])
+        self.assertFalse(result["readState"]["marksRead"])
+        self.assertNotIn("PRIVATE_", json.dumps(result))
+        self.assertNotIn(str(user.access_hash), json.dumps(result))
 
     def test_sender_catalog_has_exact_marked_ids_and_no_private_data(self):
         result = self.cli("send-as", "--chat", "@group")

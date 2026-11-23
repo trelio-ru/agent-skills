@@ -122,6 +122,7 @@ def verify_sender(message, entity, selected, r, u):
 async def chat_info(client, entity, r, f, u):
     kind = type(entity).__name__
     full = None
+    about_status = None
     if kind in {"Channel", "Chat"}:
         response = await client(f.channels.GetFullChannelRequest(channel=entity) if kind == "Channel"
                                 else f.messages.GetFullChatRequest(chat_id=entity.id))
@@ -134,9 +135,12 @@ async def chat_info(client, entity, r, f, u):
         if len(matches) != 1:
             raise r.TelegramRuntimeError("Fresh Telegram rights are unavailable for this exact chat.")
         entity = matches[0]
-    elif kind != "User":
+        raw_about = getattr(full, "about", None)
+    elif kind == "User":
+        raw_about, about_status = await read_user_about(client, entity, r, f)
+    else:
         raise r.TelegramRuntimeError("Unsupported Telegram chat type.")
-    about, clipped = r.bounded_string(getattr(full, "about", None), 4096)
+    about, clipped = r.bounded_string(raw_about, 4096)
     rights = getattr(entity, "admin_rights", None)
     def flags(value, names):
         return {key: getattr(value, key, False) is True for key in names}
@@ -158,7 +162,7 @@ async def chat_info(client, entity, r, f, u):
     linked = getattr(full, "linked_chat_id", None)
     default = getattr(full, "default_send_as", None)
     return {"chat": r.public_entity(entity), "chatType": "channel" if getattr(entity, "broadcast", False) else "group" if kind in {"Channel", "Chat"} else "user", "about": about,
-            "aboutAvailable": full is not None and isinstance(getattr(full, "about", None), str),
+            "aboutAvailable": isinstance(raw_about, str),
             "aboutTruncated": clipped, "audienceCount": c.count(getattr(full if kind == "Channel" else entity, "participants_count", None)),
             "creator": getattr(entity, "creator", False) is True,
             "adminRights": flags(rights, ("post_messages", "edit_messages", "delete_messages", "ban_users", "invite_users", "pin_messages", "manage_topics", "anonymous")),
@@ -175,7 +179,44 @@ async def chat_info(client, entity, r, f, u):
             "defaultSendAsPeerId": u.get_peer_id(default) if type(default).__name__ in {"PeerUser", "PeerChannel"} else None,
             "allowedReactions": {"mode": {"ChatReactionsAll": "all", "ChatReactionsNone": "none", "ChatReactionsSome": "selected"}.get(reaction_kind, "unknown"), "reactions": allowed},
             "serverChecksRequired": True, "snapshotAtomic": False,
-            "readState": {"marksRead": False, "mode": "chat-metadata-only"}}
+            "readState": {"marksRead": False, "mode": "chat-metadata-only"},
+            **({"aboutStatus": about_status} if about_status is not None else {})}
+
+
+async def read_user_about(client, entity, r, f):
+    """Project only the requested user's bio from one account-scoped RPC."""
+
+    # Telethon resolves the exact User to InputUser inside the active session.
+    # No peer hash enters the command arguments or the agent-visible response.
+    request = f.users.GetFullUserRequest(id=entity)
+    try:
+        response = await client(request)
+    except Exception as error:
+        # A rejected RPC leaves the already resolved chat card usable. Match
+        # only fixed SDK access errors and never echo raw provider diagnostics.
+        error_type = type(error)
+        if error_type.__module__.startswith("telethon.errors") and error_type.__name__ in {
+            "ChannelPrivateError", "UserPrivacyRestrictedError",
+        }:
+            status = "access_denied"
+        elif r.is_telegram_entity_resolution_error(error):
+            status = "peer_unavailable"
+        else:
+            status = "request_failed"
+        return None, status
+
+    full = getattr(response, "full_user", None)
+    user_id = getattr(full, "id", None)
+    if type(full).__name__ != "UserFull" or type(user_id) is not int or user_id != entity.id:
+        return None, "invalid_response"
+    raw_about = getattr(full, "about", None)
+    # An unset optional field cannot distinguish an empty bio from one Telegram
+    # withheld for this account. Only an explicit empty string is known empty.
+    if raw_about is None:
+        return None, "not_returned"
+    if not isinstance(raw_about, str):
+        return None, "invalid_response"
+    return raw_about, "available" if raw_about else "empty"
 
 
 def validate_approval(args, r):

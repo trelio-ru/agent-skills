@@ -117,6 +117,10 @@ Task-команды Telegram отдельно перечислены в signed `
 `audience-count` читает число подписчиков/участников из exact live metadata,
 без списка людей/истории. Missing/denied count остаётся неизвестным; cached
 Channel counter не заменяет `channelFull.participants_count`.
+`chat-info` читает bio одного пользователя через exact `users.getFullUser`.
+Проверяй переход из `members` по числовому ID через новую клиентскую сессию
+того же аккаунта. Отсутствующее поле, явный отказ и сбой сохраняют разные
+статусы. [Контракт](docs/telegram-mtproto-message-workflows.md#карточка-чата).
 Аналитика каналов и album/forward commands следуют тому же контракту сообщений:
 фактический provider period/DC, bounded graphs без tokens и nullable counters.
 Bulk preview привязан к account/source/destination/bytes; одноразовый approval
