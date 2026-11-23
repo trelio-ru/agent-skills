@@ -11,7 +11,7 @@ import {
 import { exportBoard, findUniqueShape, verifyImport } from '../scripts/browser.mjs';
 import { createFromTemplate } from '../scripts/boards.mjs';
 import { branchClipboard, projectPoint, verifyBranchPaste, verifyReconnection, verifyUnaffected } from '../scripts/editing.mjs';
-import { parseCommand, prepareSpec, runUniDraw } from '../scripts/trelio-unidraw.mjs';
+import { createPlaywrightDriver, parseCommand, prepareSpec, runUniDraw } from '../scripts/trelio-unidraw.mjs';
 import { buildRuntimePackage } from '../../tools/build-runtime-package.mjs';
 
 const fixture = async name => JSON.parse(await readFile(new URL('../development/examples/'+name+'.json',import.meta.url),'utf8'));
@@ -117,14 +117,20 @@ test('managed account setup packages only the existing manual login',()=>{
   assert.throws(()=>parseCommand(['setup','--local-account','fixture']),{code:'INVALID_COMMAND'});
 });
 
-test('export does not toggle an already open submenu and reports a safe download failure',async()=>{
+test('export starts from the open submenu and activates the enabled backup button with Enter',async()=>{
   const {scene}=compileBoard(await fixture('mixed'));
   let dialog=false;
   let downloads=0;
   const mustStayOpen={isVisible:async()=>true,
     click:async()=>assert.fail('an already open menu must not be toggled')};
   const format={isVisible:async()=>true,click:async()=>{dialog=true;}};
-  const save={isVisible:async()=>dialog,waitFor:async()=>assert.ok(dialog),click:async()=>{downloads++;}};
+  const save={
+    isVisible:async()=>dialog,
+    waitFor:async()=>assert.ok(dialog),
+    count:async()=>1,
+    isEnabled:async()=>true,
+    press:async key=>{assert.equal(key,'Enter'); downloads++;},
+  };
   const browser={
     url:async()=>url,
     ui:{
@@ -136,8 +142,51 @@ test('export does not toggle an already open submenu and reports a safe download
   };
   assert.equal(await exportBoard(browser,url),scene);
   assert.equal(downloads,1);
-  browser.downloadScene=async()=>{throw Error('private browser path and board content');};
-  await assert.rejects(exportBoard(browser,url),{code:'EXPORT_DOWNLOAD_FAILED',message:'EXPORT_DOWNLOAD_FAILED'});
+  save.isEnabled=async()=>false;
+  await assert.rejects(exportBoard(browser,url),{code:'EXPORT_BUTTON_NOT_AVAILABLE'});
+  assert.equal(downloads,1);
+});
+
+test('backup driver observes native downloads before activation and gives each failure a safe code',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'unidraw-download-'));
+  const file=join(directory,'export.unidraw');
+  const privateFailure=Error('private browser path and board content');
+  let listening=false;
+  let removed=0;
+  const download={
+    saveAs:async destination=>{await writeFile(destination,'{"version":1}');},
+    delete:async()=>{removed++;},
+  };
+  const page={
+    waitForEvent:async name=>{
+      assert.equal(name,'download');
+      listening=true;
+      return download;
+    },
+  };
+  const driver=createPlaywrightDriver(page,directory);
+  try {
+    const document=await driver.downloadScene(async()=>assert.ok(listening));
+    assert.deepEqual(document,{version:1});
+    assert.equal(removed,1);
+    await assert.rejects(readFile(file),{code:'ENOENT'});
+
+    page.waitForEvent=async()=>{throw privateFailure;};
+    await assert.rejects(driver.downloadScene(async()=>{throw privateFailure;}),{
+      code:'EXPORT_TRIGGER_FAILED',message:'EXPORT_TRIGGER_FAILED',
+    });
+    await assert.rejects(driver.downloadScene(async()=>{}),{
+      code:'EXPORT_DOWNLOAD_EVENT_MISSING',message:'EXPORT_DOWNLOAD_EVENT_MISSING',
+    });
+    page.waitForEvent=async()=>download;
+    download.saveAs=async()=>{throw privateFailure;};
+    await assert.rejects(driver.downloadScene(async()=>{}),{
+      code:'EXPORT_DOWNLOAD_FILE_FAILED',message:'EXPORT_DOWNLOAD_FILE_FAILED',
+    });
+    assert.equal(removed,2);
+  } finally {
+    await rm(directory,{recursive:true,force:true});
+  }
 });
 
 test('template actionability is checked before the claim and editor faults retain the board URL',async()=>{

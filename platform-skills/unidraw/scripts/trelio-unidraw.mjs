@@ -16,7 +16,7 @@ import { chooseProject, copyBoard, createFromTemplate, gallery } from './boards.
 import { canonicalBoardUrl, compileBoard, inspectScene, readScene, UniDrawError } from './model.mjs';
 
 const SKILL = 'unidraw';
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 const ORIGIN = 'https://unidraw.io';
 const DASHBOARD = ORIGIN+'/app';
 const MAX_SPEC_BYTES = 192 * 1024;
@@ -171,17 +171,25 @@ export function createPlaywrightDriver(page,scratch) {
       const [chooser] = await Promise.all([page.waitForEvent('filechooser',{timeout:12_000}),click()]);
       await chooser.setFiles(paths);
     },
-    async downloadScene(click) {
-      const [download] = await Promise.all([page.waitForEvent('download',{timeout:14_000}),click()]);
-      const file = join(scratch,'export.unidraw');
-      try {
-        await download.saveAs(file);
-        if (process.platform!=='win32') await chmod(file,0o600);
-        return await readJson(file,MAX_BACKUP_BYTES);
-      } finally {
-        await rm(file,{force:true});
-        await download.delete().catch(()=>{});
-      }
+    async downloadScene(activate) {
+      // Register before activation: a generated backup can start downloading
+      // in the same browser event tick. Observe rejection immediately in case
+      // activation fails and the host closes the page before the waiter ends.
+      const started = page.waitForEvent('download',{timeout:14_000});
+      started.catch(()=>{});
+      await browserStep('EXPORT_TRIGGER_FAILED',activate);
+      const download = await browserStep('EXPORT_DOWNLOAD_EVENT_MISSING',()=>started);
+      return browserStep('EXPORT_DOWNLOAD_FILE_FAILED',async()=>{
+        const file = join(scratch,'export.unidraw');
+        try {
+          await download.saveAs(file);
+          if (process.platform!=='win32') await chmod(file,0o600);
+          return await readJson(file,MAX_BACKUP_BYTES);
+        } finally {
+          await rm(file,{force:true});
+          await download.delete().catch(()=>{});
+        }
+      });
     },
   };
 }

@@ -123,15 +123,21 @@ export async function exportBoard(browser, board) {
   await boardGuard(browser,board);
   const saveMenu = ui.getByRole('menuitem',exact('Сохранить файл'));
   const format = ui.getByRole('menuitem',exact('Файл доски'));
-  await openControl(testId(ui,'menu-button'),saveMenu,'EXPORT_MENU_NOT_OPEN');
-  // The submenu may already be open from pointer movement in the native UI.
-  // Acting on its visible child avoids toggling the parent closed again.
-  await openControl(saveMenu,format,'EXPORT_FORMAT_NOT_OPEN');
   const save = ui.getByRole('button',exact('Сохранить бэкап на компьютер'));
-  await openControl(format,save,'EXPORT_DIALOG_NOT_OPEN');
+  if (!await save.isVisible()) {
+    // A previous export or pointer movement may have left the submenu open.
+    // Start at the deepest visible control to avoid toggling its parent.
+    if (!await format.isVisible()) {
+      await openControl(testId(ui,'menu-button'),saveMenu,'EXPORT_MENU_NOT_OPEN');
+      await openControl(saveMenu,format,'EXPORT_FORMAT_NOT_OPEN');
+    }
+    await openControl(format,save,'EXPORT_DIALOG_NOT_OPEN');
+  }
   if (!sameBoard(await browser.url(),board)) stop('BOARD_CHANGED');
-  const document = await browserStep('EXPORT_DOWNLOAD_FAILED',() =>
-    browser.downloadScene(() => save.click(WAIT)));
+  if (await save.count() !== 1 || !await save.isEnabled()) stop('EXPORT_BUTTON_NOT_AVAILABLE');
+  // The native button is keyboard-focusable. Its center can be obscured
+  // while the modal opens, so use normal keyboard activation.
+  const document = await browser.downloadScene(() => save.press('Enter',WAIT));
   if (!sameBoard(await browser.url(),board)) stop('BOARD_CHANGED');
   readScene(document);
   return document;

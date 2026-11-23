@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "unidraw",
-    "version": "1.0.1",
-    "summary": "Редактор UniDraw работает в отдельном фоновом окне Chrome. Уточнены этапы проверки экспорта и создания доски из шаблона.",
+    "version": "1.0.2",
+    "summary": "Навык использует клавиатурное действие для сохранения бэкапа доски в Chrome и точнее сообщает о сбоях скачивания.",
     "routingSummary": "Create, inspect, and edit native Unidraw boards and diagrams with a managed browser."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.2.1",
+    "version": "0.2.2",
     "minimumHostVersion": "3.31.0",
     "entrypoint": { "path": "trelio-unidraw.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
