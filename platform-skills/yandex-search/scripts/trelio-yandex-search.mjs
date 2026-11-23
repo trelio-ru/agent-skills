@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SKILL_ID = 'yandex-search';
-const MINIMUM_HOST_VERSION = '3.34.21';
+const MINIMUM_HOST_VERSION = '3.34.36';
 const targets = {"search": "https://yandex.ru/search/", "chat": "https://alice.yandex.ru/"};
 const origins = ["https://yandex.ru", "https://alice.yandex.ru", "https://ya.ru"];
 const referenceRoutes = [{ origin: 'https://alice.yandex.ru', prefix: '/chat/', suffix: '', selector: 'none' }];

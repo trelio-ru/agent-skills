@@ -100,6 +100,10 @@ test('rejects client overrides and unpaced Enter, while the exact package can di
   })),{schemaVersion:1,accounts:[]});
   const built = buildRuntimePackage(root);
   const { files } = JSON.parse(built.packageBytes);
+  // The host uses the marker from the actual package to admit an unbound
+  // browser. Instructions or a marker left out of packaging cannot do that.
+  const guestMarker = files.find(file => file.path === 'trelio-visual-guest-profile.json');
+  assert.equal(Buffer.from(guestMarker.contentBase64, 'base64').toString('utf8').trim(), '{"schemaVersion":1}');
   const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-search-package-')));
   try {
     for (const file of files) await fs.writeFile(path.join(dir,file.path),Buffer.from(file.contentBase64,'base64'));

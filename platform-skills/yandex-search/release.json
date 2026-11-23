@@ -2,21 +2,21 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "yandex-search",
-    "version": "1.2.2",
-    "summary": "Яндекс: до трёх одобренных попыток CAPTCHA в одной сессии и ручное продолжение при необходимости",
+    "version": "1.2.3",
+    "summary": "Гостевой Яндекс Поиск запускается без ручной настройки аккаунта",
     "routingSummary": "Search Yandex and discuss follow-up questions with Alice AI in the managed browser."
   },
   "connection": {
     "schemaVersion": 1,
     "intro": [
-      "Обычная работа идёт в Chromium Trelio без окна. Навык может работать без входа, если сайт допускает гостевой режим. Для входа или проверки откроется отдельное видимое окно."
+      "Обычный поиск открывается в Chromium Trelio без окна. Если личный аккаунт не привязан, навык автоматически использует гостевой профиль. Видимое окно открывается, если нужен вход или ручная проверка."
     ],
     "configFields": [],
     "secretFields": []
   },
   "runtime": {
-    "version": "1.2.2",
-    "minimumHostVersion": "3.34.21",
+    "version": "1.2.3",
+    "minimumHostVersion": "3.34.36",
     "entrypoint": {
       "path": "trelio-yandex-search.mjs",
       "interpreter": "node"
@@ -37,6 +37,11 @@
         "source": "scripts/trelio-yandex-search.mjs",
         "path": "trelio-yandex-search.mjs",
         "mode": 493
+      },
+      {
+        "source": "trelio-visual-guest-profile.json",
+        "path": "trelio-visual-guest-profile.json",
+        "mode": 420
       }
     ]
   }
