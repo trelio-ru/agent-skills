@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "language": "node",
+  "testFile": "tests/provider.test.mjs",
+  "prepareFile": "development/prepare-ci.mjs"
+}

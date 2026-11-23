@@ -4,10 +4,10 @@
 Инструкции, runtime-код, тесты и инструменты сборки публикуются отдельно от
 корпоративных навыков, личных подключений и production signing.
 
-В `platform-skills/` находятся 28 общих навыков: Apple Calendar, 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
+В `platform-skills/` находятся общие навыки: Apple Calendar, 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
 DeepSeek Search, DodoStats / DrinkitStats, Google: поиск и ИИ, Google Календарь, Google Таблицы и Документы, GigaChat, почта, ГАС «Правосудие», Госуслуги,
 iPhone Mirroring, Perplexity Search, Yandex Search, ИИ-Консьерж от Гига / Сбер,
-MAX, поиск Ozon, заказные письма Почты России, Т-Банк, Telegram MTProto,
+MAX, поиск Ozon, заказные письма Почты России, [проверка российского юрлица](platform-skills/check-russian-company/SKILL.md), Т-Банк, Telegram MTProto,
 Telegram Web, WhatsApp, факсимиле для документов, ВК Реклама и локальная расшифровка аудио. Для конкретного provider
 читай его `SKILL.md`.
 

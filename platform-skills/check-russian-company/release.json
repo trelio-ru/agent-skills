@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "check-russian-company",
+    "version": "1.0.0",
+    "summary": "Публичная проверка российского юрлица по ИНН в ФНС, КАД и Федресурсе.",
+    "routingSummary": "Check a Russian legal entity by its tax ID in the public tax, arbitration, and bankruptcy registries."
+  },
+  "connection": null,
+  "runtime": {
+    "version": "1.0.0",
+    "minimumHostVersion": "3.34.36",
+    "entrypoint": {
+      "path": "check-russian-company.mjs",
+      "interpreter": "node"
+    },
+    "capabilities": [
+      "browser",
+      "local-session",
+      "network",
+      "local-accounts-v1"
+    ],
+    "browserSession": {
+      "apiVersion": 1,
+      "sessionClass": "protected-snapshot",
+      "leaseMs": 300000,
+      "manualAssist": true
+    },
+    "files": [
+      {
+        "source": "check-russian-company.mjs",
+        "path": "check-russian-company.mjs",
+        "mode": 493
+      },
+      {
+        "source": "registry-workflows.mjs",
+        "path": "registry-workflows.mjs",
+        "mode": 420
+      },
+      {
+        "source": "trelio-visual-guest-profile.json",
+        "path": "trelio-visual-guest-profile.json",
+        "mode": 420
+      }
+    ]
+  }
+}
