@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "unidraw",
-    "version": "0.2.0",
+    "version": "1.0.0",
     "summary": "Редактируемые схемы и майндмапы UniDraw из структуры, пакетные правки и проверка сохранённой доски.",
     "routingSummary": "Create, inspect, and edit native Unidraw boards and diagrams with a managed browser."
   },
