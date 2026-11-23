@@ -8,8 +8,12 @@ import { checks, kadInput, publicReviewUrls, RegistryReadError, requireCompanyIn
   from './registry-workflows.mjs';
 
 const ID = 'check-russian-company';
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const MINIMUM_HOST = '3.34.36';
+// All checks in this skill reuse one encrypted guest snapshot. The host
+// validates its cookies before launch, so every process restoring that
+// snapshot needs the same declared cookie scope as the process that saved it.
+const registryOrigins = Object.freeze(Object.values(sources).map(({ url }) => new URL(url).origin));
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const known = {
   check: 0, resume: 0, 'read-text': 0, screenshot: 0, click: 3, scroll: 4,
@@ -158,12 +162,12 @@ async function loadHost(env) {
 
 function hostBrowser({ visual }, source, env) {
   const { url, presentation } = sources[source];
-  const origins = [new URL(url).origin];
-  return { call: (operation, args = {}) => visual.runVisualSession({ origins, presentation, observationMode: 'text',
+  return { call: (operation, args = {}) => visual.runVisualSession({
+    origins: registryOrigins, presentation, observationMode: 'text',
     // The common browser handles ordinary HTTP(S) navigation and redirects.
     // The provider still owns the initial URLs and only types the supplied INN.
     externalNavigation: true, semanticControls: true,
-    ...(source === 'kad' ? { fieldCheckPolicy: { origins, labels: [kadInput] } } : {}),
+    ...(source === 'kad' ? { fieldCheckPolicy: { origins: [new URL(url).origin], labels: [kadInput] } } : {}),
     operation, args, env }) };
 }
 

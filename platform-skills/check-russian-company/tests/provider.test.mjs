@@ -177,7 +177,7 @@ test('published package materializes the public identity and its real CLI needs 
   const release = fileURLToPath(new URL('../', import.meta.url));
   const { packageBytes } = buildRuntimePackage(release);
   const archive = JSON.parse(packageBytes);
-  assert.deepEqual(archive.skill, { id: 'check-russian-company', runtimeVersion: '1.0.0' });
+  assert.deepEqual(archive.skill, { id: 'check-russian-company', runtimeVersion: '1.0.1' });
   assert(archive.files.some(file => file.path === 'trelio-visual-guest-profile.json'));
   const directory = await mkdtemp(join(tmpdir(), 'trelio-check-company-cli-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -189,4 +189,19 @@ test('published package materializes the public identity and its real CLI needs 
   assert.deepEqual(invoke('__trelio_accounts_import'), { schemaVersion: 1, accounts: [] });
   assert.equal(invoke('check', 'fns', '3802016940').diagnostic.code, 'INVALID_COMPANY_INN');
   assert.equal(invoke('doctor').diagnostic.code, 'REGISTRY_HOST_REQUIRED');
+});
+
+test('all three registries can restore the same snapshot without extending the KAD field policy', async () => {
+  const allowed = ['https://egrul.nalog.ru', 'https://kad.arbitr.ru', 'https://bankrot.fedresurs.ru'];
+  const { invoke, calls } = fixture();
+  for (const source of ['fns', 'kad', 'fedresurs']) {
+    const previous = calls.length;
+    const started = await invoke(['check', source, inn]);
+    assert.equal(started.status, 'pending');
+    await invoke(['close', source, inn]);
+    const operations = calls.slice(previous);
+    assert(operations.every(call => JSON.stringify(call.origins) === JSON.stringify(allowed)));
+    assert.deepEqual(operations.find(call => call.operation === 'navigate').fieldCheckPolicy,
+      source === 'kad' ? { origins: ['https://kad.arbitr.ru'], labels: ['название, ИНН или ОГРН'] } : undefined);
+  }
 });

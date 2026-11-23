@@ -2,13 +2,13 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "check-russian-company",
-    "version": "1.0.0",
-    "summary": "Публичная проверка российского юрлица по ИНН в ФНС, КАД и Федресурсе.",
+    "version": "1.0.1",
+    "summary": "Стабильное восстановление гостевой сессии при последовательной проверке ФНС, КАД и Федресурса.",
     "routingSummary": "Check a Russian legal entity by its tax ID in the public tax, arbitration, and bankruptcy registries."
   },
   "connection": null,
   "runtime": {
-    "version": "1.0.0",
+    "version": "1.0.1",
     "minimumHostVersion": "3.34.36",
     "entrypoint": {
       "path": "check-russian-company.mjs",
