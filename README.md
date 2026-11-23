@@ -7,9 +7,15 @@
 В `platform-skills/` находятся общие навыки: Apple Calendar, 1С ЭДО, Авито, ВКонтакте, КонсультантПлюс,
 DeepSeek Search, DodoStats / DrinkitStats, Google: поиск и ИИ, Google Календарь, Google Таблицы и Документы, GigaChat, почта, ГАС «Правосудие», Госуслуги,
 iPhone Mirroring, Perplexity Search, Yandex Search, ИИ-Консьерж от Гига / Сбер,
-MAX, поиск Ozon, заказные письма Почты России, [проверка российского юрлица](platform-skills/check-russian-company/SKILL.md), Т-Банк, Telegram MTProto,
+MAX, поиск Ozon, заказные письма Почты России, [проверка российского юрлица](platform-skills/check-russian-company/SKILL.md),
+Право РФ — открытые источники, Т-Банк, Telegram MTProto,
 Telegram Web, WhatsApp, факсимиле для документов, ВК Реклама и локальная расшифровка аудио. Для конкретного provider
 читай его `SKILL.md`.
+
+[Право РФ — открытые источники](platform-skills/pravo-rf-open-sources/SKILL.md)
+помогает находить нормы на нужную дату, судебные акты и разъяснения ведомств.
+Использует веб-поиск и браузер клиента, сверяет редакцию и реквизиты документа.
+Для открытых источников платная подписка на справочную систему не требуется.
 
 [Apple Calendar](platform-skills/apple-calendar/SKILL.md) использует CalDAV iCloud
 на macOS и Windows: защищённая локальная форма, Keychain/DPAPI, выбранные календари,

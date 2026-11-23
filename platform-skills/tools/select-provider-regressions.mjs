@@ -45,6 +45,9 @@ const PROVIDERS = Object.freeze({
     },
   },
   "ozon-buyer-search": { owner: "general", matrix: null },
+  // Legal research uses the client's existing tools. Check the shared
+  // source contracts without scheduling executable-provider OS jobs.
+  "pravo-rf-open-sources": { owner: "general", matrix: null },
   "russian-post-registered-mail": { owner: "general", matrix: null },
   "telegram-mtproto": { owner: "general", matrix: { language: "python" } },
   "telegram-web": {
