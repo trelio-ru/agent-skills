@@ -16,7 +16,7 @@ import { chooseProject, copyBoard, createFromTemplate, gallery } from './boards.
 import { canonicalBoardUrl, compileBoard, inspectScene, readScene, UniDrawError } from './model.mjs';
 
 const SKILL = 'unidraw';
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 const ORIGIN = 'https://unidraw.io';
 const DASHBOARD = ORIGIN+'/app';
 const MAX_SPEC_BYTES = 192 * 1024;

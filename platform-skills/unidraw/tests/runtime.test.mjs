@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import {
-  boardText, canonicalBoardUrl, compileBoard, plainText, projectScene, readScene,
+  boardText, canonicalBoardUrl, compileBoard, plainText, projectScene, readScene, UniDrawError,
 } from '../scripts/model.mjs';
 import { exportBoard, findUniqueShape, verifyImport } from '../scripts/browser.mjs';
 import { createFromTemplate } from '../scripts/boards.mjs';
@@ -187,6 +187,51 @@ test('backup driver observes native downloads before activation and gives each f
   } finally {
     await rm(directory,{recursive:true,force:true});
   }
+});
+
+test('a missed export event reopens only the exact board and retries the backup once',async()=>{
+  const {scene}=compileBoard(await fixture('mixed'));
+  const differentBoard='https://unidraw.io/app/board/fixture-0002';
+  let activeBoard=url;
+  let activations=0;
+  let reloads=0;
+  let failEveryDownload=false;
+  let switchBoard=false;
+  const save={
+    isVisible:async()=>true,
+    count:async()=>1,
+    isEnabled:async()=>true,
+    press:async()=>{activations++;},
+  };
+  const browser={
+    url:async()=>activeBoard,
+    async reload(){
+      reloads++;
+      if (switchBoard) activeBoard=differentBoard;
+    },
+    ui:{
+      getByTestId:()=>({waitFor:async()=>{}}),
+      getByRole:(_role,{name})=>name==='Сохранить бэкап на компьютер'?save:null,
+    },
+    async downloadScene(activate){
+      await activate();
+      if (activations===1 || failEveryDownload) throw new UniDrawError('EXPORT_DOWNLOAD_EVENT_MISSING');
+      return scene;
+    },
+  };
+  assert.equal(await exportBoard(browser,url),scene);
+  assert.equal(reloads,1);
+  assert.equal(activations,2);
+
+  failEveryDownload=true;
+  await assert.rejects(exportBoard(browser,url),{code:'EXPORT_DOWNLOAD_EVENT_MISSING'});
+  assert.equal(reloads,2);
+  assert.equal(activations,4);
+
+  switchBoard=true;
+  await assert.rejects(exportBoard(browser,url),{code:'BOARD_CHANGED'});
+  assert.equal(reloads,3);
+  assert.equal(activations,5);
 });
 
 test('template actionability is checked before the claim and editor faults retain the board URL',async()=>{

@@ -118,7 +118,7 @@ export async function findImportedBoard(browser, title) {
   stop('IMPORT_OUTCOME_UNKNOWN');
 }
 
-export async function exportBoard(browser, board) {
+async function readBoardBackup(browser, board) {
   const { ui } = browser;
   await boardGuard(browser,board);
   const saveMenu = ui.getByRole('menuitem',exact('Сохранить файл'));
@@ -141,6 +141,21 @@ export async function exportBoard(browser, board) {
   if (!sameBoard(await browser.url(),board)) stop('BOARD_CHANGED');
   readScene(document);
   return document;
+}
+
+export async function exportBoard(browser, board) {
+  try {
+    return await readBoardBackup(browser, board);
+  } catch (cause) {
+    if (!(cause instanceof UniDrawError) || cause.code !== 'EXPORT_DOWNLOAD_EVENT_MISSING') throw cause;
+  }
+  // A download can fail to arrive even after the editor saved a change.
+  // Reopen the same board and retry only its read. The caller still checks
+  // the expected changes against this saved state. Never repeat its edit
+  // or reuse a backup from another board or an earlier download.
+  if (!sameBoard(await browser.url(),board)) stop('BOARD_CHANGED');
+  await browserStep('EXPORT_REOPEN_FAILED',() => browser.reload());
+  return readBoardBackup(browser, board);
 }
 
 export async function selectFigure(browser, board, label, type='shape') {

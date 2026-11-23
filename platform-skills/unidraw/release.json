@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "unidraw",
-    "version": "1.0.2",
-    "summary": "Навык использует клавиатурное действие для сохранения бэкапа доски в Chrome и точнее сообщает о сбоях скачивания.",
+    "version": "1.0.3",
+    "summary": "Если Chrome не передал файл после правки, навык один раз перечитывает ту же сохранённую доску для проверки результата.",
     "routingSummary": "Create, inspect, and edit native Unidraw boards and diagrams with a managed browser."
   },
   "connection": {
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "0.2.2",
+    "version": "0.2.3",
     "minimumHostVersion": "3.31.0",
     "entrypoint": { "path": "trelio-unidraw.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
