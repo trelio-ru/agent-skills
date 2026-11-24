@@ -103,7 +103,10 @@ async def select_sender(client, entity, me, selector, r):
     if not public["available"]:
         raise r.TelegramRuntimeError("This Telegram sender requires Premium on the actual account.")
     native = await client.get_input_entity(value)
-    if u.get_peer_id(native) != public["peerId"]:
+    # Telethon may represent the signed-in user as InputPeerSelf, which
+    # has no numeric ID of its own. Resolve it on this client, then verify
+    # that it still represents the exact sender selected for this chat.
+    if await client.get_peer_id(native) != public["peerId"]:
         raise r.TelegramRuntimeError("Telegram input sender identity changed.")
     return native, public
 

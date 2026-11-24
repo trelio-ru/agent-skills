@@ -109,7 +109,7 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
       assert.ok(source.includes(field), `Missing delivered Telegram profile contract: ${field}`);
     }
   }
-  assert.equal(releaseManifest.release.version, "2.18.0");
+  assert.equal(releaseManifest.release.version, "2.18.1");
   // Publication binds this reviewed source summary to the immutable release;
   // the catalog title/description must not become an inferred routing fallback.
   assert.match(releaseManifest.release.routingSummary, /^[\x20-\x7e]{12,180}$/u);
@@ -117,7 +117,7 @@ test("Telegram MTProto release preserves privacy, search, scheduled-message, edi
   assert.equal(Object.hasOwn(releaseManifest.release, "state"), false);
   // Catalog and executable versions advance independently. The common host's
   // original-audio admission starts at runtime 2.17.0.
-  assert.equal(releaseManifest.runtime.version, "2.19.0");
+  assert.equal(releaseManifest.runtime.version, "2.19.1");
   assert.deepEqual(releaseManifest.runtime.files.filter(file=>file.path==='trelio-source-media.json'),
     [{source:'scripts/trelio-source-media.json',path:'trelio-source-media.json',mode:420}]);
   assert.deepEqual(JSON.parse(await readFile(new URL('scripts/trelio-source-media.json',skillRoot),'utf8')),

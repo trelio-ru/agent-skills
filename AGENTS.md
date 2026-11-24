@@ -149,7 +149,9 @@ links; topic lifecycle не удаляет историю. Готовые сце
 coverage и самостоятельную sending authority.
 Карточка возможностей использует fresh exact metadata без participant/history
 projection. Per-call send-as выбирается из каталога exact destination и входит
-в one-use preview; saved default не меняется. Delete требует personally
+в one-use preview; saved default не меняется. Сверку личного автора проверяй
+с настоящим Telethon InputPeerSelf, включая предпросмотр ответа с файлом.
+Delete требует personally
 attributed outgoing, exact single ID и explicit scope; admin permission не
 доказывает авторство. Native affected-state и exact absence проверяются вместе.
 Цитата сверяется с полным оригиналом по UTF-16 offset; series парсится один раз,

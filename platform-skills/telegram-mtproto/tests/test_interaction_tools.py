@@ -5,6 +5,7 @@ The same production parser, handlers and one-use disk journal run on every OS.
 """
 import asyncio
 import copy
+import hashlib
 import json
 import pathlib
 import unittest
@@ -291,6 +292,51 @@ class InteractionTests(unittest.TestCase):
         self.assertEqual(preview["preview"]["replyToMessageId"], 42)
         self.assertEqual(result["replyToMessageId"], 42)
         self.assertEqual(self.client.send_message.call_args.kwargs["send_as"].id, 1)
+
+    def test_reply_with_photo_previews_native_self_after_exact_read(self):
+        from telethon import TelegramClient, events, functions, types, utils
+        from telethon.extensions import markdown
+        from telethon.sessions import MemorySession
+
+        owner = types.User(id=123, is_self=True, access_hash=456, first_name="Владелец")
+        peer = types.User(id=124, access_hash=457, first_name="Собеседник")
+        target = types.Message(id=42, peer_id=types.PeerUser(peer.id), message="Исходное",
+                               date=datetime(2026, 9, 5, tzinfo=timezone.utc))
+        self.client.account, self.client.group = owner, peer
+        self.client.messages[(peer.id, target.id)] = target
+        native = TelegramClient(MemorySession(), 1, "synthetic")
+        native._mb_entity_cache.set_self_user(owner.id, False, owner.access_hash)
+        # Use the real SDK conversions with no account, socket or disk session.
+        # The usual fake returns a User, so it misses Telethon's InputPeerSelf.
+        native._sender.send = mock.AsyncMock(side_effect=AssertionError("Unexpected Telegram RPC"))
+        self.client.get_input_entity = native.get_input_entity
+        self.client.get_peer_id = native.get_peer_id
+        self.assertIsInstance(asyncio.run(native.get_input_entity(owner)), types.InputPeerSelf)
+        photo = pathlib.Path(self.temp) / "answer.png"
+        content = b"\x89PNG\r\n\x1a\nSYNTHETIC_ONLY"
+        photo.write_bytes(content)
+
+        with mock.patch.object(M, "import_telethon_workflows", return_value=(functions, types, utils, events, markdown)), \
+             mock.patch.object(C, "api", return_value=(functions, types, utils, markdown)):
+            read = M.build_parser().parse_args(["read", "--chat", str(peer.id), "--message-id", str(target.id)])
+            self.assertEqual(asyncio.run(M.command_read_async(read, self.identity))["message"]["id"], target.id)
+            reply = ("reply", "--chat", str(peer.id), "--message-id", str(target.id),
+                     "--message", "Подпись", "--file", str(photo), "--send-as", "self", "--dry-run")
+            preview = self.cli(*reply)
+            self.assertRegex(preview["approvalHash"], r"^[a-f0-9]{64}$")
+            self.assertEqual(preview["preview"]["replyToMessageId"], target.id)
+            self.assertEqual(preview["preview"]["actingAccount"]["id"], owner.id)
+            self.assertEqual(preview["preview"]["sender"]["peerId"], owner.id)
+            self.assertEqual(preview["preview"]["text"], "Подпись")
+            self.assertEqual(preview["preview"]["file"]["sha256"], hashlib.sha256(content).hexdigest())
+
+            # Resolving the current account is still a comparison with the
+            # reviewed sender. A different account must fail before approval.
+            native._mb_entity_cache.set_self_user(peer.id, False, peer.access_hash)
+            with self.assertRaisesRegex(M.TelegramRuntimeError, "input sender identity changed"):
+                self.cli(*reply)
+        self.client.send_message.assert_not_called()
+        native._sender.send.assert_not_awaited()
 
     def test_explicit_file_preview_freezes_original_bytes_and_blocks_changed_file(self):
         path = pathlib.Path(self.temp) / "image.png"

@@ -93,6 +93,9 @@ class Client:
             return User(id=8, first_name="Алиса")
         return reference
 
+    async def get_peer_id(self, entity):
+        return peer_id(entity)
+
     async def get_messages(self, entity, *, ids):
         self.reads.append((peer_id(entity), ids))
         return self.messages.get((peer_id(entity), ids))
