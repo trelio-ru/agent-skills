@@ -78,6 +78,8 @@ MAX_CAPTION_CHARS = 1024
 # makes the JSON contract safe even when a future MTProto object or test double
 # contains unexpectedly large values.
 MAX_READ_TEXT_CHARS = 16_384
+HISTORY_PAGE_ROWS = 20
+HISTORY_PAGE_BYTES = 48 * 1024
 MAX_REPLY_TEXT_CHARS = 4_096
 MAX_ENTITY_TITLE_CHARS = 256
 MAX_ENTITY_USERNAME_CHARS = 64
@@ -4726,12 +4728,21 @@ def validate_reference_read(args: argparse.Namespace) -> None:
     message_id = getattr(args, "message_id", None)
     expected = getattr(args, "expected_revision", None)
     conversation = getattr(args, "expected_conversation_key", None)
+    history = getattr(args, "history_page", False)
+    before = getattr(args, "history_before_id", None)
     if (not isinstance(chat, str) or re.fullmatch(r"-?[1-9]\d{0,18}", chat) is None
             or not 0 < abs(int(chat)) < 2**63
             or type(message_id) is not int or not 0 < message_id < 2**31
             or not isinstance(expected, str) or re.fullmatch(r"[a-f0-9]{64}", expected) is None
             or conversation is not None and (not isinstance(conversation, str)
                 or re.fullmatch(r"telegram-conversation/v1\.[a-f0-9]{64}", conversation) is None)
+            or type(history) is not bool
+            # The signed task command prefix also admits ordinary exact reads.
+            # Only the protected host intake sets this process-only marker;
+            # a caller adding flags cannot expand an exact read into history.
+            or history and (conversation is None or os.environ.get("TRELIO_ASSISTANT_SOURCE_HISTORY") != "1"
+                            or "TRELIO_ASSISTANT_SOURCE_MEDIA" in os.environ)
+            or before is not None and (not history or type(before) is not int or not 0 < before < 2**31)
             or getattr(args, "link", None) is not None or getattr(args, "context", 0) != 0):
         raise TelegramRuntimeError("An exact native message reference and revision are required.", code="TELEGRAM_REFERENCE_INPUT_INVALID")
 
@@ -4839,6 +4850,120 @@ async def read_original_audio(client, message, selected: dict[str, Any]) -> dict
             destination.unlink(missing_ok=True)
 
 
+async def reference_history_page(client, entity, utils, observed, before):
+    """Read one page in the anchor's peer. Native offsets stay on the signed host.
+
+    getHistory alone reads the page. Reply/forward headers never authorize a
+    lookup in another peer. A short native vector, including one shortened by
+    our output budget, still requires a subsequent exclusive-offset read.
+    """
+    def marked_peer_id(peer):
+        field = {"User": "id", "Channel": "id", "Chat": "id", "PeerUser": "user_id",
+                 "PeerChannel": "channel_id", "PeerChat": "chat_id"}.get(type(peer).__name__)
+        identifier = getattr(peer, field, None) if field else None
+        if type(identifier) is int and 0 < identifier < 2**63:
+            marked = utils.get_peer_id(peer)
+            if type(marked) is int and 0 < abs(marked) < 2**63:
+                return marked
+        return None
+
+    peer_id = int(observed["chatId"])
+    if marked_peer_id(entity) != peer_id:
+        raise TelegramRuntimeError("The native peer changed before the history read.",
+                                   code="TELEGRAM_REFERENCE_SCOPE_CHANGED")
+    _dialogs, GetHistory, _dialog_peer = import_telethon_monitor_history()
+    response = await client(GetHistory(peer=entity, offset_id=before or 0, offset_date=None,
+        add_offset=0, limit=HISTORY_PAGE_ROWS, max_id=0, min_id=0, hash=0))
+    rows = getattr(response, "messages", None)
+    if (type(response).__name__ not in {"Messages", "MessagesSlice", "ChannelMessages"}
+            or not isinstance(rows, list) or len(rows) > HISTORY_PAGE_ROWS):
+        raise TelegramRuntimeError("Telegram did not return a bounded native history page.",
+                                   code="TELEGRAM_REFERENCE_INCOMPLETE")
+    previous = before or 2**31
+    for row in rows:
+        # Check the complete native vector before releasing its prefix. This
+        # also fences service rows, duplicate offsets and crossed peer types.
+        native_id = getattr(row, "id", None)
+        peer = getattr(row, "peer_id", None)
+        opaque_tombstone = type(row).__name__ == "MessageEmpty" and peer is None
+        if (type(row).__name__ not in {"Message", "MessageService", "MessageEmpty"}
+                or type(native_id) is not int or not 0 < native_id < previous
+                or not opaque_tombstone and (type(peer).__name__ not in {"PeerUser", "PeerChat", "PeerChannel"}
+                                             or marked_peer_id(peer) != peer_id)):
+            raise TelegramRuntimeError("Telegram history crossed its peer or native offset.",
+                                       code="TELEGRAM_REFERENCE_INCOMPLETE")
+        previous = native_id
+
+    # Project only exact authors supplied in THIS native page. A missing
+    # entity remains unknown. Forwarded names, signatures and quote authors
+    # are not evidence of who actually posted a message.
+    authors = {}
+    own = None
+    for author in [*response.users, *response.chats]:
+        marked = marked_peer_id(author)
+        if type(author).__name__ not in {"User", "Chat", "Channel"} or marked is None:
+            continue
+        if marked in authors:
+            raise TelegramRuntimeError("Telegram history returned an ambiguous author.",
+                                       code="TELEGRAM_REFERENCE_INCOMPLETE")
+        authors[marked] = author
+        if type(author).__name__ == "User" and getattr(author, "is_self", False) is True:
+            if own is not None:
+                raise TelegramRuntimeError("Telegram history returned ambiguous account metadata.",
+                                           code="TELEGRAM_REFERENCE_INCOMPLETE")
+            own = author
+    page = {"schemaVersion": 1, "protocol": "telegram-conversation-history/v1",
+            "reference": {key: observed[key] for key in ("id", "revision", "conversationKey")},
+            "messages": [], "nextBeforeId": None,
+            "readState": {"mode": "history-only", "marksRead": False, "readReceiptsSent": False,
+                          "viewsRegistered": False}}
+    for row in rows:
+        if type(row).__name__ == "MessageEmpty":
+            # Telegram may keep an inaccessible/deleted slot without a peer or
+            # body in this exact peer's raw vector. It advances only the local
+            # offset. No sender, content, or cause of absence is inferred.
+            page["nextBeforeId"] = str(row.id)
+            continue
+        service = type(row).__name__ == "MessageService"
+        text = "" if service else getattr(row, "message", None)
+        outgoing = getattr(row, "out", None)
+        if type(outgoing) is not bool or not isinstance(text, str) or not isinstance(row.date, datetime):
+            raise TelegramRuntimeError("Telegram history message metadata is incomplete.",
+                                       code="TELEGRAM_REFERENCE_INCOMPLETE")
+        peer = row.peer_id
+        sender = getattr(row, "from_id", None)
+        if sender is None and not outgoing and (type(peer).__name__ == "PeerUser"
+                or type(peer).__name__ == "PeerChannel" and getattr(row, "post", False) is True):
+            sender = peer
+        author = None
+        if type(sender).__name__ in {"PeerUser", "PeerChat", "PeerChannel"}:
+            author = authors.get(marked_peer_id(sender))
+            if author is None and type(entity).__name__ == "User" and not outgoing and marked_peer_id(sender) == peer_id:
+                author = entity
+        elif sender is None and outgoing and type(peer).__name__ == "PeerUser":
+            author = own
+        identity = public_entity(author) if author is not None else {}
+        projected = {"text": text, "sentAt": format_utc_datetime(row.date), "outgoing": outgoing,
+                     "mediaType": message_media_type(row),
+                     "sender": ({"displayName": identity["title"], "username": identity["username"]}
+                                if identity.get("title") or identity.get("username") else None),
+                     "forwarded": getattr(row, "fwd_from", None) is not None}
+        if service:
+            projected["service"] = True
+        # Match the exact compact stdout encoding, including the candidate
+        # offset and the platform's line ending. The first row that
+        # will not fit is fetched again from the last DELIVERED native ID.
+        candidate = {**page, "messages": [*page["messages"], projected], "nextBeforeId": str(row.id)}
+        encoded = json.dumps({"ok": True, **candidate}, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) + len(os.linesep) > HISTORY_PAGE_BYTES:
+            if not page["messages"]:
+                raise TelegramRuntimeError("One Telegram history message exceeds the page bound.",
+                                           code="TELEGRAM_REFERENCE_INCOMPLETE")
+            break
+        page = candidate
+    return page
+
+
 async def command_message_read_async(args: argparse.Namespace, identity: Identity) -> dict[str, Any]:
     exact_reference = getattr(args, "command", None) == "read-reference"
     if exact_reference:
@@ -4867,11 +4992,34 @@ async def command_message_read_async(args: argparse.Namespace, identity: Identit
             observed["conversationKey"] = conversation_key
             if observed["revision"] != args.expected_revision:
                 raise TelegramRuntimeError("The observed Telegram message changed; retain the original reference.", code="TELEGRAM_REFERENCE_CHANGED")
+            if getattr(args, "history_page", False):
+                if observed["outgoing"]:
+                    raise TelegramRuntimeError("History requires the exact incoming Telegram original.",
+                                               code="TELEGRAM_REFERENCE_SCOPE_CHANGED")
+                stage = "message_projection"
+                page = await reference_history_page(client, entity, utils, observed, getattr(args, "history_before_id", None))
+                # A page request can race an account replacement, an edit or
+                # loss of access. Recheck the original before exposing any row.
+                stage = "conversation_binding"
+                await reference_conversation_key(client, identity, args)
+                stage = "semantic_revision"
+                _entity, current = await resolve_message_target(client, reference, diagnose_reference=True)
+                if monitor_message(current, utils, kind="new", channel_peer=int(args.chat))["revision"] != args.expected_revision:
+                    raise TelegramRuntimeError("The original Telegram message changed during history read.",
+                                               code="TELEGRAM_REFERENCE_CHANGED")
+                return page
             # The ordinary safe field projection is shared, but its optional
             # reply/context resolver is deliberately NOT called: one queued
             # reference may not fetch a quoted message or neighboring history.
             stage = "message_projection"
             normalized = public_message(message)
+            # Telegram can omit from_id (and the SDK sender cache) on a
+            # private incoming message. The already resolved exact peer is
+            # sufficient only when it is the frozen native user sender.
+            if (normalized["sender"] is None and not observed["outgoing"] and type(entity).__name__ == "User"
+                    and type(entity.id) is int and str(entity.id) == observed["senderUserId"] == args.chat
+                    and type(message.peer_id).__name__ == "PeerUser"):
+                normalized["sender"] = public_entity(entity)
             normalized["link"] = message_link(entity, message.id)
             if normalized["textTruncated"]:
                 raise TelegramRuntimeError("The exact Telegram text exceeds its read bound; no complete read was delivered.", code="TELEGRAM_REFERENCE_INCOMPLETE")
@@ -7740,6 +7888,8 @@ def build_parser() -> argparse.ArgumentParser:
     reference_read.add_argument("--message-id", type=positive_message_id, required=True)
     reference_read.add_argument("--expected-revision", required=True, help="Exact semantic SHA-256 from the observed reference")
     reference_read.add_argument("--expected-conversation-key", help="Exact opaque native conversation key from monitor; new task/source routing requires it")
+    reference_read.add_argument("--history-page", action="store_true", help="Read one passive page in this incoming reference's bound conversation")
+    reference_read.add_argument("--history-before-id", type=positive_message_id, help="Exclusive native offset from the preceding history page")
     reference_reply = commands.add_parser("reply-reference", help="One host-admitted answer to an exact private owner original; text is private stdin JSON")
     reference_reply.add_argument("--chat", required=True)
     reference_reply.add_argument("--message-id", type=positive_message_id, required=True)
@@ -8014,6 +8164,8 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
+        if args.command == "read-reference":
+            validate_reference_read(args)
         if args.command == "__trelio_account_remove":
             result = remove_local_account(identity_from_args(args))
             print(json.dumps(result))
@@ -8025,8 +8177,6 @@ def main() -> int:
                                            code="TELEGRAM_ACCOUNT_REMOVED")
         if args.command == "monitor":
             validate_monitor_input(args)
-        if args.command == "read-reference":
-            validate_reference_read(args)
         if args.command == "reply-reference":
             validate_owner_reply_input(args)
         if args.command == "ack-reference":
@@ -8075,7 +8225,7 @@ def main() -> int:
     finally:
         shutdown_browser_prompt_session()
     output = {"ok": True, **result}
-    if args.command in {"export", "daily-export"}:
+    if args.command in {"export", "daily-export"} or getattr(args, "history_page", False):
         # Period exports are potentially large machine-readable artifacts. A
         # compact encoding makes --max-output-bytes deterministic and avoids
         # spending most of that budget on indentation.

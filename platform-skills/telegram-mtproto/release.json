@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "telegram-mtproto",
-    "version": "2.17.0",
-    "summary": "Telegram-навык читает доступные описания личных профилей и ссылки в них. Ответ показывает, вернул ли Telegram описание и удалось ли прочитать профиль.",
+    "version": "2.18.0",
+    "summary": "Цифровой ассистент может перечитать доступную историю Telegram-чата, в котором получил сообщение. История загружается страницами с последних сообщений до начала. При таком чтении сообщения сохраняют прежний статус прочтения.",
     "routingSummary": "Read, search, send, and manage Telegram messages, files, and chats, and read individual profile bios."
   },
   "connection": {
@@ -19,7 +19,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "2.18.0",
+    "version": "2.19.0",
     "minimumHostVersion": "3.31.0",
     "entrypoint": {
       "path": "trelio-telegram.py",

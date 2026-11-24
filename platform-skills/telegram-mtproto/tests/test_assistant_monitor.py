@@ -845,6 +845,216 @@ class ReferenceRead(unittest.TestCase):
              mock.patch.object(M, 'session_lock', return_value=mock.MagicMock()):
             self.assertEqual(M.run_async_command(args)['reference']['revision'], self.revision())
 
+    def history_args(self, before=None):
+        key = asyncio.run(M.reference_conversation_key(self.provider, self.identity, self.args()))
+        argv = ['read-reference', '--chat', '77', '--message-id', '1', '--expected-revision', self.revision(),
+                '--expected-conversation-key', key, '--history-page']
+        if before is not None:
+            argv.extend(['--history-before-id', str(before)])
+        return M.build_parser().parse_args(argv)
+
+    def native_history(self, produce):
+        # Only raw GetHistory and exact anchor lookups are supported here.
+        # An increment-views, ACK, reply lookup or download fails the test.
+        self.enterContext(mock.patch.dict(os.environ, {'TRELIO_ASSISTANT_SOURCE_HISTORY': '1'}))
+        self.enterContext(mock.patch.object(M, 'import_telethon_monitor_history',
+            return_value=(None, request('GetHistory'), None)))
+        async def dispatch(provider, call):
+            provider.calls.append(call)
+            self.assertEqual(type(call).__name__, 'GetHistory')
+            self.assertIs(call.peer, self.entity)
+            self.assertEqual((call.offset_date, call.limit, call.min_id, call.max_id, call.add_offset, call.hash),
+                             (None, 20, 0, 0, 0, 0))
+            return produce(call.offset_id)
+        self.enterContext(mock.patch.object(Provider, '__call__', dispatch))
+
+    def test_history_paginates_short_native_pages_until_empty_without_skipping_equal_text_or_newer_originals(self):
+        others = [message(i, text=str(i)) for i in range(2, 7)]
+        others[1].message = others[2].message = 'Одинаковый текст'
+        others[-1].from_id = None
+        others[-1].fwd_from = NS(from_name='PRIVATE_FORWARD')
+        others[-1].reply_to = NS(reply_to_msg_id=72, reply_to_peer_id=tl('PeerUser', user_id=99))
+        others[-1].get_reply_message = mock.AsyncMock(side_effect=AssertionError('No quote lookup'))
+        service = tl('MessageService', id=7, date=NOW, peer_id=tl('PeerUser', user_id=77), out=True,
+                     action=NS(private='PRIVATE_ACTION'))
+        self_user = tl('User', id=12345, is_self=True, first_name='Я', phone='PRIVATE_PHONE')
+        self.entity.access_hash = 'PRIVATE_HASH'
+        rows = [service, *reversed(others), self.native]
+        self.native_history(lambda offset: tl('MessagesSlice', messages=[row for row in rows
+            if offset == 0 or row.id < offset][:2], chats=[], users=[self.entity, self_user], count=999))
+        args = self.history_args()
+        pages = []
+        while True:
+            page = self.read(args)
+            pages.append(page)
+            self.assertEqual(page['reference'], {'id': 'message:77:1', 'revision': args.expected_revision,
+                                                'conversationKey': args.expected_conversation_key})
+            self.assertEqual(page['readState'], {'mode': 'history-only', 'marksRead': False,
+                                                'readReceiptsSent': False, 'viewsRegistered': False})
+            self.assertEqual(page['protocol'], 'telegram-conversation-history/v1')
+            if len(pages) == 1:
+                rows.insert(0, message(8, text='Появилось позднее'))
+            if page['nextBeforeId'] is None:
+                break
+            args.history_before_id = int(page['nextBeforeId'])
+        self.assertEqual([call.offset_id for call in self.provider.calls], [0, 6, 4, 2, 1])
+        messages = [row for page in pages for row in page['messages']]
+        self.assertEqual([row['text'] for row in messages],
+                         ['', '6', '5', 'Одинаковый текст', 'Одинаковый текст', '2', self.native.message])
+        self.assertEqual(pages[-1]['messages'], [])
+        self.assertTrue(messages[0]['service'])
+        self.assertTrue(messages[0]['outgoing'])
+        self.assertEqual(messages[0]['sender'], {'displayName': 'Я', 'username': None})
+        self.assertTrue(messages[1]['forwarded'])
+        self.assertEqual(messages[1]['sender'], {'displayName': 'Synthetic reader', 'username': None})
+        self.assertEqual(messages[1]['sentAt'], '2026-10-21T12:00:00Z')
+        self.assertNotIn('PRIVATE_', json.dumps(pages))
+        self.assertTrue(all(call == mock.call(self.entity, ids=1) for call in self.provider.get_messages.await_args_list))
+        others[-1].get_reply_message.assert_not_awaited()
+        self.provider.send_message.assert_not_awaited()
+
+    def test_history_utf8_budget_resumes_at_first_undelivered_row_and_keeps_sender_unknown(self):
+        body = '🎙' * 4000
+        rows = [message(i, text=body, sender=tl('PeerUser', user_id=99)) for i in range(6, 1, -1)]
+        self.native_history(lambda offset: tl('Messages', messages=[row for row in rows
+            if offset == 0 or row.id < offset], users=[], chats=[]))
+        args = self.history_args()
+        received = []
+        while True:
+            page = self.read(args)
+            line = json.dumps({'ok': True, **page}, ensure_ascii=False, separators=(',', ':')) + os.linesep
+            self.assertLessEqual(len(line.encode('utf8')), M.HISTORY_PAGE_BYTES)
+            received.extend(page['messages'])
+            if page['nextBeforeId'] is None:
+                break
+            args.history_before_id = int(page['nextBeforeId'])
+        self.assertGreater(len(self.provider.calls), 2)
+        self.assertEqual([row['text'] for row in received], [body] * 5)
+        self.assertTrue(all(row['sender'] is None for row in received))
+        rows[0].message = body * 8
+        with self.assertRaises(M.TelegramRuntimeError) as error:
+            self.read(self.history_args())
+        self.assertEqual(error.exception.code, 'TELEGRAM_REFERENCE_INCOMPLETE')
+
+    def test_history_fences_account_access_and_anchor_before_and_after_each_native_page(self):
+        args = self.history_args(70)
+        page = tl('Messages', messages=[message(3)], users=[self.entity], chats=[])
+        self.native_history(lambda _offset: page)
+        with mock.patch.object(self.provider, 'get_me', new=mock.AsyncMock(side_effect=[NS(id=12345), NS(id=99)])):
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.read(args)
+            self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_SCOPE_CHANGED')
+        for current, code in [(message(text='Изменено'), 'TELEGRAM_REFERENCE_CHANGED'),
+                              (None, 'TELEGRAM_REFERENCE_UNAVAILABLE')]:
+            self.provider.get_messages.side_effect = [self.native, current]
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.read(args)
+            self.assertEqual(caught.exception.code, code)
+        self.provider.calls.clear()
+        self.provider.get_messages.side_effect = [None]
+        with self.assertRaises(M.TelegramRuntimeError):
+            self.read(args)
+        self.assertEqual(self.provider.calls, [])
+        with mock.patch.object(self.provider, 'get_me', new=mock.AsyncMock(return_value=NS(id=99))):
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.read(args)
+        self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_SCOPE_CHANGED')
+        self.assertEqual(self.provider.calls, [])
+
+    def test_history_rejects_nonadvancing_foreign_and_missing_native_vectors(self):
+        replies = [tl('MessagesNotModified', count=0), tl('Messages', users=[], chats=[]),
+                   *[tl('MessagesSlice', messages=rows, users=[], chats=[]) for rows in (
+                       [message(10)], [message(8), message(8)], [message(7), message(8)],
+                       [message(8), message(6, peer=tl('PeerUser', user_id=78))],
+                       [tl('MessageEmpty', id=7, peer_id=tl('PeerChat', chat_id=77))], [message(4)] * 21)]]
+        self.native_history(lambda _offset: replies.pop(0))
+        args = self.history_args(10)
+        while replies:
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.read(args)
+            self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_INCOMPLETE')
+
+    def test_history_tombstone_only_page_advances_to_older_content(self):
+        tombstones = [tl('MessageEmpty', id=9), tl('MessageEmpty', id=7, peer_id=tl('PeerUser', user_id=77))]
+        self.native_history(lambda offset: tl('Messages', messages={
+            0: tombstones, 7: [message(6, text='Ранее'), tl('MessageEmpty', id=4)], 4: []
+        }[offset], chats=[], users=[]))
+        args = self.history_args()
+        first = self.read(args)
+        self.assertEqual((first['messages'], first['nextBeforeId']), ([], '7'))
+        args.history_before_id = 7
+        second = self.read(args)
+        self.assertEqual([row['text'] for row in second['messages']], ['Ранее'])
+        self.assertEqual(second['messages'][0]['sender'], {'displayName': 'Synthetic reader', 'username': None})
+        self.assertEqual(second['nextBeforeId'], '4')
+        args.history_before_id = 4
+        third = self.read(args)
+        self.assertEqual((third['messages'], third['nextBeforeId']), ([], None))
+
+    def test_history_requires_exact_incoming_scope_and_excludes_audio_before_native_io(self):
+        args = self.history_args()
+        # The published [read-reference] prefix also admits a plain task CLI.
+        # No raw flag (including a valid retained reference) grants that task
+        # the protected source-intake host's capability.
+        with mock.patch.dict(os.environ):
+            os.environ.pop('TRELIO_ASSISTANT_SOURCE_HISTORY', None)
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.read(args)
+            self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_INPUT_INVALID')
+        self.enterContext(mock.patch.dict(os.environ, {'TRELIO_ASSISTANT_SOURCE_HISTORY': '1'}))
+        for fields in ({'expected_conversation_key': None}, {'history_page': False, 'history_before_id': 4},
+                       {'history_before_id': True}, {'history_before_id': 0}, {'history_before_id': 2**31}):
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.read(NS(**{**vars(args), **fields}))
+            self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_INPUT_INVALID')
+        with mock.patch.dict(os.environ, {'TRELIO_ASSISTANT_SOURCE_MEDIA': '1'}), \
+             mock.patch.object(M, 'read_original_media_input', side_effect=AssertionError('Do not consume media input')):
+            with self.assertRaises(M.TelegramRuntimeError) as caught:
+                self.read(args)
+            self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_INPUT_INVALID')
+        self.client.assert_not_called()
+        self.native.out = True
+        with self.assertRaises(M.TelegramRuntimeError) as caught:
+            self.read(self.history_args())
+        self.assertEqual(caught.exception.code, 'TELEGRAM_REFERENCE_SCOPE_CHANGED')
+        self.assertEqual(self.provider.calls, [])
+
+    def test_actual_sdk_uncached_private_sender_uses_only_verified_native_user_and_scoped_history(self):
+        from telethon import functions, types, utils
+        self.utils = utils
+        self.enterContext(mock.patch.object(M, 'import_telethon_workflows', return_value=(None, None, utils, None, None)))
+        self.entity = types.User(id=77, first_name='Человек', username='native_user', access_hash=987654)
+        self.resolve.return_value = self.entity
+        self.native = types.Message(id=1, peer_id=types.PeerUser(77), out=False, date=NOW, message='Привет')
+        # No SDK _finish_init/cache, from_id intentionally absent as on a
+        # native incoming direct message. Names come from the exact user.
+        self.assertIsNone(self.native.sender)
+        self.assertIsNone(self.native.from_id)
+        self.assertEqual(self.read()['message']['sender'],
+                         {'id': 77, 'title': 'Человек', 'username': 'native_user'})
+        self.native.out = True
+        self.assertIsNone(self.read()['message']['sender'])
+        self.native.out = False
+        self.native.from_id = types.PeerUser(1001)
+        self.assertIsNone(self.read()['message']['sender'])
+        self.native.from_id = None
+        args = self.history_args()
+        self.enterContext(mock.patch.dict(os.environ, {'TRELIO_ASSISTANT_SOURCE_HISTORY': '1'}))
+        async def raw(provider, call):
+            provider.calls.append(call)
+            self.assertIs(type(call), functions.messages.GetHistoryRequest)
+            self.assertIs(call.peer, self.entity)
+            service = types.MessageService(id=2, peer_id=self.native.peer_id, out=False, date=NOW,
+                                           action=types.MessageActionPinMessage())
+            return types.messages.Messages(messages=[service, self.native], users=[], chats=[], topics=[])
+        with mock.patch.object(Provider, '__call__', raw):
+            result = self.read(args)
+        self.assertEqual([row['sender'] for row in result['messages']],
+                         [{'displayName': 'Человек', 'username': 'native_user'}] * 2)
+        self.assertTrue(result['messages'][0]['service'])
+        self.assertEqual(result['nextBeforeId'], '1')
+        self.assertEqual(len(self.provider.calls), 1)
+
 class ReferenceAck(unittest.TestCase):
     """Native range/read-back composition; no real session or external writes."""
     def setUp(self):

@@ -1,7 +1,7 @@
 # Telegram MTProto: сообщения, поиск и очередь
 
-Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.17.0`
-объявляет runtime `2.17.0`, требует Telethon `>=1.45,<2` и host >=3.25.0.
+Канонический source – `platform-skills/telegram-mtproto/`. Skill `2.18.0`
+объявляет runtime `2.19.0`, требует Telethon `>=1.45,<2` и host >=3.31.0.
 Connection definition, package credential и namespace личной сессии сохраняются.
 `bootstrap` обновляет зависимость существующего локального runtime без нового
 входа. Чтение не отправляет Telegram read receipts; исходящие действия
@@ -15,8 +15,7 @@ Connection definition, package credential и namespace личной сессии
 только совместимым fallback ответа, в котором structured action отсутствует.
 Согласие на отправку даёт оператор в текущем разговоре; permission profile,
 sandbox и approval mode клиента его не выдают и не заменяют.
-Релиз не меняет backend, plugin или connection; minimum host 3.25.0 нужен
-для общего удаления записи каталога после provider cleanup.
+Minimum host 3.31.0 обеспечивает последовательный доступ к локальной SDK-сессии аккаунта.
 
 ## Вход и ошибки локальной формы
 
@@ -930,6 +929,47 @@ adapter цифрового ассистента, а не готовое подк
 регистрация просмотра, отправки и ACK не выполняются. Media возвращается как
 metadata, `attachmentsContentRead=false`; доступ к text не доказывает чтения файла.
 Текст больше обычного exact-read bound получает `TELEGRAM_REFERENCE_INCOMPLETE`.
+
+<a id="conversation-history"></a>
+
+`read-reference --chat NATIVE_ID --message-id ID --expected-revision SHA256
+--expected-conversation-key KEY --history-page` выдаёт одну страницу истории.
+Только host, который допустил чтение истории текущего входящего сообщения,
+выставляет дочернему процессу `TRELIO_ASSISTANT_SOURCE_HISTORY=1`. Общий вызов
+task skill с этими флагами получает отказ. Режим несовместим с original audio.
+При каждом запросе provider сверяет подпись привязки аккаунта, доступ к peer,
+нативный ID и semantic revision входящего сообщения до и после чтения.
+
+Первая страница запрашивает последние доступные сообщения. Продолжение передаёт
+`--history-before-id ID` с ID последней выданной строки. Native
+`messages.getHistory` использует exclusive `offset_id`, включая историю
+после исходного сообщения в первую страницу. Новые сообщения после первой
+страницы не сдвигают этот обход. Каждая строка должна принадлежать тому же peer,
+ID строго убывают. Результат описывает историю, доступную во время каждого
+чтения; Telegram может удалить или изменить сообщения между запросами.
+
+В `telegram-conversation-history/v1` (`schemaVersion:1`) поля `reference`
+ограничены `id`, `revision`, `conversationKey`. `messages` содержит
+`text`, `sentAt` в UTC, `outgoing`, `mediaType`, `forwarded`, `sender`
+с полями `displayName` и `username` либо null. Отдельная строка
+`service:true` сохраняет позицию сервисного события. Имена берутся из
+нативных сущностей, доставленных в этой же странице. Для личного входящего
+сообщения без заполненного sender cache используется также уже полученный
+профиль собеседника, если native ID совпадает с фактическим отправителем.
+Это правило действует и для обычного точного чтения исходного сообщения.
+Цитаты, вложения и
+пересылки не открываются. `readState.mode=history-only`, `marksRead`,
+`readReceiptsSent` и `viewsRegistered` равны false.
+
+Лимит страницы – 20 строк и 48 KiB compact UTF-8 JSON с envelope и переводом
+строки. При нехватке места первая невошедшая строка попадает в следующий
+запрос целиком. Для пустого нативного слота `MessageEmpty` проверяется его ID
+и peer, если Telegram его предоставил. Слот продвигает курсор; страница
+только из таких слотов возвращает `messages:[]` с непустым `nextBeforeId`.
+Слишком большая одиночная строка даёт явный
+`TELEGRAM_REFERENCE_INCOMPLETE`. Любая непустая страница возвращает
+`nextBeforeId` (строка) для локального host; только пустой валидный native
+ответ возвращает null. Входящий текст не служит курсором или идентификатором.
 
 Signed `trelio-source-media.json` separately opts the SAME exact read into
 `source-original-audio/v1`, at most 20MiB. It does not add a task command or

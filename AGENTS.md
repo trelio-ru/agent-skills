@@ -79,6 +79,8 @@ account checkpoint date and include messages already read on another device.
 Never use it to reset an existing cursor or claim historical edit recovery.
 `read-reference` сверяет exact native ID/revision без context/ACK и требует полный текст;
 его отказ сохраняет closed category/stage через native resolver и CLI pipes.
+По запросу protected intake режим `--history-page` читает [доступную историю этого чата](docs/telegram-mtproto-message-workflows.md#conversation-history)
+после сверки аккаунта и исходного сообщения. Курсор учитывает прочитанные пустые слоты Telegram.
 Пустой lookup не доказывает удаление; stage не разрешает replay/reset или ACK.
 Signed original-audio opt-in retains that SAME exact read and private stdin;
 bounded original bytes use the host-owned scratch/receipt, never model paths,
