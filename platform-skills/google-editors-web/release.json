@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "google-editors-web",
-    "version": "1.1.5",
-    "summary": "Переход на единую нумерацию версий навыков Trelio",
+    "version": "1.2.0",
+    "summary": "Ассистент может проверить диапазон Google Таблицы и найти нужные строки без сохранения копии файла",
     "routingSummary": "Inspect Google Sheets ranges and find or replace Google Docs text using a managed browser without Google APIs."
   },
   "connection": {
@@ -16,13 +16,14 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "1.1.5",
-    "minimumHostVersion": "3.34.32",
+    "version": "1.2.0",
+    "minimumHostVersion": "3.35.11",
     "entrypoint": { "path": "trelio-google-editors.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
     "browserSession": { "apiVersion": 1, "sessionClass": "protected-snapshot", "manualAssist": true },
     "files": [
       { "source": "scripts/trelio-google-editors.mjs", "path": "trelio-google-editors.mjs", "mode": 493 },
+      { "source": "scripts/trelio-assistant-execution.json", "path": "trelio-assistant-execution.json", "mode": 420 },
       { "source": "scripts/editor-workflows.mjs", "path": "editor-workflows.mjs", "mode": 420 },
       { "source": "scripts/editor-data.mjs", "path": "editor-data.mjs", "mode": 420 },
       { "source": "scripts/office-export.mjs", "path": "office-export.mjs", "mode": 420 },

@@ -6,10 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { EditorFailure, editorLink, executeWorkflow, fieldCheckPolicy, parseWorkflow, workflowCommands } from './editor-workflows.mjs';
 
 export const SKILL_ID = 'google-editors-web';
-export const SKILL_VERSION = '1.1.5';
-// This is the first host that opens ordinary web links by default alongside
-// editor references, attachment redirects and the embedded picker.
-export const MINIMUM_HOST_VERSION = '3.34.32';
+export const SKILL_VERSION = '1.2.0';
+// A passive range read consumes the browser's bounded CSV in this process.
+// An older worker must never fall back to creating a download on disk.
+export const MINIMUM_HOST_VERSION = '3.35.11';
 const origins = [
   'https://docs.google.com', 'https://drive.google.com', 'https://accounts.google.com',
   'https://workspace.google.com', 'https://accounts.google.ru', 'https://accounts.youtube.com',
@@ -131,6 +131,10 @@ export async function runEditors(argv, env = process.env) {
         || host.VISUAL_ATTACHMENT_REDIRECT_API !== 'trelio.visual-attachment-redirect/v1'
         || host.VISUAL_EMBEDDED_PICKER_API !== 'trelio.visual-embedded-picker/v1'
         || host.VISUAL_DOCUMENT_REFERENCE_API !== 'trelio.visual-document-reference/v1' || typeof host.runVisualSession !== 'function') {
+      throw new EditorFailure('EDITORS_HOST_UPGRADE_REQUIRED');
+    }
+    if (['read-sheet-range', 'find-sheet-rows'].includes(operation)
+        && host.VISUAL_INLINE_TEXT_API !== 'trelio.browser-inline-text/v1') {
       throw new EditorFailure('EDITORS_HOST_UPGRADE_REQUIRED');
     }
     const perform = (op, args) => host.runVisualSession({ origins, presentation: 'hidden', observationMode: 'text',

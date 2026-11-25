@@ -123,9 +123,12 @@ export function parseWorkflow(name, raw) {
     return { kind: createKind[name], newTitle: spec.title };
   }
   if (!Object.hasOwn(fields, name)) throw new EditorFailure('EDITORS_SPEC_INVALID');
-  const required = ['url', 'title', ...fields[name]];
+  // Inspection can discover a title from an exact editor link. All other
+  // workflows still require the previously observed title as a second check.
+  const discoverTitle = name === 'inspect-file' && !Object.hasOwn(spec, 'title');
+  const required = ['url', ...(discoverTitle ? [] : ['title']), ...fields[name]];
   if (Object.keys(spec).length !== required.length || required.some(key => !Object.hasOwn(spec, key))
-      || !regularText(spec.title, 180) || !regularText(spec.url, 480)) throw new EditorFailure('EDITORS_SPEC_INVALID');
+      || (!discoverTitle && !regularText(spec.title, 180)) || !regularText(spec.url, 480)) throw new EditorFailure('EDITORS_SPEC_INVALID');
   for (const field of ['search', 'replacement', 'sheet', 'value'].filter(key => required.includes(key))) {
     if (!regularText(spec[field], field === 'sheet' ? 100 : 240, field === 'value')) throw new EditorFailure('EDITORS_SPEC_INVALID');
   }
@@ -151,7 +154,14 @@ export function parseWorkflow(name, raw) {
       throw new EditorFailure('EDITORS_SPEC_INVALID');
     }
   }
-  return { ...spec, ...link };
+  return { ...spec, ...link, ...(discoverTitle ? { discoverTitle: true } : {}) };
+}
+
+// The native frame supplies both the title and the canonical document link.
+function visibleEditorTitle(value, kind) {
+  const suffix = titleLabels[kind].map(label => ' - ' + label).find(label => typeof value === 'string' && value.endsWith(label));
+  const title = suffix && value.slice(0, -suffix.length);
+  return regularText(title, 180) ? title : null;
 }
 
 const findMenu = /^(?:Find and replace|Найти и заменить)(?: [⌘Ctrl].*)?$/u;
@@ -212,7 +222,8 @@ class Editor {
 
   verifyTarget(frame, allowedTitles = [this.spec.title], allowNewSheet = false) {
     if (frame.kind !== 'trelio.browser-text/v1') throw new EditorFailure('EDITORS_UI_UNSUPPORTED');
-    if (!titleLabels[this.spec.kind].some(label => allowedTitles.some(title => frame.title === title + ' - ' + label))) {
+    const title = visibleEditorTitle(frame.title, this.spec.kind);
+    if (!title || (!this.spec.discoverTitle && !allowedTitles.includes(title))) {
       throw new EditorFailure('EDITORS_TARGET_UNVERIFIED');
     }
     let observed;
@@ -427,6 +438,14 @@ async function addSheet(editor) {
 }
 
 async function selectSheet(editor, sheet) {
+  // Google exposes menu items across the whole page. Select only an item that
+  // appeared when All sheets opened, never an already-visible editor action
+  // with the same label as the requested sheet.
+  const before = await editor.observe({ controlQuery: sheet });
+  if (before.scanLimited || before.nextControlsOffset !== null
+      || before.controls.some(item => item.role === 'menuitem' && item.label === sheet)) {
+    throw new EditorFailure('EDITORS_TARGET_AMBIGUOUS');
+  }
   await editor.click(await editor.localized(UI.allSheets, 'button'));
   let target;
   try {
@@ -441,8 +460,12 @@ async function selectSheet(editor, sheet) {
   await editor.click(target);
   const selected = await editor.observe({ controlQuery: sheet }, { allowNewSheet: true });
   const opened = new URL(selected.documentReference);
-  if (!opened.hash || opened.hash === new URL(editor.spec.url).hash || selected.nextControlsOffset !== null
-      || !selected.controls.some(item => item.role === 'button' && item.label === sheet)) {
+  const tabs = selected.controls.filter(item => ['button', 'option'].includes(item.role) && item.label === sheet);
+  // An already-active tab has no gid transition. Accept that case only if
+  // Google exposes its selected state; an arbitrary visible tab is insufficient.
+  const sameSheet = opened.hash === new URL(editor.spec.url).hash;
+  if (!opened.hash || selected.scanLimited || selected.nextControlsOffset !== null || tabs.length !== 1
+      || sameSheet && tabs[0].selected !== true) {
     throw new EditorFailure('EDITORS_TARGET_UNVERIFIED');
   }
   return { sheet, url: opened.href };
@@ -553,7 +576,7 @@ async function replaceDocument(editor, spec) {
   }
 }
 
-async function download(editor, format) {
+async function download(editor, format, { inlineCsv = false } = {}) {
   const before = await editor.observe();
   await editor.click(await editor.localized(UI.file, 'menuitem'));
   const russian = /Google (Таблицы|Документы)$/u.test(before.title);
@@ -564,9 +587,15 @@ async function download(editor, format) {
   // type label, and still require one exact visible menu destination.
   const rule = downloadFormats[format];
   const { frame, item } = await editor.control(label => rule.label.test(label.replace(/\s+/gu, '')), 'menuitem', rule.query[Number(russian)]);
-  const receipt = await editor.call('download-attachment', { frameId: frame.frameId, x: item.x, y: item.y });
+  const receipt = await editor.call('download-attachment', {
+    frameId: frame.frameId, x: item.x, y: item.y, ...(inlineCsv ? { inlineMimeType: 'text/csv' } : {}),
+  });
   const after = await editor.observe();
-  if (receipt.kind !== 'trelio.browser-file/v1' || receipt.mimeType !== rule.mime || before.documentReference !== after.documentReference) {
+  // Both native observations must refer to the same editor and gid. A passive
+  // operation never opens a file receipt, even if an incompatible worker sent one.
+  const expectedKind = inlineCsv ? 'trelio.browser-inline-text/v1' : 'trelio.browser-file/v1';
+  if (receipt.kind !== expectedKind || receipt.mimeType !== rule.mime || before.documentReference !== after.documentReference
+      || inlineCsv && (receipt.reason !== 'none' || typeof receipt.text !== 'string' || !receipt.text.isWellFormed())) {
     throw new EditorFailure('EDITORS_EXPORT_UNVERIFIED');
   }
   return receipt;
@@ -598,8 +627,10 @@ export async function executeWorkflow(name, spec, perform, { platform = process.
     await editor.prepareReplacement();
     return replaceDocument(editor, spec);
   }
-  await editor.reopen();
-  if (name === 'inspect-file') return { kind: spec.kind, title: spec.title, url: spec.url };
+  const opened = await editor.reopen();
+  if (name === 'inspect-file') return {
+    kind: spec.kind, title: visibleEditorTitle(opened.title, spec.kind), url: editorLink(opened.documentReference, spec.kind).url,
+  };
   if (name === 'rename-file') return renameFile(editor, spec.newTitle);
   if (name === 'add-sheet') return addSheet(editor);
   if (name === 'select-sheet') return selectSheet(editor, spec.sheet);
@@ -629,8 +660,8 @@ export async function executeWorkflow(name, spec, perform, { platform = process.
     await editor.closeFindDialog();
     return { count };
   }
-  const csv = await download(editor, 'csv');
-  const values = sliceCsv(await readTextExport(csv, 'text/csv', editor.sessionId), spec.range);
+  const csv = await download(editor, 'csv', { inlineCsv: true });
+  const values = sliceCsv(csv.text, spec.range);
   const { startColumn, startRow } = parseRange(spec.range);
   const result = name === 'find-sheet-rows' ? values.flatMap((row, offset) =>
     row[spec.column - startColumn] === spec.value ? [{ row: startRow + offset, values: row }] : []) : values;

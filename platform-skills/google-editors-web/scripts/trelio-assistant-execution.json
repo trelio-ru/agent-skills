@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 3,
+  "taskCommands": [
+    ["commands"], ["guides"], ["doctor"], ["ready"], ["status"], ["wait"], ["close"],
+    ["open-home"], ["navigate"], ["screenshot"], ["read-text"], ["click"], ["type-text"], ["key"], ["scroll"],
+    ["download-attachment"], ["upload-file"], ["inspect-file"], ["find-document-text"], ["replace-document-text"],
+    ["read-document"], ["read-sheet-range"], ["find-sheet-rows"], ["export-file"], ["create-document"],
+    ["create-spreadsheet"], ["rename-file"], ["add-sheet"], ["select-sheet"], ["read-document-outline"],
+    ["read-document-section"], ["read-sheet-formulas"], ["open-sheet-import"], ["show-document-tabs"], ["copy-document"]
+  ],
+  "deniedOptions": [],
+  "readOnlyCommands": [["commands"], ["guides"], ["doctor"], ["inspect-file"], ["select-sheet"], ["read-sheet-range"], ["find-sheet-rows"]]
+}

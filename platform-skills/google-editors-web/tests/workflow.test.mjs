@@ -364,47 +364,6 @@ test('copy verifies the My Drive destination and refuses inherited sharing witho
   assert.equal(refused.copyCount(), 0);
 });
 
-test('range reading verifies the selected sheet and consumes one host receipt', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'editors-sheet-fixture-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const filePath = join(directory, 'fixture.csv');
-  const csv = Buffer.from('id,quantity\r\n001,0\r\n002,12\r\n');
-  await writeFile(filePath, csv);
-  const spec = parseWorkflow('find-sheet-rows', JSON.stringify({
-    url: sheetUrl, title: 'Fixture', sheet: 'Testing', range: 'A2:B4', column: 1, value: '001',
-  }));
-  let view = 'sheet', captured = 0, downloaded = 0;
-  const base = { state: 'ready', kind: 'trelio.browser-text/v1', sessionId: 'fixture-session', title: 'Fixture - Google Sheets',
-    documentReference: sheetUrl, scanLimited: false, nextControlsOffset: null };
-  const perform = async (op, args) => {
-    if (op === 'navigate') return base;
-    if (op === 'read-text') {
-      const controls = view === 'sheet' ? [
-        { label: 'Testing', role: 'option', selected: true, x: 1 },
-        { label: 'File', role: 'menuitem', x: 2 },
-      ] : view === 'file' ? [{ label: 'Download ►', role: 'menuitem', x: 3 }]
-        : [{ label: 'Comma-separated values (.csv)', role: 'menuitem', x: 4 }];
-      return { ...base, frameId: String(++captured), controls: controls.filter(control =>
-        !args.controlQuery || control.label.toLowerCase().includes(args.controlQuery.toLowerCase())) };
-    }
-    assert.equal(args.frameId, String(captured));
-    if (op === 'click') {
-      assert.ok([2, 3].includes(args.x));
-      view = args.x === 2 ? 'file' : 'formats';
-      return base;
-    }
-    assert.equal(op, 'download-attachment');
-    assert.equal(args.x, 4);
-    downloaded += 1;
-    view = 'sheet';
-    return { ...base, kind: 'trelio.browser-file/v1', mimeType: 'text/csv', filePath,
-      expiresAt: Date.now() + 60_000, sizeBytes: csv.length, sha256: createHash('sha256').update(csv).digest('hex') };
-  };
-  const result = await executeWorkflow('find-sheet-rows', spec, perform);
-  assert.equal(downloaded, 1);
-  assert.deepEqual(result.matches, [{ row: 2, values: ['001', '0'] }]);
-});
-
 test('adding a sheet verifies its new gid and never repeats the creation click', async () => {
   const newUrl = sheetUrl.replace('#gid=0', '#gid=5');
   const calls = [];
