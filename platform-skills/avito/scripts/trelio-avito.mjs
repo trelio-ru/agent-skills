@@ -3,10 +3,11 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const MINIMUM_HOST_VERSION = '3.28.3';
+const MINIMUM_HOST_VERSION = '3.35.11';
 
 const commands = {
   doctor: {}, setup: {}, 'show-login': {}, status: {}, wait: {}, ready: {}, screenshot: {}, close: {}, disconnect: {},
+  'read-listing': { url: 'string', offset: 'number?' },
   'read-text': { query: 'string?', offset: 'number?', includeControls: 'boolean?' },
   'submit-search': { frameId: 'string', x: 'number?', y: 'number?' }, 'search-ready': { frameId: 'string' },
   navigate: { url: 'string' }, click: { frameId: 'string', x: 'number', y: 'number' },
@@ -41,12 +42,23 @@ export function parseAvitoCommand(argv) {
       args[field] = files;
       continue;
     }
+    if (operation === 'read-listing' && field === 'offset' && !/^(?:0|[1-9][0-9]{0,5})$/u.test(flags[i + 1])) fail();
     if (type === 'boolean' && !['true', 'false'].includes(flags[i + 1])) fail();
     args[field] = type === 'number' ? Number(flags[i + 1]) : type === 'boolean' ? flags[i + 1] === 'true' : flags[i + 1];
     if (type === 'number' && !Number.isSafeInteger(args[field])) fail();
   }
   for (const [name, type] of Object.entries(commands[operation])) if (!type.endsWith('?') && args[name] === undefined) fail();
   if (operation === 'submit-search' && (Object.hasOwn(args, 'x') !== Object.hasOwn(args, 'y'))) fail();
+  if (operation === 'read-listing') {
+    // The public apartment route is unambiguous before any account or browser
+    // access. Keep the exact spelling: normalization of a token, private path
+    // or tracking redirect must never turn it into another reviewed resource.
+    // Native Avito slugs can contain commas and dots in area/storey figures.
+    const route = /^https:\/\/(?:www\.)?avito\.ru\/([a-z][a-z0-9_-]{0,95})\/kvartiry\/[a-zA-Z0-9][a-zA-Z0-9_,.()~-]*_[1-9][0-9]{5,17}\/?$/u;
+    const match = typeof args.url === 'string' && args.url.length <= 512 && route.exec(args.url);
+    if (!match || match[0] !== args.url || ['profile','user','users','messenger','auth','login','account','api','web','support'].includes(match[1])
+      || args.offset > 100_000) fail();
+  }
   return { operation, args };
 }
 
@@ -82,15 +94,13 @@ export async function runAvito(argv, env = process.env) {
   const { operation, args } = parseAvitoCommand(argv);
   if (operation === 'doctor') return {
     schemaVersion: 1, hostVisualAvailable: Boolean(env.TRELIO_VISUAL_SESSION_MODULE_URL),
-    // The audio API marker is unchanged, but codec-labelled M4A requires the
-    // corrected container/MIME compatibility. Signed admission upgrades to
-    // this exact floor before browser I/O; close preserves an older worker's
-    // authorisation instead of resetting the account or importing its profile.
+    // The signed floor includes the committed-document comparison before and
+    // after extraction. Account selection alone is not evidence of login.
     accountSelected: Boolean(env.TRELIO_SKILL_ACCOUNT_JSON), minimumHostVersion: MINIMUM_HOST_VERSION,
   };
   const url = new URL(env.TRELIO_VISUAL_SESSION_MODULE_URL || 'about:blank');
   if (url.protocol !== 'file:' || env.TRELIO_SKILL_ID !== 'avito') throw new Error('AVITO_HOST_REQUIRED');
-  const { runVisualSession, VISUAL_FILE_UPLOAD_API, VISUAL_AUDIO_DOWNLOAD_API } = await import(url.href);
+  const { runVisualSession, VISUAL_FILE_UPLOAD_API, VISUAL_AUDIO_DOWNLOAD_API, VISUAL_EXACT_DOCUMENT_READ_API } = await import(url.href);
   // A stale host must fail before any chooser click, not silently accept a
   // command it cannot deliver. Keep close/status usable for normal recovery;
   // the API marker never authorises sending or bypasses first-contact review.
@@ -104,13 +114,41 @@ export async function runAvito(argv, env = process.env) {
   // There is no alternate transport, local executable override or site script.
   // The literal opt-in is part of this signed implementation. It cannot be
   // changed by a model flag, browser page or an inherited mode environment.
+  const session = { observationMode: 'text', attachmentDownloads: true, audioDownloads: true, fileUploads: true,
+    origins: ['https://www.avito.ru', 'https://avito.ru'], domains: ['avito.ru'], env };
+  if (operation === 'read-listing') {
+    // The same signed browser owns navigation and the committed main-frame
+    // comparison. No extra tab, profile, search submission or contact action.
+    // Subsequent pages read the same document in place; changing pages refuses
+    // without disclosing the new address or any of its rendered content.
+    if (VISUAL_EXACT_DOCUMENT_READ_API !== 'trelio.visual-exact-document-read/v1') throw new Error('AVITO_HOST_UPGRADE_REQUIRED');
+    const offset = args.offset ?? 0;
+    const continuing = Object.hasOwn(args, 'offset');
+    const read = () => runVisualSession({ ...session, operation: 'read-text', args: { expectedDocumentUrl: args.url, offset } });
+    let document = continuing ? await read() : await runVisualSession({ ...session, operation: 'navigate',
+      args: { url: args.url, expectedDocumentUrl: args.url } });
+    if (document?.state === 'preparing') {
+      // A cold browser owns the original navigation. wait observes it under
+      // its existing lease. Even a ready status has no document identity, so
+      // capture only the exact current page without a second navigation.
+      const status = await runVisualSession({ ...session, operation: 'wait', args: {} });
+      if (status?.state === 'preparing') throw new Error('AVITO_LISTING_PREPARING');
+      if (status?.state === 'ready') document = await read();
+    }
+    if (document?.kind !== 'trelio.browser-text/v1' || document.state !== 'ready' || document.verifiedDocumentUrl !== args.url
+      || typeof document.text !== 'string' || typeof document.title !== 'string' || typeof document.scanLimited !== 'boolean'
+      || (document.nextOffset !== null && (!Number.isSafeInteger(document.nextOffset) || document.nextOffset <= offset))) {
+      throw new Error('AVITO_LISTING_UNVERIFIED');
+    }
+    return { schemaVersion: 1, listingUrl: args.url, title: document.title, text: document.text,
+      nextOffset: document.nextOffset, scanLimited: document.scanLimited };
+  }
   let hostOperation = operation, hostArgs = args;
   if (operation === 'submit-search') {
     hostOperation = 'submit';
     hostArgs = Object.hasOwn(args, 'x') ? { action: 'click', ...args } : { action: 'key', key: 'Enter', ...args };
   } else if (operation === 'search-ready') hostOperation = 'request-ready';
-  return runVisualSession({ observationMode: 'text', attachmentDownloads: true, audioDownloads: true, fileUploads: true, origins: ['https://www.avito.ru', 'https://avito.ru'], domains: ['avito.ru'],
-    operation: hostOperation, args: operation === 'setup' ? { url: 'https://www.avito.ru/' } : hostArgs, env });
+  return runVisualSession({ ...session, operation: hostOperation, args: operation === 'setup' ? { url: 'https://www.avito.ru/' } : hostArgs });
 }
 
 if (process.argv[1] && await fs.realpath(process.argv[1]) === await fs.realpath(fileURLToPath(import.meta.url))) {
@@ -118,7 +156,7 @@ if (process.argv[1] && await fs.realpath(process.argv[1]) === await fs.realpath(
   catch (error) {
     // Runtime/browser errors may contain URLs, input text or local storage.
     // Never echo a native message/stack or fall back to another implementation.
-    process.stdout.write(`${JSON.stringify({ schemaVersion: 1, state: 'error', code: ['AVITO_COMMAND_INVALID', 'AVITO_HOST_REQUIRED', 'AVITO_HOST_UPGRADE_REQUIRED'].includes(error.message) ? error.message : 'AVITO_RUNTIME_FAILED' })}\n`);
+    process.stdout.write(`${JSON.stringify({ schemaVersion: 1, state: 'error', code: ['AVITO_COMMAND_INVALID', 'AVITO_HOST_REQUIRED', 'AVITO_HOST_UPGRADE_REQUIRED', 'AVITO_LISTING_UNVERIFIED', 'AVITO_LISTING_PREPARING'].includes(error.message) ? error.message : 'AVITO_RUNTIME_FAILED' })}\n`);
     process.exitCode = 1;
   }
 }

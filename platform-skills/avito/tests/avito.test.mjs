@@ -89,7 +89,7 @@ test('materialized package exposes complete signed guides without credentials or
     assert.equal(imported.stderr, '');
     assert.deepEqual(JSON.parse(imported.stdout), { schemaVersion: 1, accounts: [] });
     assert.equal(await fs.readFile(marker, 'utf8'), 'synthetic session must survive account discovery');
-    assert.deepEqual((await fs.readdir(temporary)).sort(), ['existing-session-marker', 'references', 'trelio-avito.mjs']);
+    assert.deepEqual((await fs.readdir(temporary)).sort(), ['existing-session-marker', 'references', 'trelio-assistant-execution.json', 'trelio-avito.mjs']);
     await fs.unlink(marker);
     const result = spawnSync(process.execPath, [path.join(temporary, 'trelio-avito.mjs'), 'guides'], { cwd: temporary, encoding: 'utf8', env: { HOME: temporary, USERPROFILE: temporary, SystemRoot: process.env.SystemRoot }, timeout: 15_000 });
     assert.equal(result.status, 0, result.stderr);
@@ -107,7 +107,7 @@ test('materialized package exposes complete signed guides without credentials or
       const name = path.basename(guide.path);
       assert.equal(actual.toString('utf8').replace(/\r\n/g, '\n'), (await fs.readFile(path.join(source, 'references', name), 'utf8')).replace(/\r\n/g, '\n'));
     }
-    assert.deepEqual((await fs.readdir(temporary)).sort(), ['references', 'trelio-avito.mjs']);
+    assert.deepEqual((await fs.readdir(temporary)).sort(), ['references', 'trelio-assistant-execution.json', 'trelio-avito.mjs']);
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 });
 
@@ -243,5 +243,63 @@ test('materialized upload CLI routes native paths and returns only safe errors',
     assert.deepEqual(JSON.parse(result.stdout), fail
       ? { schemaVersion: 1, state: 'error', code: 'AVITO_RUNTIME_FAILED' }
       : { schemaVersion: 1, state: 'ready' });
+  }
+});
+
+test('signed apartment reads accept only exact public listing URLs before browser access', async () => {
+  const denied = new Proxy({}, { get() { throw Error('unexpected account or browser access'); } });
+  const url = 'https://www.avito.ru/test_city/kvartiry/2-k._kvartira_50,5_m_2et._1234567890';
+  assert.deepEqual(parseAvitoCommand(['read-listing', '--url', url, '--offset', '6000']).args, { url, offset: 6000 });
+  for (const input of [url.replace('https:', 'http:'), url.replace('avito.ru/', 'avito.ru.invalid/'),
+    url.replace('www.', 'x@www.'), url.replace('avito.ru', 'avito.ru:443'), url + '?redirect=other',
+    url + '#details', url.replace('/kvartiry/', '/profile/'), url.replace('/test_city/', '/profile/'), url.replace('/kvartiry/', '/../../kvartiry/'),
+    url.replace('/kvartiry/', '/kvartiry%2f'), url.replace('_1234567890', ''), url + '/contacts',
+    'https://www.avito.ru/test_city/kvartiry', 'https://www.avito.ru/profile/messenger',
+  ]) await assert.rejects(runAvito(['read-listing', '--url', input], denied), /AVITO_COMMAND_INVALID/);
+  for (const flags of [['--offset','-1'], ['--offset','1e3'], ['--offset','100001'], ['--offset','NaN'],
+    ['--contact','true'], ['--click','1'], ['--url',url], ['--query','test']])
+    await assert.rejects(runAvito(['read-listing', '--url', url, ...flags], denied), /AVITO_COMMAND_INVALID/);
+  const built = JSON.parse(buildRuntimePackage(fileURLToPath(new URL('../', import.meta.url))).packageBytes);
+  const descriptor = JSON.parse(Buffer.from(built.files.find(f => f.path === 'trelio-assistant-execution.json').contentBase64, 'base64'));
+  assert.deepEqual(descriptor.readOnlyCommands.flat(), ['commands','guides','doctor','read-listing']);
+  const { commands } = await runAvito(['commands'], denied);
+  assert.deepEqual(descriptor.taskCommands.flat().sort(), [...Object.keys(commands).filter(c => !['disconnect','show-login'].includes(c)), 'guides','commands'].sort());
+});
+
+test('listing projection requires the signed marker and the worker’s positive confirmation of this exact document', async t => {
+  const temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-avito-listing-')));
+  t.after(() => fs.rm(temporary, { recursive: true, force: true }));
+  const url = 'https://www.avito.ru/test/kvartiry/primer_123456789';
+  const base = ['read-listing', '--url', url];
+  for (const present of [false, true]) {
+    const host = path.join(temporary, present ? 'current.mjs' : 'previous.mjs');
+    await fs.writeFile(host, (present ? "export const VISUAL_EXACT_DOCUMENT_READ_API='trelio.visual-exact-document-read/v1';" : '') +
+      'export const calls=[]; export function runVisualSession({operation,args,env}) { calls.push({operation,args}); const input=JSON.parse(env.SYNTHETIC_RESULT); return input.byOperation?.[operation] ?? input; }');
+    const env = { TRELIO_VISUAL_SESSION_MODULE_URL: pathToFileURL(host).href, TRELIO_SKILL_ID:'avito' };
+    const { calls } = await import(env.TRELIO_VISUAL_SESSION_MODULE_URL);
+    if (!present) {
+      await assert.rejects(runAvito(base, env), /AVITO_HOST_UPGRADE_REQUIRED/);
+      assert.equal(calls.length, 0); continue;
+    }
+    const result = { kind:'trelio.browser-text/v1', state:'ready', title:'Apartment', text:'Floor 4', verifiedDocumentUrl:url, nextOffset:6000, scanLimited:true,
+      frameId:'private-frame', controls:[{label:'Contact',url:'private-control'}] };
+    const read = (args, input) => runAvito(args, { ...env, SYNTHETIC_RESULT: JSON.stringify(input) });
+    assert.deepEqual(await read(base, result), { schemaVersion:1, listingUrl:url, title:'Apartment', text:'Floor 4', nextOffset:6000, scanLimited:true });
+    assert.deepEqual(await read([...base,'--offset','6000'], { ...result,text:'End',nextOffset:null,scanLimited:false }),
+      { schemaVersion:1, listingUrl:url,title:'Apartment',text:'End',nextOffset:null,scanLimited:false });
+    assert.deepEqual(calls,[{operation:'navigate',args:{url,expectedDocumentUrl:url}}, {operation:'read-text',args:{expectedDocumentUrl:url,offset:6000}}]);
+    calls.length = 0;
+    const cold = { byOperation: { navigate: { state:'preparing' }, wait:{ state:'ready' }, 'read-text': result } };
+    assert.equal((await read(base, cold)).text, 'Floor 4');
+    assert.deepEqual(calls.map(c => c.operation), ['navigate','wait','read-text']);
+    calls.length = 0;
+    await assert.rejects(read(base, { byOperation: { navigate:{state:'preparing'},wait:{state:'preparing'} } }), /AVITO_LISTING_PREPARING/);
+    assert.equal((await read([...base,'--offset','0'],result)).listingUrl,url);
+    assert.deepEqual(calls.map(c => c.operation), ['navigate','wait','read-text'], 'a slow launch is resumed without navigating again');
+    for (const invalid of [{...result,verifiedDocumentUrl:undefined}, {...result,verifiedDocumentUrl:url+'0'}, {...result,kind:'image'}, {state:'error', reason:'stale_frame'}]) {
+      const before = calls.length;
+      await assert.rejects(read(base,invalid),/AVITO_LISTING_UNVERIFIED/);
+      assert.equal(calls.length,before+1,'no fallback navigation, contact lookup or retry');
+    }
   }
 });

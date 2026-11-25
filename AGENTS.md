@@ -383,6 +383,9 @@ MCP его не возвращает. Explicit logout не восстанавл�
 Закрытие окна и «готово» сохраняют попытку в OS-protected snapshot;
 `saved_unverified` требует визуальной проверки кабинета. Native совместимость
 host проверяется отдельно на macOS, Windows и Linux до публичного выпуска.
+Подписанный `read-listing` для квартиры сверяет точный адрес отрисованной
+страницы до и после чтения. При самостоятельной сверке ассистента используется
+тот же аккаунт, browser owner и ограниченная подписанная команда.
 Первый host account flow Avito обязан проходить реальный packaged
 `__trelio_accounts_import`: отсутствие legacy store даёт пустой bounded envelope
 без native/browser/credential IO, не ошибку и не сброс существующих snapshots.
@@ -397,7 +400,7 @@ native chooser с frozen originals: [контракт](platform-skills/avito/ref
 Отсутствие control и статус подтверждения профиля проверяются раздельно;
 входящий DOCX не доказывает право текущего аккаунта на отправку документов.
 Голосовые используют отдельный signed `audioDownloads`/API marker и
-host >=3.28.3; min в release/doctor должен совпадать. Команда
+host >=3.28.3 для аудио; минимум всего пакета в release/doctor должен совпадать. Команда
 `download-audio`: [контракт](platform-skills/avito/references/attachments.md#голосовое-в-диалоге).
 Native player/blob original не заменять обычным play, system recording или HTTP.
 После получения – отдельный доступный local ASR с его штатной подготовкой;

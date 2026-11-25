@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "avito",
-    "version": "1.5.3",
-    "summary": "Загрузка полного руководства Авито по частям",
-    "routingSummary": "Find Avito listings, chat with sellers, download voice messages, and send or receive files in the managed browser."
+    "version": "1.6.0",
+    "summary": "Чтение объявления о квартире по точной ссылке",
+    "routingSummary": "Find Avito listings, read a specific apartment listing, chat with sellers, and send or receive files and voice messages in the managed browser."
   },
   "connection": {
     "schemaVersion": 1,
@@ -16,8 +16,8 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "1.5.3",
-    "minimumHostVersion": "3.28.3",
+    "version": "1.6.0",
+    "minimumHostVersion": "3.35.11",
     "entrypoint": {
       "path": "trelio-avito.mjs",
       "interpreter": "node"
@@ -52,6 +52,11 @@
       {
         "source": "references/security.md",
         "path": "references/security.md",
+        "mode": 420
+      },
+      {
+        "source": "scripts/trelio-assistant-execution.json",
+        "path": "trelio-assistant-execution.json",
         "mode": 420
       }
     ]

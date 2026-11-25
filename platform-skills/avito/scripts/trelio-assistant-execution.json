@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 3,
+  "taskCommands": [
+    ["commands"], ["guides"], ["doctor"], ["setup"], ["status"], ["wait"], ["ready"], ["screenshot"], ["close"],
+    ["read-listing"], ["read-text"], ["submit-search"], ["search-ready"], ["navigate"], ["click"], ["scroll"],
+    ["type-text"], ["key"], ["download-attachment"], ["download-audio"], ["upload-files"]
+  ],
+  "deniedOptions": [],
+  "readOnlyCommands": [["commands"], ["guides"], ["doctor"], ["read-listing"]]
+}
