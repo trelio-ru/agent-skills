@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import {parseArguments} from '../scripts/trelio-max.mjs';
+import {parseArguments, validateCommandOptions} from '../scripts/trelio-max.mjs';
 import {buildRuntimePackage} from '../../tools/build-runtime-package.mjs';
 import {fileURLToPath} from 'node:url';
 
@@ -14,8 +14,8 @@ const environment={TRELIO_SKILL_ID:'max-web',TRELIO_SKILL_RUNTIME_VERSION:'2.10.
   TRELIO_SKILL_CONNECTION_ID:'33333333-3333-4333-8333-333333333333'};
 
 test('MAX signed task policy classifies the real parser and keeps setup/admin private',()=>{
-  assert.deepEqual(Object.keys(policy).sort(),['deniedOptions','schemaVersion','taskCommands']);
-  assert.equal(policy.schemaVersion,2);
+  assert.deepEqual(Object.keys(policy).sort(),['deniedOptions','readOnlyCommands','schemaVersion','taskCommands']);
+  assert.equal(policy.schemaVersion,3);
   assert.equal(new Set(policy.taskCommands.map(prefix=>JSON.stringify(prefix))).size,policy.taskCommands.length);
   for(const prefix of policy.taskCommands){
     if(prefix[0]==='guides')continue; // Existing real packaged guides entry is metadata-only.
@@ -37,6 +37,18 @@ test('MAX signed task policy classifies the real parser and keeps setup/admin pr
     assert.throws(()=>parseArguments(['read',option.slice(0,-1),'/synthetic-value'],environment),/Unknown argument/);
   }
   assert.throws(()=>parseArguments(['read','--Chrome','/synthetic-browser'],environment),/Unknown argument/);
+});
+
+test('only the signed guides and passive MAX history can attest to a read', () => {
+  // The recovery host authorizes the entire command prefix. Exercise the real
+  // parser too: neither upload/download paths nor outgoing text belong to read.
+  assert.deepEqual(policy.readOnlyCommands, [['guides'], ['read']]);
+  const history = ['read', '--chat', 'https://web.max.ru/123', '--pages', '2'];
+  validateCommandOptions(parseArguments(history, environment));
+  for (const option of ['--file', '--message', '--output', '--message-file']) {
+    assert.throws(() => validateCommandOptions(parseArguments([...history, option, 'synthetic'], environment)),
+      /does not accept/);
+  }
 });
 
 test('MAX command restrictions are present in the existing signed file inventory',()=>{

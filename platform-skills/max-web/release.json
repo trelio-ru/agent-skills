@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "max-web",
-    "version": "2.13.5",
-    "summary": "Список личных аккаунтов и выбранный аккаунт работают в компаниях без старого подключения. Исправлен запуск из папки пакета, открытой через символическую ссылку.",
+    "version": "2.13.6",
+    "summary": "Ассистент может сверить прежние сообщения в MAX при восстановлении прерванной задачи. Пассивное чтение сохраняет у собеседника прежний статус сообщений.",
     "routingSummary": "Read MAX chats, transcribe voice messages in MAX, and manage messages, files and Goskey requests."
   },
   "connection": {
@@ -18,8 +18,8 @@
     ]
   },
   "runtime": {
-    "version": "2.13.5",
-    "minimumHostVersion": "3.31.0",
+    "version": "2.13.6",
+    "minimumHostVersion": "3.34.7",
     "entrypoint": {
       "path": "trelio-max.mjs",
       "interpreter": "node"

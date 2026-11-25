@@ -187,6 +187,9 @@ CLI. MAX, Telegram Web, Apple Calendar и Audio Transcription сверяют ф�
 entrypoint для запуска через симлинк/junction, сохраняя инертный module import.
 Telegram legacy import и выбранный личный account допускают отсутствие старого
 company connection по тому же контракту; проверяй настоящий isolated CLI до/после выбора.
+В MAX для сверки после прерывания подписаны только `guides` и пассивный
+`read` с обычной защитой read receipts. Изменение этого списка требует проверки
+реального parser и эффекта команды.
 Для WhatsApp discovery, recency, date-only поиска, coverage и browser fallback
 читай [контракт WhatsApp](docs/whatsapp-web-agent-skill.md#поиск-последней-переписки).
 WhatsApp без legacy connection возвращает пустой импорт до файловой системы.
