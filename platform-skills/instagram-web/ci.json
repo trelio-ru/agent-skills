@@ -1,0 +1,1 @@
+{ "schemaVersion": 1, "language": "node", "testFile": "tests/instagram.test.mjs", "prepareFile": "development/prepare-ci.mjs" }

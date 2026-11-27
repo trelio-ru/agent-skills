@@ -9,7 +9,7 @@ DeepSeek Search, DodoStats / DrinkitStats, Google: поиск и ИИ, Google К
 iPhone Mirroring, Perplexity Search, Yandex Search, ИИ-Консьерж от Гига / Сбер,
 MAX, поиск Ozon, заказные письма Почты России, [проверка российского юрлица](platform-skills/check-russian-company/SKILL.md),
 Право РФ — открытые источники, Т-Банк, Telegram MTProto,
-Telegram Web, WhatsApp, факсимиле для документов, ВК Реклама и локальная расшифровка аудио. Для конкретного provider
+Telegram Web, WhatsApp, Instagram, факсимиле для документов, ВК Реклама и локальная расшифровка аудио. Для конкретного provider
 читай его `SKILL.md`.
 
 [Право РФ — открытые источники](platform-skills/pravo-rf-open-sources/SKILL.md)
@@ -70,6 +70,12 @@ targets: macOS Apple Silicon (Whisper с macOS 14), Windows x64, Linux x64 (glib
 через выбранную карточку, включая файловый CDN ВК; неизвестные форматы с явным
 признаком вложения сохраняются как данные. Source и синтетические тесты не
 доказывают текущую совместимость живого VK: до signed release нужен live smoke.
+
+[Instagram](platform-skills/instagram-web/SKILL.md) читает отрисованный текст
+профилей, публикаций и Reels по прямой ссылке в скрытом Chromium Trelio.
+Гостевой профиль изолирован от личного. При необходимости пользователь входит
+в отдельном видимом окне, а host хранит защищённый снимок выбранного аккаунта.
+Кандидат требует host 3.35.11+ и живой проверки до публикации.
 
 [Google: поиск и ИИ](platform-skills/google-ai-search/SKILL.md) (`google-ai-search`)
 объединяет обычную выдачу Google и AI Mode на `g.ai` в собственных скрытых вкладках.

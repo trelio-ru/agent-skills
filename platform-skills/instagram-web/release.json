@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "skillId": "instagram-web",
+    "version": "1.0.0",
+    "summary": "Чтение профилей, публикаций и Reels Instagram по прямой ссылке",
+    "routingSummary": "Read specific Instagram profiles, posts, and Reels by direct link in the managed browser, with optional manual sign-in."
+  },
+  "connection": {
+    "schemaVersion": 1,
+    "intro": [
+      "Ссылки, доступные без входа, открываются в гостевом профиле Chromium Trelio. Если Instagram просит войти, подключите личный аккаунт в отдельном видимом окне.",
+      "Пароль и код вводятся на сайте. Снимок сессии хранится локально в защищённом хранилище выбранного аккаунта."
+    ],
+    "configFields": [],
+    "secretFields": []
+  },
+  "runtime": {
+    "version": "1.0.0",
+    "minimumHostVersion": "3.35.11",
+    "entrypoint": { "path": "trelio-instagram.mjs", "interpreter": "node" },
+    "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
+    "browserSession": { "apiVersion": 1, "sessionClass": "protected-snapshot", "manualAssist": true },
+    "files": [
+      { "source": "scripts/trelio-instagram.mjs", "path": "trelio-instagram.mjs", "mode": 493 },
+      { "source": "trelio-visual-guest-profile.json", "path": "trelio-visual-guest-profile.json", "mode": 420 }
+    ]
+  }
+}
