@@ -47,6 +47,10 @@ instruction/package contracts. Новые Node providers регистрирую�
 provider, symlink, shell command либо внешний path. Preparation выполняется
 exact Node argv с shell=false. Package mode не устанавливает browser fixtures.
 
+Декларативные Remote MCP providers с `remote-mcp.json` проходят свои
+prepare и regression steps на всех OS. Builder и проверка детерминизма
+пакета остаются для providers с исполняемым `release.json`.
+
 Изменение `ci.json` или provider-owned preparation остаётся в scope этого
 provider. Изменение общей логики в `platform-skills/tools/**` или общего
 workflow запускает полный набор, включая новые регистрации. Это сохраняет

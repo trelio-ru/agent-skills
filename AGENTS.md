@@ -3,6 +3,7 @@
 «База знаний Додо» использует только российский Remote MCP с публичным
 OAuth client ID и проверенным списком методов чтения. Проверять список через
 личный вход Dodo IS и не переносить содержимое Базы знаний в публичные fixtures.
+Декларации Remote MCP проверяет provider matrix по [контракту CI](docs/github-actions-execution.md#выбор-provider-проверок).
 
 Apple Calendar: до правки читать полный [CalDAV workflow](platform-skills/apple-calendar/references/workflow.md).
 Сохранять выбранный scope, ETag CAS, organizer/RSVP identity и encrypted unknown

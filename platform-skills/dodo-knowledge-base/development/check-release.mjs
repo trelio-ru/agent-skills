@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 // the declaration with the card text and requirements from this directory.
 const withSource = (name) => new URL(`../${name}`, import.meta.url);
 const { schemaVersion, release } = JSON.parse(readFileSync(withSource("remote-mcp.json"), "utf8"));
-const instructions = readFileSync(withSource("SKILL.md"), "utf8");
+const instructions = readFileSync(withSource("SKILL.md"), "utf8").replace(/\r\n/gu, "\n");
 const requirements = JSON.parse(readFileSync(withSource("catalog-requirements.json"), "utf8"));
 
 assert.equal(schemaVersion, 1);
