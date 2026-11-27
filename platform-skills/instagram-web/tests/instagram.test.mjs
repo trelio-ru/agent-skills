@@ -75,7 +75,7 @@ test('content is bound to one canonical Instagram URL and projected without cont
       text: 'Synthetic content', nextOffset: null, scanLimited: false,
     });
     assert.deepEqual(host.calls.at(-1), {
-      origins: [origin], domains: ['instagram.com'], externalNavigation: false,
+      origins: [origin], domains: ['instagram.com'],
       presentation: 'hidden', observationMode: 'text', operation: 'navigate',
       args: { url: expected, expectedDocumentUrl: expected },
     });
@@ -88,6 +88,7 @@ test('content is bound to one canonical Instagram URL and projected without cont
   for (const bad of [
     observation(post, { verifiedDocumentUrl: undefined }),
     observation(`${origin}/accounts/login/`),
+    observation('https://www.facebook.com/login/'),
     observation(post, { nextOffset: 0 }),
     observation(post, { scanLimited: undefined }),
     visualStatus('ready'),
@@ -124,7 +125,11 @@ test('manual setup belongs to the selected account and older hosts fail before b
   assert.equal(host.calls.length, 0);
   const manual = visualStatus('manual_input_required', 'manual_control_active');
   assert.deepEqual(await host.run(['setup'], { setup: manual }, { TRELIO_SKILL_ACCOUNT_JSON: '{}' }), manual);
-  assert.deepEqual(host.calls[0].args, { url: `${origin}/accounts/login/` });
+  assert.deepEqual(host.calls[0], {
+    origins: [origin], domains: ['instagram.com'],
+    presentation: 'hidden', observationMode: 'text', operation: 'setup',
+    args: { url: `${origin}/accounts/login/` },
+  });
   const stale = await fixture(t, { exact: false });
   await assert.rejects(stale.run(['read', '--url', post], {}), /INSTAGRAM_HOST_UPGRADE_REQUIRED/);
   assert.equal(stale.calls.length, 0);

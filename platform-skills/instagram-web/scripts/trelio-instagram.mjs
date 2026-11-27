@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const SKILL_ID = 'instagram-web';
-const RUNTIME_VERSION = '1.0.0';
+const RUNTIME_VERSION = '1.0.1';
 const MINIMUM_HOST_VERSION = '3.35.11';
 const ORIGIN = 'https://www.instagram.com';
 const LOGIN_URL = `${ORIGIN}/accounts/login/`;
@@ -59,7 +59,9 @@ async function visualHost(env) {
     || host.VISUAL_EXACT_DOCUMENT_READ_API !== 'trelio.visual-exact-document-read/v1'
     || typeof host.runVisualSession !== 'function') throw new Error('INSTAGRAM_HOST_UPGRADE_REQUIRED');
   return (operation, args = {}) => host.runVisualSession({
-    origins: [ORIGIN], domains: ['instagram.com'], externalNavigation: false,
+    // Use the host's full HTTP(S) navigation for browser links and login
+    // redirects. The Instagram origin/domain still scope the saved cookies.
+    origins: [ORIGIN], domains: ['instagram.com'],
     observationMode: 'text', presentation: 'hidden', operation, args, env,
   });
 }
