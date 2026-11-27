@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "max-web",
-    "version": "2.13.6",
-    "summary": "Ассистент может сверить прежние сообщения в MAX при восстановлении прерванной задачи. Пассивное чтение сохраняет у собеседника прежний статус сообщений.",
+    "version": "2.13.7",
+    "summary": "Короткая ссылка Госключа открывает диалог после перехода MAX на числовой адрес. Перед чтением или отправкой навык сверяет имя пользователя и ссылку в профиле бота.",
     "routingSummary": "Read MAX chats, transcribe voice messages in MAX, and manage messages, files and Goskey requests."
   },
   "connection": {
@@ -18,7 +18,7 @@
     ]
   },
   "runtime": {
-    "version": "2.13.6",
+    "version": "2.13.7",
     "minimumHostVersion": "3.34.7",
     "entrypoint": {
       "path": "trelio-max.mjs",

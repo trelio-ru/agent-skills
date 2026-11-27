@@ -568,9 +568,13 @@ stderr/stdout. Домашний каталог, credentials в URL и npm auth/t
 `read`/`send` принимают exact официальный deep link
 `https://max.ru/goskey_bot` и его browser canonical
 `https://web.max.ru/goskey_bot`. Другие произвольные top-level handles,
-credentials, query и fragment запрещены. Открытие требует сохранения exact
-canonical route и готовой поверхности чата; неизвестный numeric redirect
-fail-closed. Открытие не нажимает «Начать» и не запускает bot callbacks.
+credentials, query и fragment запрещены. Если MAX заменил этот exact browser
+alias числовым адресом на `web.max.ru`, runtime сверяет `@goskey_bot` и
+`https://max.ru/goskey_bot` в открытой карточке профиля того же чата.
+После сверки он заново открывает exact числовой адрес и проверяет готовность
+чата. Неизвестный или непроверенный redirect останавливает операцию до
+чтения истории или отправки. Открытие не нажимает «Начать» и не запускает
+bot callbacks.
 Полный рабочий flow и ссылки на первичные источники находятся в
 [SKILL.md](../platform-skills/max-web/SKILL.md#госключ-через-max).
 

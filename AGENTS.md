@@ -742,6 +742,9 @@ MAX голосовые сначала расшифровывает штатны�
 Source/ACK и signed assistant task prefixes не расширяются автоматически.
 MAX read-only assist сохраняет штатный phone lookup для cold контакта;
 точная home-search кнопка проверяется и host gate, и browser event fence.
+Числовой redirect короткой ссылки Госключа принимается только после сверки
+точного username и публичной ссылки в одной карточке профиля. Контракт и
+live smoke – [Госключ](docs/max-web-agent-skill.md#госключ).
 Для каждой новой signed-runtime публикации нужна уникальная runtime version,
 даже при изменении только инструкций; порядок — docs/release-process.md.
 При прямом входе Т-Банк распознаёт необязательный PIN по надписям и явным

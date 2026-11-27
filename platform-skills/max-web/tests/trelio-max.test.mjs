@@ -198,8 +198,8 @@ test("MAX worker closure receipt is private, credential-free and cannot replace 
 
 test("MAX release opts into the shared browser session with manual assist", () => {
   const release = JSON.parse(fs.readFileSync(new URL("../release.json", import.meta.url), "utf8"));
-  assert.equal(release.release.version, "2.13.6");
-  assert.equal(release.runtime.version, "2.13.6");
+  assert.equal(release.release.version, "2.13.7");
+  assert.equal(release.runtime.version, "2.13.7");
   assert.equal(release.runtime.minimumHostVersion, "3.34.7");
   assert.deepEqual(release.runtime.browserSession, {
     apiVersion: 1,
@@ -398,7 +398,7 @@ test("MAX local policy defaults to confirm and keeps state outside workspace", (
 test("MAX exposes a versioned, content-free live probe command", () => {
   const options = parseRuntimeArguments(["probe"]);
   assert.equal(options.command, "probe");
-  assert.equal(ADAPTER_VERSION, "51");
+  assert.equal(ADAPTER_VERSION, "52");
 });
 
 test("MAX exposes bounded assisted recovery for reads and exact manual operations", () => {
@@ -2070,13 +2070,95 @@ test("Goskey opening requires the exact route and a loaded chat without starting
   };
   const options = { chat: "https://max.ru/goskey_bot", timeoutMs: 5000 };
   assert.equal((await openChat(page, options)).url, actual);
-  // A numeric redirect or similarly named bot is not silently accepted as proof.
-  actual = "https://web.max.ru/123";
+  // The official alias may resolve only to a verified numeric bot chat.
+  actual = "https://web.max.ru/u/contact";
   await assert.rejects(() => openChat(page, options), /exact requested chat URL/u);
   actual = "https://web.max.ru/goskey_bot";
   page.waitForFunction = async () => { throw new Error("No bot chat surface"); };
   page.reload = async () => {};
   await assert.rejects(() => openChat(page, options), /no visible interactive UI/u);
+});
+
+const goskeyRedirectPage = ({ late = false, target = "/123", profile, routeOnProfile } = {}) => {
+  const alias = "/goskey_bot";
+  const chat = '<main><button aria-label="Открыть профиль Госключ"></button><textarea></textarea></main>';
+  let route = alias;
+  let profileOpen = false;
+  const visits = [];
+  const page = {
+    url: () => `https://web.max.ru${route}`,
+    goto: async (url) => {
+      const path = new URL(url).pathname;
+      visits.push(path);
+      profileOpen = false;
+      route = path === alias && !late ? target : path;
+    },
+    evaluate: async (callback, arg) => {
+      if (callback === inspectMaxSessionDocument) return { loginReady: false, authenticatedReady: true };
+      return domPage(chat, route).evaluate(callback, arg);
+    },
+    waitForFunction: async (callback, arg) => {
+      if (arg === true) return;
+      if (route === alias && late) route = target;
+      const dom = domPage(profileOpen ? profile : chat, route);
+      if (!await dom.evaluate(callback, arg)) {
+        throw Object.assign(new Error("MAX predicate timed out"), { name: "TimeoutError" });
+      }
+    },
+    getByRole: (_role, { name }) => {
+      assert.match("Открыть профиль Госключ", name);
+      return {
+        count: async () => 1,
+        click: async () => {
+          profileOpen = true;
+          if (routeOnProfile) route = routeOnProfile;
+        },
+      };
+    },
+  };
+  return { page, visits };
+};
+
+const goskeyProfile = ({ handle = "@goskey_bot", url = "https://max.ru/goskey_bot", extra = "" } = {}) =>
+  `<main><section><button>${handle}</button><button>Чат</button>
+    <div role="button">Ссылка ${url}</div>${extra}</section></main>`;
+
+test("Goskey verifies an early or late numeric redirect in the live profile before reopening it", async () => {
+  for (const late of [false, true]) {
+    const { page, visits } = goskeyRedirectPage({ late, profile: goskeyProfile() });
+    const opened = await openChat(page, { chat: "https://max.ru/goskey_bot", timeoutMs: 5000 });
+    assert.deepEqual(opened, {
+      method: "goskey-verified-redirect", url: "https://web.max.ru/123", botUsername: "@goskey_bot",
+    });
+    assert.deepEqual(visits, ["/goskey_bot", "/123"]);
+  }
+});
+
+test("Goskey refuses a lookalike, detached profile evidence or a changed route before using the redirect", async () => {
+  const options = { chat: "https://web.max.ru/goskey_bot", timeoutMs: 5000 };
+  for (const fixture of [
+    { profile: goskeyProfile({ handle: "@another_bot" }) },
+    { profile: goskeyProfile({ url: "https://max.ru/another_bot" }) },
+    { profile: goskeyProfile({ extra: '<div data-message-id="42"></div>' }) },
+    { profile: goskeyProfile(), routeOnProfile: "/456" },
+  ]) {
+    const { page, visits } = goskeyRedirectPage(fixture);
+    await assert.rejects(() => openChat(page, options), {
+      code: "MAX_CHAT_IDENTITY_UNVERIFIED",
+      details: { reason: "goskey-profile-unverified", finalMutationActionStarted: false },
+    });
+    assert.deepEqual(visits, ["/goskey_bot"]);
+  }
+});
+
+test("Goskey numeric redirect exception excludes Favorites and parameterized URLs", async () => {
+  for (const target of ["/0", "/123?start=other", "/123#other"]) {
+    const { page, visits } = goskeyRedirectPage({ target, profile: goskeyProfile() });
+    await assert.rejects(() => openChat(page, { chat: "https://web.max.ru/goskey_bot", timeoutMs: 5000 }), {
+      code: "MAX_UI_UNSUPPORTED",
+    });
+    assert.deepEqual(visits, ["/goskey_bot"]);
+  }
 });
 
 test("MAX history excludes provider controls and recognizes current outgoing metadata", async () => {

@@ -26,6 +26,10 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const MAX_WEB_URL = "https://web.max.ru/";
 const MAX_WEB_ORIGIN = new URL(MAX_WEB_URL).origin;
 const MAX_FAVORITES_URL = new URL("0", MAX_WEB_URL).toString();
+const MAX_GOSKEY_PUBLIC_URL = "https://max.ru/goskey_bot";
+const MAX_GOSKEY_BOT_URL = new URL("goskey_bot", MAX_WEB_URL).toString();
+const MAX_GOSKEY_USERNAME = "@goskey_bot";
+const GOSKEY_NUMERIC_ROUTE = /^https:\/\/web\.max\.ru\/-?[1-9]\d*\/?$/u;
 let browserSessionRuntimePromise = null;
 let executionDirectory = null;
 const browserSessionRuntime = async () => {
@@ -54,7 +58,7 @@ const assertDocumentAvailable = (page) => {
   if (failure) throw new MaxRuntimeError("MAX_SERVICE_HTTP_ERROR", "MAX returned an HTTP error.", failure);
 };
 const POLICY_MODES = new Set(["confirm", "read-only"]);
-const ADAPTER_VERSION = "51";
+const ADAPTER_VERSION = "52";
 const MEMBER_REMOVE_ACTION = /(?:удалить|исключить|убрать)\s+(?:участника|из\s+(?:чата|группы|беседы))|(?:remove|kick)\s+(?:participant|member|from\s+(?:chat|group))/iu;
 const MAX_UI_READY_TIMEOUT_MS = 10_000;
 // A cold worker must launch Chrome, hydrate home and then resolve the exact
@@ -2407,7 +2411,7 @@ const normalizeChatUrl = (reference) => {
   // The official Goskey public page links directly to this exact web route.
   // Accepting that provider-owned identity fixes the signing workflow without
   // opening every arbitrary top-level path or trusting a matching chat title.
-  // openChat still requires the same canonical URL and a ready message surface.
+  // A numeric redirect from this alias still requires live bot profile proof.
   const goskeyBot = /^\/goskey_bot\/?$/u.test(url.pathname);
   if (url.username || url.password || ![MAX_WEB_ORIGIN, "https://max.ru"].includes(url.origin) || (!numeric && !contact && !goskeyBot) || url.search || url.hash) {
     throw new Error("MAX chat URL must be an official numeric, /u/ contact or exact Goskey bot URL.");
@@ -2483,22 +2487,76 @@ const openFavoritesChat = async (page, options) => {
 
 const waitForMaxChatSurfaceOrHome = async (page, options, expectedUrl) => {
   try {
-    await page.waitForFunction(({ expected, home }) => {
+    await page.waitForFunction(({ expected, home, goskeyNumericPattern }) => {
       const href = window.location.href;
       if (href === home) return true;
-      if (href.replace(/\/$/u, '') !== expected) return false;
+      const exactRoute = href.replace(/\/$/u, '') === expected;
+      // A numeric URL is only a candidate for the official Goskey alias.
+      // This wait checks rendering; the caller must verify the candidate.
+      if (!exactRoute && (!goskeyNumericPattern || !new RegExp(goskeyNumericPattern, "u").test(href))) return false;
       const surface = document.querySelector('main') || document.body;
       return Boolean(surface?.querySelector(
         '[class~="messageWrapper"], [data-message-id], [contenteditable="true"], '
         + '[contenteditable=""], [contenteditable="plaintext-only"], textarea',
       ));
-    }, { expected: expectedUrl, home: MAX_WEB_URL }, { timeout: Math.min(options.timeoutMs, MAX_UI_READY_TIMEOUT_MS) });
+    }, { expected: expectedUrl, home: MAX_WEB_URL,
+      goskeyNumericPattern: expectedUrl === MAX_GOSKEY_BOT_URL ? GOSKEY_NUMERIC_ROUTE.source : null,
+    }, { timeout: Math.min(options.timeoutMs, MAX_UI_READY_TIMEOUT_MS) });
   } catch (error) {
     if (error?.name !== 'TimeoutError') throw error;
     throw new MaxRuntimeError('MAX_CHAT_IDENTITY_UNVERIFIED',
       'MAX did not open a ready surface for the exact requested chat.',
       { reason: 'chat-surface-unverified', finalMutationActionStarted: false });
   }
+};
+
+const waitForGoskeyProfile = (page, candidate, timeout) => page.waitForFunction(({ chatUrl, username, publicUrl }) => {
+  if (window.location.href.replace(/\/$/u, "") !== chatUrl) return false;
+  const controls = [...document.querySelectorAll('button, [role="button"]')].filter((node) => {
+    const box = node.getBoundingClientRect();
+    return box.width > 0 && box.height > 0 && getComputedStyle(node).visibility === "visible";
+  });
+  const label = node => (node.getAttribute("aria-label") || node.getAttribute("title")
+    || node.innerText || node.textContent || "").replace(/\s+/gu, " ").trim();
+  const handles = controls.filter(node => label(node) === username);
+  const links = controls.filter(node => {
+    const match = /^(?:Ссылка|Link) (\S+)$/iu.exec(label(node));
+    return match?.[1] === publicUrl;
+  });
+  if (handles.length !== 1 || links.length !== 1) return false;
+
+  // Both exact values must belong to the same profile panel. Chat messages,
+  // sidebar previews and a display name alone cannot attest the bot.
+  let panel = links[0].parentElement;
+  while (panel && !panel.contains(handles[0])) panel = panel.parentElement;
+  return Boolean(panel && panel !== document.body && panel !== document.documentElement
+    && !panel.querySelector('[data-message-id], [class~="messageWrapper"], textarea, [contenteditable]')
+    && controls.some(node => panel.contains(node) && /^(?:Чат|Chat)$/iu.test(label(node))));
+}, { chatUrl: candidate, username: MAX_GOSKEY_USERNAME, publicUrl: MAX_GOSKEY_PUBLIC_URL }, { timeout });
+
+const openVerifiedGoskeyRedirect = async (page, options, candidate) => {
+  const unverified = () => new MaxRuntimeError("MAX_CHAT_IDENTITY_UNVERIFIED",
+    "MAX did not verify the official Goskey bot profile at the redirected chat.",
+    { reason: "goskey-profile-unverified", finalMutationActionStarted: false });
+  const isCandidate = () => page.url().replace(/\/$/u, "") === candidate;
+  const profileAction = page.getByRole("button", { name: /^(?:открыть профиль|open profile)(?:\s|$)/iu });
+  const timeout = Math.min(options.timeoutMs, MAX_UI_READY_TIMEOUT_MS);
+  assertDocumentAvailable(page);
+  if (!isCandidate() || await profileAction.count() !== 1 || !isCandidate()) throw unverified();
+  try {
+    await profileAction.click({ timeout });
+    await waitForGoskeyProfile(page, candidate, timeout);
+  } catch (error) {
+    assertDocumentAvailable(page);
+    if (error?.name !== "TimeoutError") throw error;
+    throw unverified();
+  }
+  if (!isCandidate()) throw unverified();
+  // Discard the detail view and reopen precisely the verified numeric chat.
+  // The ordinary exact-URL path rechecks login, route and chat readiness
+  // before any caller can see history, select files or perform a mutation.
+  const opened = await openChat(page, { ...options, chat: candidate });
+  return { ...opened, method: "goskey-verified-redirect", botUsername: MAX_GOSKEY_USERNAME };
 };
 
 const openChat = async (page, options) => {
@@ -2531,15 +2589,19 @@ const openChat = async (page, options) => {
     }
     if (!uiReady) throw new Error("MAX chat rendered no visible interactive UI after one controlled reload.");
     await assertLoggedIn(page);
+    let currentUrl = page.url();
     let observedUrl = null;
-    try { observedUrl = normalizeChatUrl(page.url()); } catch { /* Home is not a chat URL. */ }
-    if (observedUrl === expectedUrl) {
+    try { observedUrl = normalizeChatUrl(currentUrl); } catch { /* Home is not a chat URL. */ }
+    const isGoskeyRedirect = url => expectedUrl === MAX_GOSKEY_BOT_URL && GOSKEY_NUMERIC_ROUTE.test(url);
+    if (observedUrl === expectedUrl || isGoskeyRedirect(currentUrl)) {
       // MAX can replace the exact deep link with home only after the shell
       // becomes visible. Race the chat surface against that late redirect,
       // then apply the same exact phone-lookup recovery as for an early one.
       await waitForMaxChatSurfaceOrHome(page, options, expectedUrl);
-      try { observedUrl = normalizeChatUrl(page.url()); } catch { observedUrl = null; }
-      if (observedUrl !== expectedUrl && page.url() !== MAX_WEB_URL) {
+      currentUrl = page.url();
+      try { observedUrl = normalizeChatUrl(currentUrl); } catch { observedUrl = null; }
+      if (isGoskeyRedirect(currentUrl)) return openVerifiedGoskeyRedirect(page, options, observedUrl);
+      if (observedUrl !== expectedUrl && currentUrl !== MAX_WEB_URL) {
         throw new MaxRuntimeError('MAX_CHAT_IDENTITY_UNVERIFIED', 'MAX changed the requested chat while opening it.',
           { reason: 'chat-surface-unverified', finalMutationActionStarted: false });
       }
