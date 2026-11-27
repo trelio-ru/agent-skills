@@ -1,5 +1,9 @@
 # Работа с общими Agent Skills
 
+«База знаний Додо» использует только российский Remote MCP с публичным
+OAuth client ID и проверенным списком методов чтения. Проверять список через
+личный вход Dodo IS и не переносить содержимое Базы знаний в публичные fixtures.
+
 Apple Calendar: до правки читать полный [CalDAV workflow](platform-skills/apple-calendar/references/workflow.md).
 Сохранять выбранный scope, ETag CAS, organizer/RSVP identity и encrypted unknown
 fence до записи; только GET reconciliation, без replay. Keychain/DPAPI проверяются

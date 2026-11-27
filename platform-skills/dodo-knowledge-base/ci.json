@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "language": "node",
+  "prepareFile": "development/check-release.mjs",
+  "testFile": "tests/remote-mcp-contract.test.mjs"
+}

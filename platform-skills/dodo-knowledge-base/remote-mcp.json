@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "release": {
+    "skillId": "dodo-knowledge-base",
+    "catalogSlug": "dodo-knowledge-base",
+    "catalogVisibility": "platform",
+    "marketplaceCategory": "knowledge",
+    "version": "1.0.0",
+    "title": "База знаний Додо",
+    "description": "Поиск и чтение статей, объявлений и разделов российской Базы знаний Додо с личной учёткой Dodo IS.",
+    "routingSummary": "Search and read articles, announcements, and spaces in the Russian Dodo Knowledge Base using the caller's Dodo IS access.",
+    "searchTerms": [
+      "База знаний Додо",
+      "БЗ Додо",
+      "Dodo Knowledge Base",
+      "Dodo Pizza",
+      "Dodo IS",
+      "стандарты Додо",
+      "статьи Додо",
+      "новости Додо",
+      "knowledgebase.dodois.io"
+    ],
+    "summary": "Поиск и чтение в российской Базе знаний Додо через официальный MCP и личную учётку Dodo IS."
+  },
+  "remoteMcp": {
+    "schemaVersion": 4,
+    "transport": "streamable_http",
+    "endpoint": "https://knowledgebase.dodois.io/mcp",
+    "protocolVersion": "2025-03-26",
+    "authentication": {
+      "type": "oauth2_pkce",
+      "clientRegistration": "static",
+      "clientId": "knowledgebase_mcp",
+      "scopes": ["knowledgebase:mcp", "offline_access", "openid"]
+    },
+    "allowedTools": [
+      "current_user",
+      "get_announcements",
+      "get_content",
+      "get_link_templates",
+      "get_space_content",
+      "get_space_tree",
+      "get_spaces",
+      "preview_content",
+      "search_content",
+      "search_in_content"
+    ],
+    "headers": {},
+    "credentialHelp": null
+  }
+}
