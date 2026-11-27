@@ -52,7 +52,7 @@ test('only the declared read and session surface reaches the host', async () => 
     'https://example.test@instagram.com/one', 'https://instagram.com:443/one',
     `${origin}/../one`, `${origin}/a/../two`, `${origin}/three%2ffour`,
     `${origin}/.one`, `${origin}/one..two`, `${origin}/${'a'.repeat(31)}`,
-    `${origin}/accounts/login/`, `${origin}/DIRECT/`, `${origin}/share/p/token`,
+    `${origin}/`, `${origin}/accounts/login/`, `${origin}/DIRECT/`, `${origin}/share/p/token`,
     `${origin}/reel/extra/suffix/`, `${post}\n`, `${post}?bad=one\\two`,
   ]) await assert.rejects(runInstagram(['read', '--url', input], denyIo), /INSTAGRAM_COMMAND_INVALID/, input);
   for (const argv of [
@@ -128,7 +128,7 @@ test('manual setup belongs to the selected account and older hosts fail before b
   assert.deepEqual(host.calls[0], {
     origins: [origin], domains: ['instagram.com'],
     presentation: 'hidden', observationMode: 'text', operation: 'setup',
-    args: { url: `${origin}/accounts/login/` },
+    args: { url: `${origin}/` },
   });
   const stale = await fixture(t, { exact: false });
   await assert.rejects(stale.run(['read', '--url', post], {}), /INSTAGRAM_HOST_UPGRADE_REQUIRED/);

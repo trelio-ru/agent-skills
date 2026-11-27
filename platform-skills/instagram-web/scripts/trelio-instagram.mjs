@@ -3,10 +3,12 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const SKILL_ID = 'instagram-web';
-const RUNTIME_VERSION = '1.0.1';
+const RUNTIME_VERSION = '1.0.2';
 const MINIMUM_HOST_VERSION = '3.35.11';
 const ORIGIN = 'https://www.instagram.com';
-const LOGIN_URL = `${ORIGIN}/accounts/login/`;
+// Start at the public homepage so Instagram presents its normal sign-in entry
+// point. Opening the nested login URL directly returned HTTP 429 in live setup.
+const SETUP_URL = `${ORIGIN}/`;
 const VISUAL_STATUS_KIND = 'trelio.visual-browser/v1';
 const RESERVED_ROUTES = new Set([
   'about', 'accounts', 'ads', 'api', 'challenge', 'checkpoint', 'developer',
@@ -111,7 +113,7 @@ export async function runInstagram(argv, env = process.env) {
     throw new Error('INSTAGRAM_PERSONAL_ACCOUNT_REQUIRED');
   const invoke = await visualHost(env);
   if (operation === 'read') return readDocument(invoke, target, offset);
-  if (operation === 'setup') return invoke('setup', { url: LOGIN_URL });
+  if (operation === 'setup') return invoke('setup', { url: SETUP_URL });
   return invoke(operation);
 }
 
