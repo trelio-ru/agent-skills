@@ -35,6 +35,90 @@ document.querySelector('#road').onclick=e=>document.querySelector('#selected-cat
 document.querySelector('#danger').onclick=()=>window.submissions++;
 </script></body></html>`;
 
+// The portal constructor owns the semantics through roles even when its
+// listbox has no ID or explicit ARIA linkage. Use unrelated wrappers and
+// arbitrary labels to verify that the implementation does not depend on the
+// particular category, form number or a generated CSS class.
+const portalLookupMarkup = `<!doctype html><html lang="ru"><body><main>
+<form id="service">
+  <section id="lookup"><label for="filter">Категория</label>
+    <div><input id="filter" role="combobox" aria-expanded="false"></div>
+    <aside><div role="listbox" hidden>
+      <div role="option" id="choice"><span>Обращение</span></div>
+      <div role="option" aria-disabled="true">Недоступный вариант</div>
+      <div role="option" id="danger">Подтвердить отправку</div>
+    </div></aside>
+  </section>
+  <div role="listbox"><div role="option">Посторонний список</div></div>
+  <button id="continue" type="button">Продолжить</button>
+  <button type="submit">Отправить заявление</button>
+  <output></output>
+</form>
+</main><script>
+window.submissions=0;
+const form=document.querySelector('#service'), input=document.querySelector('#filter');
+const list=document.querySelector('#lookup [role=listbox]');
+form.onsubmit=e=>{e.preventDefault();window.submissions++};
+input.onclick=()=>{list.hidden=false;input.setAttribute('aria-expanded','true')};
+document.querySelector('#choice').onclick=e=>{
+  input.value=e.currentTarget.textContent;
+  list.hidden=true;input.setAttribute('aria-expanded','false');
+};
+document.querySelector('#continue').onclick=()=>document.querySelector('output').textContent=input.value;
+document.querySelector('#danger').onclick=()=>window.submissions++;
+</script></body></html>`;
+
+async function portalLookupSmoke(portal, snapshot, find) {
+  const route = 'https://www.gosuslugi.ru/**';
+  await portal.page.route(route, request => request.fulfill({ contentType: 'text/html; charset=utf-8', body: portalLookupMarkup }));
+  const open = (path = '/712345/2/form') => portal.page.goto(`https://www.gosuslugi.ru${path}`);
+  const startLookup = async () => portal.action({ action: 'click', ref: find(await snapshot(), 'Категория').ref });
+  const isOption = (state, label) => state.controls.some(control => control.label === label && control.role === 'option');
+  try {
+    await open();
+    assert.equal(isOption(await snapshot(), 'Обращение'), false, 'the closed constructor list exposes no options');
+    await startLookup();
+    let state = await snapshot();
+    for (const label of ['Посторонний список', 'Недоступный вариант']) assert.equal(isOption(state, label), false, label);
+    await assert.rejects(portal.action({ action: 'click', ref: find(state, 'Подтвердить отправку').ref }), /manual_confirmation_required/);
+    const choice = find(state, 'Обращение');
+    assert.equal(choice.role, 'option');
+    await portal.action({ action: 'click', ref: choice.ref });
+    await assert.rejects(portal.action({ action: 'click', ref: choice.ref }), /fresh_snapshot_required/);
+    state = await snapshot();
+    await portal.action({ action: 'click', ref: find(state, 'Продолжить').ref });
+    assert.equal(await portal.page.locator('output').textContent(), 'Обращение');
+    assert.equal(await portal.page.evaluate(() => window.submissions), 0);
+
+    for (const variant of ['another-owner', 'another-list', 'conflicting-aria', 'closed', 'readonly', 'moved-widget']) {
+      await open(); await startLookup();
+      const old = find(await snapshot(), 'Обращение');
+      await portal.page.evaluate(kind => {
+        const box = document.querySelector('#lookup'), input = box.querySelector('input');
+        if (kind === 'another-owner') {
+          const other = input.cloneNode(true); other.removeAttribute('id'); box.append(other);
+        }
+        if (kind === 'another-list') box.append(document.querySelector('#service > [role=listbox]'));
+        if (kind === 'conflicting-aria') input.setAttribute('aria-controls', 'unrelated-list');
+        if (kind === 'closed') input.setAttribute('aria-expanded', 'false');
+        if (kind === 'readonly') input.readOnly = true;
+        if (kind === 'moved-widget') {
+          const replacement = box.cloneNode(false);
+          replacement.append(...box.childNodes); box.replaceWith(replacement);
+        }
+      }, variant);
+      await assert.rejects(portal.action({ action: 'click', ref: old.ref }), /fresh_snapshot_required/, variant);
+      assert.equal(await portal.page.locator('#filter').inputValue(), '', variant);
+      assert.equal(isOption(await snapshot(), 'Обращение'), variant === 'moved-widget', variant);
+    }
+    await open('/help');
+    await startLookup();
+    assert.equal(isOption(await snapshot(), 'Обращение'), false, 'the fallback is confined to portal forms');
+  } finally {
+    await portal.page.unroute(route);
+  }
+}
+
 export async function optionBrowserSmoke(portal) {
   await portal.page.route('https://pos.gosuslugi.ru/**', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: markup }));
   const open = async () => portal.page.goto('https://pos.gosuslugi.ru/form/?opaId=223643&fz59=false');
@@ -90,4 +174,5 @@ export async function optionBrowserSmoke(portal) {
   await assert.rejects(portal.action({ action: 'click', ref: aria.ref }), /fresh_snapshot_required/);
   assert.equal((await snapshot()).controls.some(control => control.label === 'Автомобильные дороги'), false);
   await portal.page.unroute('https://pos.gosuslugi.ru/**');
+  await portalLookupSmoke(portal, snapshot, find);
 }

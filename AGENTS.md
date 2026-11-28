@@ -636,6 +636,10 @@ credential gate и failed delegated transaction не открывают авто
 exact origin/path, native non-submit button, отсутствие полей, полный экран
 и actual container binding повторно проверяются перед кликом. Нельзя снимать
 общий dangerous-label gate по одному слову «Подать» или разрешать отправку.
+На формах Госуслуг связывай варианты по ARIA. При отсутствии декларативной
+связи проверяй один открытый combobox и его единственный listbox в общем
+виджете. Не привязывайся к номеру услуги, тексту поля или CSS-классу.
+[Контракт выбора](platform-skills/gosuslugi/references/secure-runtime.md#выбор-значений-формы).
 Редактор ходатайства проверяй на настоящем Quill той же версии, что публичный
 компонент портала: native fill → user change → form model → переход → review.
 Один textarea fixture не доказывает rich-text ввод. `contenteditable` ref

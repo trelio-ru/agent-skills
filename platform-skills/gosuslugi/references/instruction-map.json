@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "sourceVersion": "4.6.0",
-  "originalSha256": "7812170cbb0ddccbe926d9edc978608e98a71bb56ce7e3f4365a059116d4afe6",
+  "originalSha256": "496a8ed714ba9926e5a22d247bee3b5d82105725fb079e1f0798f2d1724aa39a",
   "sections": [
     {
       "heading": "---",
@@ -81,8 +81,8 @@
     {
       "heading": "## Госключ",
       "file": "references/goskey-signing.md",
-      "sha256": "a470d62d4e86d940ee20d047c001f74c3d032230e2da1c56f25fcf40c4a2afcb",
-      "bytes": 5198,
+      "sha256": "3160675e5e777b0d38a9115ce7fd888d505307387d45d4dcd18f59f0149edf0d",
+      "bytes": 5624,
       "sourceSuffix": "\n"
     },
     {

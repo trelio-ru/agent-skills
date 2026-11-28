@@ -63,8 +63,8 @@ export async function launchOwnedBrowser({ playwright, permit, channel = process
 
 // Runs inside the owned page for both snapshot and dispatch. Options are a
 // bounded extension of the existing click API, never arbitrary clickable divs.
-// The legacy POS widget has no ARIA roles: its stable React Select structure
-// must bind the option to exactly one open input on the official form origin.
+// Portal constructor forms may omit ARIA linkage while preserving roles.
+// The legacy POS widget has no ARIA roles and has its own narrower binding.
 function pageControl(node, expected = null) {
   const visible = element => Boolean(element?.isConnected && element.getClientRects().length &&
     getComputedStyle(element).visibility !== 'hidden' && !element.closest('[hidden],[inert],[aria-hidden="true"]'));
@@ -134,15 +134,37 @@ function pageControl(node, expected = null) {
   }
   if (!node.matches('[role="option"],.select__option[id^="react-select-"]')) return meta;
   if (!visible(node) || !enabled(node) || node.closest('a,button,input,textarea,select,[role="button"]')) return null;
-  let owner, list, kind;
+  let owner, list, kind, optionScope = null;
   if (node.getAttribute('role') === 'option') {
     list = node.closest('[role="listbox"]');
-    if (!list?.id || !visible(list) || !enabled(list)) return null;
-    const owners = [...document.querySelectorAll('[role="combobox"][aria-expanded="true"]')].filter(element =>
-      visible(element) && enabled(element) &&
-      `${element.getAttribute('aria-controls') || ''} ${element.getAttribute('aria-owns') || ''}`.split(/\s+/).includes(list.id));
-    if (owners.length !== 1 || !owners[0].id) return null;
-    owner = owners[0]; kind = 'aria';
+    if (!visible(list) || !enabled(list)) return null;
+    const listLinks = element => `${element.getAttribute('aria-controls') || ''} ${element.getAttribute('aria-owns') || ''}`.trim();
+    const claims = list.id ? [...document.querySelectorAll('[role="combobox"][aria-controls],[role="combobox"][aria-owns]')]
+      .filter(element => listLinks(element).split(/\s+/).includes(list.id)) : [];
+    const owners = claims.filter(element => element.getAttribute('aria-expanded') === 'true' && visible(element) && enabled(element));
+    if (owners.length) {
+      if (owners.length !== 1 || !owners[0].id) return null;
+      owner = owners[0]; kind = 'aria';
+    } else if (!claims.length && location.origin === 'https://www.gosuslugi.ru' && /^\/\d+\/\d+\/form\/?$/.test(location.pathname)) {
+      // The constructor can render an id-less listbox without aria-controls
+      // or aria-owns. Find the smallest widget that contains both controls.
+      // A shared form/page is not proof. Do not skip an ambiguous nearer
+      // widget in favor of a larger container or override declared linkage.
+      for (let scope = list.parentElement; scope && !scope.matches('form,main,body,html,[role="form"],[role="main"]');
+        scope = scope.parentElement) {
+        const inputs = [...scope.querySelectorAll('[role="combobox"]')].filter(visible);
+        if (!inputs.length) continue;
+        const lists = [...scope.querySelectorAll('[role="listbox"]')].filter(visible);
+        if (inputs.length !== 1 || lists.length !== 1 || lists[0] !== list) return null;
+        const input = inputs[0];
+        if (!input.matches('input[role="combobox"][aria-expanded="true"]') ||
+            !['text', 'search'].includes(input.type) || !enabled(input) || input.readOnly ||
+            input.getAttribute('aria-readonly') === 'true' || listLinks(input)) return null;
+        owner = input; optionScope = scope; kind = 'portal-aria-widget';
+        break;
+      }
+      if (!owner) return null;
+    } else return null;
   } else {
     if (location.origin !== 'https://pos.gosuslugi.ru' || !location.pathname.startsWith('/form/')) return null;
     const match = /^react-select-(\d+)-option-\d+(?:-\d+)*$/.exec(node.id);
@@ -155,8 +177,8 @@ function pageControl(node, expected = null) {
     if (owners.length !== 1) return null;
     owner = owners[0]; kind = 'pos-react-select';
   }
-  if (expected === 'binding') return { owner, list };
-  if (expected && (expected.owner !== owner || expected.list !== list)) return null;
+  if (expected === 'binding') return { owner, list, optionScope };
+  if (expected && (expected.owner !== owner || expected.list !== list || expected.optionScope !== optionScope)) return null;
   return { ...meta, role: 'option', binding: { kind, ownerId: owner.id, listId: list.id, optionId: node.id } };
 }
 
