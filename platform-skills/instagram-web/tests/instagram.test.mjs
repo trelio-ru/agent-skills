@@ -10,6 +10,9 @@ import { runInstagram } from '../scripts/trelio-instagram.mjs';
 
 const origin = 'https://www.instagram.com';
 const post = `${origin}/p/Synthetic_1/`;
+const direct = `${origin}/direct/inbox/`;
+const policy = { origins: [origin], domains: ['instagram.com'],
+  presentation: 'hidden', observationMode: 'text', attachmentDownloads: true, audioDownloads: true, fileUploads: true };
 const denyIo = new Proxy({}, { get() { throw Error('unexpected host access'); } });
 const observation = (url, overrides = {}) => ({
   kind: 'trelio.browser-text/v1', state: 'ready', verifiedDocumentUrl: url,
@@ -20,13 +23,16 @@ const visualStatus = (state, reason = 'none', extra = {}) => ({
   kind: 'trelio.visual-browser/v1', state, reason, ...extra,
 });
 
-async function fixture(t, { exact = true } = {}) {
+async function fixture(t, { exact = true, files = true } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'trelio-instagram-fixture-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const host = pathToFileURL(path.join(directory, 'host.mjs'));
   await fs.writeFile(host, `
 export const VISUAL_PRESENTATION_API = 'trelio.visual-presentation/v1';
 export const VISUAL_EXACT_DOCUMENT_READ_API = ${JSON.stringify(exact ? 'trelio.visual-exact-document-read/v1' : '')};
+export const VISUAL_FILE_UPLOAD_API = ${JSON.stringify(files ? 'trelio.visual-file-upload/v1' : '')};
+export const VISUAL_AUDIO_DOWNLOAD_API = ${JSON.stringify(files ? 'trelio.visual-audio-download/v1' : '')};
+export const VISUAL_ATTACHMENT_FILE_API = ${JSON.stringify(files ? 'trelio.visual-attachment-file/v1' : '')};
 export const calls = [];
 export function runVisualSession({ env, ...request }) {
   calls.push(request);
@@ -43,10 +49,12 @@ export function runVisualSession({ env, ...request }) {
   };
 }
 
-test('only the declared read and session surface reaches the host', async () => {
+test('command help covers browser work, and malformed arguments fail before host access', async () => {
   assert.deepEqual(await runInstagram(['__trelio_accounts_import'], denyIo), { schemaVersion: 1, accounts: [] });
   const { commands } = await runInstagram(['commands'], denyIo);
-  assert.deepEqual(Object.keys(commands), ['doctor', 'status', 'setup', 'wait', 'ready', 'close', 'read']);
+  assert.deepEqual(Object.keys(commands), ['doctor', 'status', 'setup', 'show-login', 'wait', 'ready', 'close',
+    'navigate', 'read-text', 'screenshot', 'click', 'scroll', 'type-text', 'key', 'download-attachment',
+    'download-audio', 'upload-files', 'read']);
   for (const input of [
     'http://instagram.com/one', 'https://instagram.com.invalid/one',
     'https://example.test@instagram.com/one', 'https://instagram.com:443/one',
@@ -56,7 +64,10 @@ test('only the declared read and session surface reaches the host', async () => 
     `${origin}/reel/extra/suffix/`, `${post}\n`, `${post}?bad=one\\two`,
   ]) await assert.rejects(runInstagram(['read', '--url', input], denyIo), /INSTAGRAM_COMMAND_INVALID/, input);
   for (const argv of [
-    ['click', '--x', '10'], ['type-text'], ['navigate', '--url', post], ['setup', '--url', post],
+    ['click', '--x', '10'], ['type-text'], ['navigate'], ['setup', '--url', post],
+    ['navigate', '--url', direct, '--url', post], ['read-text', '--includeControls', 'yes'],
+    ['scroll', '--frameId', 'frame', '--x', '1e2', '--y', '3', '--deltaY', '2'],
+    ['upload-files', '--frameId', 'frame', '--x', '2', '--y', '3', '--files', '[null]'],
     ['__trelio_accounts_import', 'extra'], ['read', '--url', post, '--offset', '-1'],
     ['read', '--url', post, '--offset', '1e3'], ['read', '--url', post, '--offset', '100001'],
   ]) await assert.rejects(runInstagram(argv, denyIo), /INSTAGRAM_COMMAND_INVALID/);
@@ -75,8 +86,7 @@ test('content is bound to one canonical Instagram URL and projected without cont
       text: 'Synthetic content', nextOffset: null, scanLimited: false,
     });
     assert.deepEqual(host.calls.at(-1), {
-      origins: [origin], domains: ['instagram.com'],
-      presentation: 'hidden', observationMode: 'text', operation: 'navigate',
+      ...policy, operation: 'navigate',
       args: { url: expected, expectedDocumentUrl: expected },
     });
   }
@@ -97,6 +107,45 @@ test('content is bound to one canonical Instagram URL and projected without cont
     await assert.rejects(host.run(['read', '--url', post], { navigate: bad }), /INSTAGRAM_DOCUMENT_UNVERIFIED/);
     assert.equal(host.calls.length, before + 1, 'the failed exact read cannot dispatch setup or another navigation');
   }
+});
+
+test('Direct navigation, input and files use one provider session and return the original host evidence', async t => {
+  const host = await fixture(t);
+  const frameId = '00000000-0000-4000-8000-000000000001';
+  const pointArgs = ['--frameId', frameId, '--x', '20', '--y', '50'];
+  const point = { frameId, x: 20, y: 50 };
+  const files = [path.join(os.tmpdir(), 'synthetic-attachment.txt')];
+  const selected = { TRELIO_SKILL_ACCOUNT_JSON: '{"id":"synthetic-account"}' };
+  const scenarios = [
+    ['navigate', ['--url', direct], { url: direct }],
+    ['navigate', ['--url', 'https://example.org/path?q=synthetic'], { url: 'https://example.org/path?q=synthetic' }],
+    ['read-text', ['--query', 'Synthetic', '--offset', '7', '--includeControls', 'true'], { query: 'Synthetic', offset: 7, includeControls: true }],
+    ['screenshot', [], {}],
+    ['click', pointArgs, point],
+    ['scroll', [...pointArgs, '--deltaY', '-160', '--deltaX', '1'], { ...point, deltaY: -160, deltaX: 1 }],
+    ['type-text', ['--frameId', frameId, '--text', 'Synthetic message'], { frameId, text: 'Synthetic message' }],
+    ['key', ['--frameId', frameId, '--key', 'Enter'], { frameId, key: 'Enter' }],
+    ['download-attachment', pointArgs, point],
+    ['download-audio', pointArgs, point],
+    ['upload-files', [...pointArgs, '--files', JSON.stringify(files)], { ...point, files }],
+    ['show-login', [], {}],
+  ];
+  const frame = observation(direct);
+  for (const [operation, args, expected] of scenarios) {
+    assert.deepEqual(await host.run([operation, ...args], { [operation]: frame }, selected), frame);
+    assert.deepEqual(host.calls.at(-1), { ...policy, operation, args: expected });
+  }
+  // An ambiguous native action result is returned as-is without another
+  // click, navigation, setup, or automatic attempt in a different profile.
+  const stale = visualStatus('error', 'stale_frame');
+  const before = host.calls.length;
+  assert.deepEqual(await host.run(['click', ...pointArgs], { click: stale }, selected), stale);
+  assert.equal(host.calls.length, before + 1);
+
+  const oldHost = await fixture(t, { files: false });
+  for (const [operation, args] of scenarios.filter(([name]) => /^(download|upload)-/u.test(name)))
+    await assert.rejects(oldHost.run([operation, ...args], {}, selected), /INSTAGRAM_HOST_UPGRADE_REQUIRED/);
+  assert.equal(oldHost.calls.length, 0);
 });
 
 test('a cold worker and continuation keep the original navigation and distinguish HTTP refusal', async t => {
@@ -126,8 +175,7 @@ test('manual setup belongs to the selected account and older hosts fail before b
   const manual = visualStatus('manual_input_required', 'manual_control_active');
   assert.deepEqual(await host.run(['setup'], { setup: manual }, { TRELIO_SKILL_ACCOUNT_JSON: '{}' }), manual);
   assert.deepEqual(host.calls[0], {
-    origins: [origin], domains: ['instagram.com'],
-    presentation: 'hidden', observationMode: 'text', operation: 'setup',
+    ...policy, operation: 'setup',
     args: { url: `${origin}/` },
   });
   const stale = await fixture(t, { exact: false });

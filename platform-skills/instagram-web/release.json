@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "release": {
     "skillId": "instagram-web",
-    "version": "1.0.2",
-    "summary": "Ручной вход с главной страницы Instagram",
-    "routingSummary": "Read specific Instagram profiles, posts, and Reels by direct link in the managed browser, with optional manual sign-in."
+    "version": "1.1.0",
+    "summary": "Direct и управление страницами Instagram в браузере выбранного аккаунта",
+    "routingSummary": "Use Instagram in the managed browser to work with Direct messages, profiles, posts, Reels, and attachments."
   },
   "connection": {
     "schemaVersion": 1,
@@ -16,7 +16,7 @@
     "secretFields": []
   },
   "runtime": {
-    "version": "1.0.2",
+    "version": "1.1.0",
     "minimumHostVersion": "3.35.11",
     "entrypoint": { "path": "trelio-instagram.mjs", "interpreter": "node" },
     "capabilities": ["browser", "local-session", "network", "local-accounts-v1"],
